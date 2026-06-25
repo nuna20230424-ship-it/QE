@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>QE - Netflix, Google, Amazon 인증 일정 대시보드</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">●</span>
+      <h1>QE - Netflix, Google, Amazon 인증 일정 대시보드</h1>
+    </div>
+    <div class="topbar-right">
+      <input id="user-name" class="name-input" placeholder="이름(선택)" title="변경 이력에 기록됩니다" />
+      <label class="role">
+        역할
+        <select id="role-select">
+          <option value="의뢰자">의뢰자 (개발 PL)</option>
+          <option value="테스터">테스터</option>
+        </select>
+      </label>
+      <button id="btn-new" class="btn btn-primary">+ 의뢰요청</button>
+    </div>
+  </header>
+
+  <section class="controls">
+    <div class="tabs">
+      <button class="tab active" data-view="board">현황 보드</button>
+      <button class="tab" data-view="schedule">일정표</button>
+      <button class="tab" data-view="calendar">캘린더</button>
+    </div>
+    <div class="filters">
+      <select id="filter-cert">
+        <option value="">전체 인증</option>
+        <option value="Netflix NTS">Netflix NTS</option>
+        <option value="Google xTS">Google xTS</option>
+        <option value="Amazon AVTS">Amazon AVTS</option>
+      </select>
+      <select id="filter-status">
+        <option value="">전체 상태</option>
+        <option value="예약대기">예약대기</option>
+        <option value="예약확정">예약확정</option>
+        <option value="진행중">진행중</option>
+        <option value="완료">완료</option>
+        <option value="보류">보류</option>
+      </select>
+      <input id="filter-q" type="search" placeholder="모델명 · 의뢰자 · 항목 검색" />
+    </div>
+  </section>
+
+  <div id="summary" class="summary"></div>
+
+  <main>
+    <div id="view-board" class="view"></div>
+    <div id="view-schedule" class="view hidden"></div>
+    <div id="view-calendar" class="view hidden"></div>
+  </main>
+
+  <!-- 등록 / 상세 모달 -->
+  <div id="modal" class="modal-backdrop hidden">
+    <div class="modal">
+      <div class="modal-head">
+        <h2 id="modal-title">새 의뢰</h2>
+        <button id="modal-close" class="icon-btn">✕</button>
+      </div>
+      <form id="req-form">
+        <input type="hidden" id="f-id" />
+
+        <fieldset class="group group-requester">
+          <legend>의뢰 정보 <small>(개발 PL)</small></legend>
+          <div class="grid">
+            <label>인증종류*
+              <select id="f-cert_type" required>
+                <option value="Netflix NTS">Netflix NTS</option>
+                <option value="Google xTS">Google xTS</option>
+                <option value="Amazon AVTS">Amazon AVTS</option>
+              </select>
+            </label>
+            <label>Test type
+              <select id="f-test_type">
+                <option value="IR">IR</option>
+                <option value="LR">LR</option>
+                <option value="MR">MR</option>
+                <option value="파생">파생</option>
+              </select>
+            </label>
+            <label>Test 목적
+              <select id="f-test_purpose">
+                <option value="3PL">3PL</option>
+                <option value="Official">Official</option>
+                <option value="Pre-Test">Pre-Test</option>
+                <option value="양산">양산</option>
+                <option value="self">self</option>
+              </select>
+            </label>
+            <label>Round
+              <select id="f-round">
+                <option value="">—</option>
+                <option value="1">1</option>
+                <option value="2">2</option>
+                <option value="3">3</option>
+                <option value="4">4</option>
+                <option value="5">5</option>
+              </select>
+            </label>
+            <label>모델명*
+              <input id="f-model_name" required />
+            </label>
+            <label>FW 버전
+              <input id="f-fw_version" />
+            </label>
+            <label>의뢰자
+              <select id="f-requester-select"></select>
+              <input id="f-requester-custom" class="hidden combo-custom" placeholder="새 의뢰자 입력" />
+            </label>
+            <label>Test 희망 일정
+              <input id="f-desired_date" type="date" />
+            </label>
+          </div>
+          <label class="full">비고
+            <textarea id="f-note" rows="2"></textarea>
+          </label>
+        </fieldset>
+
+        <fieldset class="group group-tester">
+          <legend>진행 / 결과 <small>(테스터)</small></legend>
+          <div class="grid">
+            <label>예약 확정일
+              <input id="f-scheduled_date" type="date" />
+            </label>
+            <label>시작일
+              <input id="f-started_date" type="date" />
+            </label>
+            <label>완료일
+              <input id="f-completed_date" type="date" />
+            </label>
+            <label>담당 테스터
+              <select id="f-tester-select">
+                <option value="">(미지정)</option>
+                <option value="이해찬">이해찬</option>
+                <option value="이은경">이은경</option>
+                <option value="김지윤">김지윤</option>
+                <option value="조진원">조진원</option>
+                <option value="조아라">조아라</option>
+                <option value="문유림">문유림</option>
+                <option value="__custom__">+ 직접 입력</option>
+              </select>
+              <input id="f-tester-custom" class="hidden combo-custom" placeholder="새 테스터 입력" />
+            </label>
+            <label>상태
+              <select id="f-status">
+                <option value="예약대기">예약대기</option>
+                <option value="예약확정">예약확정</option>
+                <option value="진행중">진행중</option>
+                <option value="완료">완료</option>
+                <option value="보류">보류</option>
+                <option value="중단">중단</option>
+              </select>
+            </label>
+            <label>판정
+              <select id="f-verdict">
+                <option value="">—</option>
+                <option value="Pass">Pass</option>
+                <option value="Fail">Fail</option>
+                <option value="Drop">Drop</option>
+              </select>
+            </label>
+          </div>
+          <label class="full">진행 사항
+            <textarea id="f-progress" rows="2"></textarea>
+          </label>
+          <label class="full">결과 코멘트
+            <textarea id="f-result" rows="2"></textarea>
+          </label>
+        </fieldset>
+
+        <section id="history-box" class="history-box hidden">
+          <h3>변경 이력</h3>
+          <ul id="history-list"></ul>
+        </section>
+
+        <div class="modal-foot">
+          <button type="button" id="btn-delete" class="btn btn-danger hidden">삭제</button>
+          <div class="spacer"></div>
+          <button type="button" id="btn-cancel" class="btn">취소</button>
+          <button type="submit" class="btn btn-primary">저장</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

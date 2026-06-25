@@ -1,0 +1,12 @@
+{
+  "_설명": "이 파일을 config.json 으로 복사한 뒤 값을 채우세요. config.json 이 없으면 이메일 알림은 자동으로 생략됩니다.",
+  "smtp": {
+    "host": "smtp.gmail.com",
+    "port": 465,
+    "user": "your-account@gmail.com",
+    "pass": "구글-앱-비밀번호-16자리",
+    "from": "QA 인증일정 <your-account@gmail.com>"
+  },
+  "notifyTo": ["tester1@kaongroup.com", "pl1@kaongroup.com"],
+  "baseUrl": "http://172.16.3.136:3001"
+}

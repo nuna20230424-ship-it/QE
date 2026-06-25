@@ -1,0 +1,14 @@
+{
+  "name": "cert-schedule-dashboard",
+  "version": "1.0.0",
+  "description": "넷플릭스/구글 인증업무 예약·현황 대시보드",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.8.1",
+    "express": "^4.21.2",
+    "nodemailer": "^6.9.16"
+  }
+}

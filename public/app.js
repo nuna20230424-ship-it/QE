@@ -9,7 +9,10 @@ const state = {
   items: [],
   cal: { y: _now.getFullYear(), m: _now.getMonth() }, // m: 0-based
   sort: { key: null, dir: 'asc' }, // 일정표 정렬 상태
+  boardExpanded: new Set(), // 5개 초과 시 펼친 상태의 상태칼럼
 };
+
+const BOARD_LIMIT = 5; // 보드 칼럼당 기본 노출 카드 수
 
 const $ = (sel) => document.querySelector(sel);
 const pad2 = (n) => String(n).padStart(2, '0');
@@ -119,7 +122,14 @@ function cardHtml(it) {
 function renderBoard() {
   $('#view-board').innerHTML = STATUSES.map((st) => {
     const list = state.items.filter((i) => i.status === st);
-    const body = list.length ? list.map(cardHtml).join('') : '<div class="col-empty">항목 없음</div>';
+    const expanded = state.boardExpanded.has(st);
+    const shown = expanded ? list : list.slice(0, BOARD_LIMIT);
+    const cards = shown.map(cardHtml).join('');
+    const hiddenN = list.length - shown.length;
+    const toggle = list.length > BOARD_LIMIT
+      ? `<button class="col-toggle" data-toggle="${st}">${expanded ? '접기 ▴' : `+ ${hiddenN}개 더보기 ▾`}</button>`
+      : '';
+    const body = list.length ? cards + toggle : '<div class="col-empty">항목 없음</div>';
     return `
       <div class="col">
         <div class="col-head">
@@ -292,13 +302,32 @@ function renderCalendar() {
     <div class="cal-grid">${dow}${cells.join('')}</div>`;
 }
 
+// ---- 현황보고 (일일 / 주간) ----
+async function renderReport(period) {
+  const root = $(`#view-${period}`);
+  root.innerHTML = '<p class="col-empty">불러오는 중…</p>';
+  let r;
+  try { r = await api(`/api/report/${period}`); }
+  catch (err) { root.innerHTML = `<p class="col-empty">보고서를 불러오지 못했습니다: ${esc(err.message)}</p>`; return; }
+  root.innerHTML = `
+    <div class="report-bar">
+      <button class="btn" data-report-refresh="${period}">↻ 새로고침</button>
+      <button class="btn" data-report-send="${period}">✉ 지금 메일 발송</button>
+      <span class="report-hint">매일 오후 7시 자동 발송 · 수신: nuna20230424@gmail.com, keonhee.cho@kaongroup.com</span>
+    </div>
+    <div class="report-body">${r.html}</div>`;
+}
+
+const VIEWS = ['board', 'schedule', 'calendar', 'daily', 'weekly'];
 function render() {
-  $('#view-board').classList.toggle('hidden', state.view !== 'board');
-  $('#view-schedule').classList.toggle('hidden', state.view !== 'schedule');
-  $('#view-calendar').classList.toggle('hidden', state.view !== 'calendar');
+  VIEWS.forEach((v) => $(`#view-${v}`).classList.toggle('hidden', state.view !== v));
+  const isReport = state.view === 'daily' || state.view === 'weekly';
+  $('#summary').classList.toggle('hidden', isReport);
+  document.querySelector('.filters').classList.toggle('hidden', isReport);
   if (state.view === 'board') renderBoard();
   else if (state.view === 'schedule') renderSchedule();
-  else renderCalendar();
+  else if (state.view === 'calendar') renderCalendar();
+  else renderReport(state.view);
 }
 
 // ---- 모달 ----
@@ -452,6 +481,35 @@ function bind() {
   $('#btn-delete').addEventListener('click', deleteItem);
   bindCombo('requester');
   bindCombo('tester');
+
+  // 보드 칼럼 "더보기/접기" 토글
+  $('#view-board').addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-toggle]');
+    if (!btn) return;
+    e.stopPropagation();
+    const st = btn.dataset.toggle;
+    if (state.boardExpanded.has(st)) state.boardExpanded.delete(st);
+    else state.boardExpanded.add(st);
+    renderBoard();
+  });
+
+  // 현황보고 새로고침 / 즉시 발송
+  ['daily', 'weekly'].forEach((p) => {
+    $(`#view-${p}`).addEventListener('click', async (e) => {
+      if (e.target.closest('[data-report-refresh]')) { renderReport(p); return; }
+      const sendBtn = e.target.closest('[data-report-send]');
+      if (!sendBtn) return;
+      sendBtn.disabled = true;
+      const orig = sendBtn.textContent;
+      sendBtn.textContent = '발송 중…';
+      try {
+        const res = await api(`/api/report/${p}/send`, { method: 'POST', body: '{}' });
+        alert(res.sent ? '현황보고 메일을 발송했습니다.' : '메일 설정(config.json)이 없어 발송하지 못했습니다.');
+      } catch (err) { alert(err.message); }
+      sendBtn.disabled = false;
+      sendBtn.textContent = orig;
+    });
+  });
 
   // 일정표 엑셀 다운로드 + 컬럼 정렬
   $('#view-schedule').addEventListener('click', (e) => {

@@ -4,6 +4,8 @@ const express = require('express');
 const repo = require('./db');
 const notify = require('./notify');
 const backup = require('./backup');
+const report = require('./report');
+const scheduler = require('./scheduler');
 
 const app = express();
 app.use(express.json());
@@ -25,6 +27,23 @@ app.get('/api/requests', (req, res) => {
 
 app.get('/api/stats', (req, res) => {
   res.json(repo.stats());
+});
+
+// 일일/주간 현황보고 (미리보기용 HTML + 집계)
+app.get('/api/report/:period', (req, res) => {
+  const p = req.params.period;
+  if (p !== 'daily' && p !== 'weekly') return res.status(400).json({ error: 'period는 daily 또는 weekly여야 합니다.' });
+  const r = report[p]();
+  res.json({ period: p, from: r.data.from, to: r.data.to, counts: r.data.counts, html: r.html });
+});
+
+// 현황보고 즉시 메일 발송 (수동 트리거)
+app.post('/api/report/:period/send', async (req, res) => {
+  const p = req.params.period;
+  if (p !== 'daily' && p !== 'weekly') return res.status(400).json({ error: 'period는 daily 또는 weekly여야 합니다.' });
+  const r = report[p]();
+  const sent = await notify.sendReportMail(r.subject, r.html);
+  res.json({ sent });
 });
 
 app.get('/api/requests/:id', (req, res) => {
@@ -79,4 +98,5 @@ const HOST = process.env.HOST || '0.0.0.0';
 app.listen(PORT, HOST, () => {
   console.log(`인증 일정 대시보드 실행 중: http://${HOST}:${PORT}`);
   backup.start();
+  scheduler.start();
 });

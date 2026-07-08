@@ -193,4 +193,34 @@ module.exports = {
       : null;
     return { total: all.length, byStatus, byCert, testerLoad, overdue, avgLeadDays: avgLead };
   },
+
+  // 일일/주간 현황보고용 집계.
+  // 완료: 완료일(completed_date, 없으면 completed_at 날짜)이 [from,to]에 드는 '완료' 건.
+  // 진행중: 기간과 무관하게 현재 상태가 '진행중'인 건 전체(스냅샷 성격).
+  reportData(from, to) {
+    const all = db.prepare('SELECT * FROM requests').all();
+    const compDate = (r) => r.completed_date || (r.completed_at ? r.completed_at.slice(0, 10) : '');
+    const inRange = (d) => d && d >= from && d <= to;
+
+    const completed = all
+      .filter((r) => r.status === '완료' && inRange(compDate(r)))
+      .sort((a, b) => (compDate(a) < compDate(b) ? -1 : 1));
+    const inProgress = all
+      .filter((r) => r.status === '진행중')
+      .sort((a, b) => ((a.started_date || '') < (b.started_date || '') ? -1 : 1));
+
+    const pass = completed.filter((r) => r.verdict === 'Pass');
+    const fail = completed.filter((r) => r.verdict === 'Fail');
+    const etc = completed.filter((r) => r.verdict !== 'Pass' && r.verdict !== 'Fail');
+
+    return {
+      from, to,
+      counts: {
+        completed: completed.length,
+        pass: pass.length, fail: fail.length, etc: etc.length,
+        inProgress: inProgress.length,
+      },
+      completed, inProgress, fail,
+    };
+  },
 };

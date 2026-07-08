@@ -96,6 +96,13 @@ main { padding: 0 22px 40px; }
 .col-head .count { background: #eef2f8; color: var(--muted); border-radius: 999px; padding: 1px 9px; font-size: 12px; }
 .col-body { padding: 10px; display: flex; flex-direction: column; gap: 10px; min-height: 60px; }
 .col-empty { color: var(--muted); font-size: 12px; text-align: center; padding: 14px 0; }
+.col-toggle { border: 0; background: #eef2f8; color: var(--muted); border-radius: 7px; padding: 7px 0; cursor: pointer; font-weight: 600; font-size: 12px; }
+.col-toggle:hover { background: #e2e8f2; color: var(--text); }
+
+/* 현황보고(일일/주간) */
+.report-bar { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
+.report-hint { color: var(--muted); font-size: 12px; }
+.report-body { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); overflow-x: auto; }
 
 .card {
   border: 1px solid var(--line); border-left: 4px solid var(--line);

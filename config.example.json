@@ -8,5 +8,6 @@
     "from": "QA 인증일정 <your-account@gmail.com>"
   },
   "notifyTo": ["tester1@kaongroup.com", "pl1@kaongroup.com"],
+  "reportTo": ["nuna20230424@gmail.com", "keonhee.cho@kaongroup.com"],
   "baseUrl": "http://172.16.3.136:3001"
 }

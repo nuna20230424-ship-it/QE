@@ -43,6 +43,11 @@ body {
 .name-input { width: 120px; }
 .sched-bar { display: flex; justify-content: flex-end; margin-bottom: 10px; }
 
+/* 현황 보드 상단 실시간 시계 */
+.board-clock { display: flex; align-items: baseline; gap: 12px; padding: 10px 22px 0; }
+.board-clock .clock-date { font-size: 14px; font-weight: 600; color: var(--muted); }
+.board-clock .clock-time { font-size: 22px; font-weight: 800; letter-spacing: 0.5px; font-variant-numeric: tabular-nums; }
+
 /* 요약 위젯 */
 .summary { display: flex; flex-wrap: wrap; gap: 10px; padding: 4px 22px 0; }
 .sumcard { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 14px; min-width: 96px; box-shadow: var(--shadow); }

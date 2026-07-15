@@ -323,6 +323,7 @@ function render() {
   VIEWS.forEach((v) => $(`#view-${v}`).classList.toggle('hidden', state.view !== v));
   const isReport = state.view === 'daily' || state.view === 'weekly';
   $('#summary').classList.toggle('hidden', isReport);
+  $('#board-clock').classList.toggle('hidden', state.view !== 'board');
   document.querySelector('.filters').classList.toggle('hidden', isReport);
   if (state.view === 'board') renderBoard();
   else if (state.view === 'schedule') renderSchedule();
@@ -342,13 +343,10 @@ const F = {
 const NEW_DEFAULTS = { cert_type: 'Netflix NTS', test_type: 'IR', test_purpose: '3PL', status: '예약대기' };
 
 // ---- 콤보 박스(선택 + 직접입력) 헬퍼 ----
-function buildRequesterOptions(currentVal) {
-  const names = [...new Set(state.items.map((i) => i.requester).filter(Boolean))];
-  if (currentVal && !names.includes(currentVal)) names.push(currentVal);
-  names.sort();
-  $('#f-requester-select').innerHTML = '<option value="">(미지정)</option>'
-    + names.map((n) => `<option value="${esc(n)}">${esc(n)}</option>`).join('')
-    + '<option value="__custom__">+ 직접 입력</option>';
+// 의뢰자: 기존 이름을 datalist로 제공하되 자유롭게 수정·직접입력 가능한 입력 필드
+function buildRequesterOptions() {
+  const names = [...new Set(state.items.map((i) => i.requester).filter(Boolean))].sort();
+  $('#requester-list').innerHTML = names.map((n) => `<option value="${esc(n)}"></option>`).join('');
 }
 
 function setCombo(prefix, value) {
@@ -405,8 +403,8 @@ function openModal(item) {
   for (const [k, sel] of Object.entries(F)) {
     $(sel).value = isNew ? (NEW_DEFAULTS[k] ?? '') : (item[k] ?? '');
   }
-  buildRequesterOptions(isNew ? '' : (item.requester || ''));
-  setCombo('requester', isNew ? '' : (item.requester || ''));
+  buildRequesterOptions();
+  $('#f-requester').value = isNew ? '' : (item.requester || '');
   setCombo('tester', isNew ? '' : (item.tester || ''));
   applyRoleLock();
   loadHistory(isNew ? null : item.id);
@@ -421,7 +419,7 @@ function readForm() {
     if (k === 'id') continue;
     out[k] = $(sel).value;
   }
-  out.requester = readCombo('requester');
+  out.requester = $('#f-requester').value.trim();
   out.tester = readCombo('tester');
   return out;
 }
@@ -479,7 +477,6 @@ function bind() {
   $('#modal').addEventListener('click', (e) => { if (e.target.id === 'modal') closeModal(); });
   $('#req-form').addEventListener('submit', submitForm);
   $('#btn-delete').addEventListener('click', deleteItem);
-  bindCombo('requester');
   bindCombo('tester');
 
   // 보드 칼럼 "더보기/접기" 토글
@@ -549,3 +546,22 @@ function bind() {
 
 bind();
 load().catch((err) => alert(err.message));
+
+// 1분마다 자동 새로고침 (편집 중 모달이 열려 있으면 건너뜀)
+setInterval(() => {
+  if (!$('#modal').classList.contains('hidden')) return;
+  load().catch(() => {});
+}, 60000);
+
+// 현황 보드 상단 실시간 시계 (1초 단위)
+function renderClock() {
+  const el = $('#board-clock');
+  if (!el) return;
+  const t = new Date();
+  const days = ['일', '월', '화', '수', '목', '금', '토'];
+  const date = `${t.getFullYear()}년 ${t.getMonth() + 1}월 ${t.getDate()}일 (${days[t.getDay()]})`;
+  const time = `${pad2(t.getHours())}:${pad2(t.getMinutes())}:${pad2(t.getSeconds())}`;
+  el.innerHTML = `<span class="clock-date">${date}</span><span class="clock-time">${time}</span>`;
+}
+renderClock();
+setInterval(renderClock, 1000);

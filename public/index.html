@@ -54,6 +54,8 @@
 
   <div id="summary" class="summary"></div>
 
+  <div id="board-clock" class="board-clock hidden"></div>
+
   <main>
     <div id="view-board" class="view"></div>
     <div id="view-schedule" class="view hidden"></div>
@@ -116,8 +118,8 @@
               <input id="f-fw_version" />
             </label>
             <label>의뢰자
-              <select id="f-requester-select"></select>
-              <input id="f-requester-custom" class="hidden combo-custom" placeholder="새 의뢰자 입력" />
+              <input id="f-requester" list="requester-list" placeholder="선택 또는 직접 입력" autocomplete="off" />
+              <datalist id="requester-list"></datalist>
             </label>
             <label>Test 희망 일정
               <input id="f-desired_date" type="date" />

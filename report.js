@@ -94,7 +94,7 @@ function inProgressTable(rows) {
 
 function buildHtml(title, data, generatedAt) {
   const rangeLabel = data.from === data.to ? data.from : `${data.from} ~ ${data.to}`;
-  return `<div style="max-width:760px;margin:0 auto;padding:20px;font-family:'Malgun Gothic','맑은 고딕',-apple-system,sans-serif;color:#1f2733;line-height:1.6;">
+  return `<div style="max-width:760px;margin:0;padding:20px;font-family:'Malgun Gothic','맑은 고딕',-apple-system,sans-serif;color:#1f2733;line-height:1.6;">
     <h2 style="font-size:19px;margin:0 0 2px;">QE 인증 ${esc(title)}</h2>
     <p style="color:#6b7686;font-size:13px;margin:0;">대상 기간 · ${esc(rangeLabel)}</p>
     ${summaryLine(data.counts)}

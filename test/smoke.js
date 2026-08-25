@@ -99,6 +99,10 @@ ok('Fail 상세에 결과 코멘트 유지', w.html.includes('DRM 재생 실패'
 ok('본문 집계 구간은 월~일 유지', report.weekRange(now).to !== wk.to);
 ok('일일보고에는 통계 섹션 없음', !report.daily(now).html.includes('모델별 인증 현황'));
 
-fs.rmSync(TMP, { recursive: true, force: true });
+// 정리 실패가 테스트 결과를 뒤집지 않도록 분리한다. 임시 폴더가 남아도 OS가 회수한다.
+repo.close();
+try { fs.rmSync(TMP, { recursive: true, force: true }); }
+catch (e) { console.log(`\n  (임시 폴더 정리 실패, 무시함: ${e.code} ${TMP})`); }
+
 console.log(`\n===== PASS ${pass} / FAIL ${fail} =====`);
 process.exit(fail ? 1 : 0);

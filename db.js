@@ -176,6 +176,11 @@ module.exports = {
     return db.prepare('SELECT * FROM history WHERE request_id = ? ORDER BY id DESC').all(requestId);
   },
 
+  // 파일 핸들 해제. 테스트가 임시 DB를 지우려면 필요하다(Windows는 열린 파일 삭제를 막는다).
+  close() {
+    db.close();
+  },
+
   // 한 번이라도 입력된 모델명 목록. DISTINCT로 중복을 제거해 콤보박스에 그대로 쓴다.
   modelNames() {
     return db.prepare(

@@ -17,6 +17,14 @@ function dayRange(now = new Date()) {
   const t = ymd(now);
   return { from: t, to: t };
 }
+// 이번 주 월~금 (주간업무보고의 모델별 인증 통계 섹션 기준. 본문 집계는 월~일 유지)
+function workWeekRange(now = new Date()) {
+  const base = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const offset = (base.getDay() + 6) % 7;
+  const mon = new Date(base); mon.setDate(base.getDate() - offset);
+  const fri = new Date(mon); fri.setDate(mon.getDate() + 4);
+  return { from: ymd(mon), to: ymd(fri) };
+}
 
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => (
   { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]
@@ -29,14 +37,19 @@ const certOf = (r) => {
 const modelOf = (r) => esc(`${r.model_name}${r.fw_version ? ' (' + r.fw_version + ')' : ''}`);
 const compDate = (r) => r.completed_date || (r.completed_at ? r.completed_at.slice(0, 10) : '');
 
-function verdictBadge(v) {
+// 진행차수(Round) + 판정을 한 문구로 조합: "진행차수 3차, Pass"
+const roundVerdictLabel = (r) => [r.round ? `진행차수 ${r.round}차` : '', r.verdict || ''].filter(Boolean).join(', ');
+
+function verdictBadge(r) {
   const map = { Pass: ['#e1ecff', '#1a56d6'], Fail: ['#fde2e0', '#d23227'], Drop: ['#eceef2', '#5b6473'] };
-  const c = map[v] || ['#eef2f8', '#6b7686'];
-  return `<span style="display:inline-block;padding:1px 8px;border-radius:999px;font-weight:700;font-size:12px;background:${c[0]};color:${c[1]};">${esc(v || '—')}</span>`;
+  const c = map[r.verdict] || ['#eef2f8', '#6b7686'];
+  return `<span style="display:inline-block;padding:1px 8px;border-radius:999px;font-weight:700;font-size:12px;background:${c[0]};color:${c[1]};">${esc(roundVerdictLabel(r) || '—')}</span>`;
 }
 
 const th = (t) => `<th style="text-align:left;padding:8px 10px;background:#f7f9fc;color:#6b7686;font-weight:700;border-bottom:1px solid #e2e7ef;font-size:12px;">${t}</th>`;
+const thNum = (t) => `<th style="text-align:right;padding:8px 10px;background:#f7f9fc;color:#6b7686;font-weight:700;border-bottom:1px solid #e2e7ef;font-size:12px;">${t}</th>`;
 const td = (t) => `<td style="padding:8px 10px;border-bottom:1px solid #eef1f6;vertical-align:top;font-size:13px;">${t}</td>`;
+const tdNum = (t) => `<td style="padding:8px 10px;border-bottom:1px solid #eef1f6;vertical-align:top;font-size:13px;text-align:right;">${t}</td>`;
 const section = (title, inner) => `<h3 style="font-size:15px;margin:22px 0 8px;padding-bottom:5px;border-bottom:2px solid #e2e7ef;">${title}</h3>${inner}`;
 const emptyLine = (t) => `<p style="color:#6b7686;margin:6px 0;">${t}</p>`;
 
@@ -56,7 +69,7 @@ function completedTable(rows) {
     ${td(certOf(r))}
     ${td('<strong>' + modelOf(r) + '</strong>')}
     ${td(dash(r.tester))}
-    ${td(verdictBadge(r.verdict))}
+    ${td(verdictBadge(r))}
     ${td(dash(compDate(r)))}
   </tr>`).join('');
   return `<table style="width:100%;border-collapse:collapse;border:1px solid #e2e7ef;">
@@ -68,7 +81,7 @@ function failDetails(rows) {
   if (!rows.length) return '';
   const items = rows.map((r) => `
     <div style="border:1px solid #f3c9c4;background:#fdf6f5;border-left:4px solid #d23227;border-radius:8px;padding:10px 14px;margin:8px 0;">
-      <div style="font-weight:700;color:#c0392b;">${modelOf(r)} <span style="font-weight:600;color:#6b7686;">· ${esc(r.cert_type)} · 테스터 ${dash(r.tester)}</span></div>
+      <div style="font-weight:700;color:#c0392b;">${modelOf(r)} <span style="font-weight:600;color:#6b7686;">· ${esc(r.cert_type)} · ${esc(roundVerdictLabel(r) || 'Fail')} · 테스터 ${dash(r.tester)}</span></div>
       <div style="margin-top:6px;"><span style="color:#6b7686;font-weight:700;">진행사항</span> ${dash(r.progress)}</div>
       <div style="margin-top:4px;"><span style="color:#6b7686;font-weight:700;">결과코멘트</span> ${dash(r.result)}</div>
     </div>`).join('');
@@ -92,7 +105,39 @@ function inProgressTable(rows) {
     <tbody>${body}</tbody></table>`;
 }
 
-function buildHtml(title, data, generatedAt) {
+// ---- 모델별 인증 통계 (주간업무보고 전용 섹션) ----
+// 지표: 진행차수(누적 의뢰 횟수) · Pass/Fail 횟수 · 전체 의뢰 대비 Pass율/Fail율.
+// 분모가 '전체 의뢰 횟수'라 미판정 건도 포함되므로 Pass율 + Fail율은 100%가 되지 않는다.
+function certStatsTable(rows) {
+  if (!rows.length) return emptyLine('해당 주차에 진행된 인증 의뢰가 없습니다.');
+  const body = rows.map((r) => `<tr>
+    ${td('<strong>' + esc(r.model_name) + '</strong>')}
+    ${td(esc(r.cert_type))}
+    ${tdNum(r.total + '차')}
+    ${tdNum(r.pass)}
+    ${tdNum(r.fail ? `<b style="color:#d23227;">${r.fail}</b>` : 0)}
+    ${tdNum(r.pending)}
+    ${tdNum(r.pass_rate + '%')}
+    ${tdNum(r.fail ? `<b style="color:#d23227;">${r.fail_rate}%</b>` : '0%')}
+  </tr>`).join('');
+  return `<table style="width:100%;border-collapse:collapse;border:1px solid #e2e7ef;">
+    <thead><tr>${th('모델명')}${th('인증종류')}${thNum('진행차수')}${thNum('Pass')}${thNum('Fail')}${thNum('미판정')}${thNum('Pass율')}${thNum('Fail율')}</tr></thead>
+    <tbody>${body}</tbody></table>`;
+}
+
+function certStatsSection(now = new Date()) {
+  const { from, to } = workWeekRange(now);
+  const s = repo.certStats({ from, to });
+  const t = s.totals;
+  const head = `<p style="color:#6b7686;font-size:12px;margin:6px 0 10px;">
+    대상 주차 ${esc(from)} ~ ${esc(to)} (월~금) · 모델 ${t.models}건 · 누적 의뢰 ${t.total}차 ·
+    Pass ${t.pass} / Fail ${t.fail} · Pass율 ${t.pass_rate}% · Fail율 ${t.fail_rate}%
+    <br>비율 분모는 전체 의뢰 횟수(미판정 포함)입니다.
+  </p>`;
+  return section('모델별 인증 현황 (진행차수 · Pass/Fail 통계)', head + certStatsTable(s.rows));
+}
+
+function buildHtml(title, data, generatedAt, extra) {
   const rangeLabel = data.from === data.to ? data.from : `${data.from} ~ ${data.to}`;
   return `<div style="max-width:760px;margin:0;padding:20px;font-family:'Malgun Gothic','맑은 고딕',-apple-system,sans-serif;color:#1f2733;line-height:1.6;">
     <h2 style="font-size:19px;margin:0 0 2px;">QE 인증 ${esc(title)}</h2>
@@ -101,6 +146,7 @@ function buildHtml(title, data, generatedAt) {
     ${section('완료 모델 (Pass / Fail)', completedTable(data.completed))}
     ${failDetails(data.fail)}
     ${section('진행중 모델', inProgressTable(data.inProgress))}
+    ${extra || ''}
     <p style="color:#9aa4b2;font-size:11px;margin-top:24px;">QE 인증 일정 대시보드 자동 생성${generatedAt ? ' · ' + esc(generatedAt) : ''}</p>
   </div>`;
 }
@@ -121,8 +167,8 @@ function weekly(now = new Date()) {
   return {
     period: 'weekly', title: '주간 현황보고', data,
     subject: `[인증일정] 주간 현황보고 (${from} ~ ${to})`,
-    html: buildHtml('주간 현황보고', data, now.toLocaleString('ko-KR')),
+    html: buildHtml('주간 현황보고', data, now.toLocaleString('ko-KR'), certStatsSection(now)),
   };
 }
 
-module.exports = { daily, weekly, weekRange, dayRange };
+module.exports = { daily, weekly, weekRange, dayRange, workWeekRange, certStatsSection };

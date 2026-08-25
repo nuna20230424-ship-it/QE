@@ -10,6 +10,7 @@ const state = {
   cal: { y: _now.getFullYear(), m: _now.getMonth() }, // m: 0-based
   sort: { key: null, dir: 'asc' }, // 일정표 정렬 상태
   boardExpanded: new Set(), // 5개 초과 시 펼친 상태의 상태칼럼
+  options: { models: [] }, // 입력 자동목록용 선택지 (필터와 무관한 전체 이력값)
 };
 
 const BOARD_LIMIT = 5; // 보드 칼럼당 기본 노출 카드 수
@@ -51,8 +52,18 @@ function buildQuery() {
 
 async function load() {
   state.items = await api(`/api/requests${buildQuery()}`);
+  await loadOptions();
   render();
   renderSummary();
+}
+
+// 모델명 자동목록: 한 번이라도 입력된 값 전체를 서버에서 받는다.
+// state.items는 필터가 걸린 목록이므로 여기서 쓰면 값이 누락된다.
+async function loadOptions() {
+  try {
+    const o = await api('/api/options');
+    state.options.models = o.models || [];
+  } catch { /* 목록을 못 받아도 직접 입력은 그대로 동작 */ }
 }
 
 // ---- 공통 ----
@@ -89,9 +100,19 @@ async function renderSummary() {
 }
 
 // ---- 보드 ----
+// 진행차수(Round)와 판정을 한 문구로 조합: "진행차수 3차, Pass"
+// 둘 중 하나만 있으면 있는 쪽만, 둘 다 없으면 빈 문자열.
+function roundVerdictLabel(it) {
+  const round = it.round ? `진행차수 ${it.round}차` : '';
+  return [round, it.verdict || ''].filter(Boolean).join(', ');
+}
+
 // 판정 배지: 보드는 완료건만, 일정표 판정 컬럼은 값이 있으면 항상
-const verdictChip = (v) => (v ? `<span class="verdict v-${v}">${esc(v)}</span>` : '');
-const verdictBadge = (it) => (it.status === '완료' && it.verdict ? verdictChip(it.verdict) : '');
+const verdictChip = (it) => {
+  const label = roundVerdictLabel(it);
+  return label ? `<span class="verdict v-${it.verdict || 'none'}">${esc(label)}</span>` : '';
+};
+const verdictBadge = (it) => (it.status === '완료' ? verdictChip(it) : '');
 
 // 일정 표기: 시작일 ~ 완료일 (없으면 예약확정일 → 희망일 단일)
 function schedLabel(it) {
@@ -183,7 +204,7 @@ function renderSchedule() {
         <td>${esc(it.requester) || '—'}</td>
         <td>${esc(it.tester) || '—'}</td>
         <td><span class="status-pill st-${it.status}"><span class="dot bg-${it.status}"></span>${it.status}</span></td>
-        <td>${verdictChip(it.verdict) || '—'}</td>
+        <td>${verdictChip(it) || '—'}</td>
         <td class="cell-comment">${esc(it.result) || '—'}</td>
       </tr>`;
   }).join('');
@@ -318,16 +339,84 @@ async function renderReport(period) {
     <div class="report-body">${r.html}</div>`;
 }
 
-const VIEWS = ['board', 'schedule', 'calendar', 'daily', 'weekly'];
+// ---- 인증 통계 (모델별 누적) ----
+// 지표: 진행차수(누적 의뢰 횟수) · Fail 횟수 · 전체 의뢰 대비 Pass율 / Fail율.
+// 비율 분모는 '전체 의뢰 횟수'라 미판정 건도 포함되므로 Pass율 + Fail율은 100%가 되지 않는다.
+function rateBar(pass, fail) {
+  return `<span class="rate-bar" title="Pass ${pass}% / Fail ${fail}%">
+    <i class="rb-pass" style="width:${pass}%"></i><i class="rb-fail" style="width:${fail}%"></i>
+  </span>`;
+}
+
+function certStatsTable(rows) {
+  if (!rows.length) return '<p class="col-empty">집계할 의뢰가 없습니다.</p>';
+  const body = rows.map((r) => `
+    <tr>
+      <td><strong>${esc(r.model_name)}</strong></td>
+      <td><span class="badge badge-${certClass(r.cert_type)}">${esc(r.cert_type)}</span></td>
+      <td class="num">${r.total}차</td>
+      <td class="num">${r.max_round ? `${r.max_round}차` : '—'}</td>
+      <td class="num">${r.pass}</td>
+      <td class="num ${r.fail ? 'em-fail' : ''}">${r.fail}</td>
+      <td class="num">${r.pending}</td>
+      <td class="num">${r.pass_rate}%</td>
+      <td class="num ${r.fail ? 'em-fail' : ''}">${r.fail_rate}%</td>
+      <td>${rateBar(r.pass_rate, r.fail_rate)}</td>
+    </tr>`).join('');
+  return `
+    <div class="table-wrap">
+    <table class="stats-table">
+      <thead><tr>
+        <th>모델명</th><th>인증종류</th>
+        <th class="num">진행차수<br><small>누적 의뢰</small></th>
+        <th class="num">최근<br><small>Round 입력</small></th>
+        <th class="num">Pass</th><th class="num">Fail</th><th class="num">미판정</th>
+        <th class="num">Pass율</th><th class="num">Fail율</th>
+        <th>비율</th>
+      </tr></thead>
+      <tbody>${body}</tbody>
+    </table>
+    </div>`;
+}
+
+async function renderCertStats() {
+  const root = $('#view-certstats');
+  root.innerHTML = '<p class="col-empty">불러오는 중…</p>';
+  let s;
+  try { s = await api('/api/cert-stats'); }
+  catch (err) { root.innerHTML = `<p class="col-empty">통계를 불러오지 못했습니다: ${esc(err.message)}</p>`; return; }
+
+  const t = s.totals;
+  const chips = [
+    { k: '모델 수', v: t.models },
+    { k: '누적 의뢰', v: t.total },
+    { k: 'Pass', v: t.pass },
+    { k: 'Fail', v: t.fail, warn: t.fail > 0 },
+    { k: '전체 Pass율', v: `${t.pass_rate}%` },
+    { k: '전체 Fail율', v: `${t.fail_rate}%` },
+  ].map((c) => `<div class="sumcard ${c.warn ? 'warn' : ''}"><div class="k">${c.k}</div><div class="v">${c.v}</div></div>`).join('');
+
+  root.innerHTML = `
+    <div class="report-bar">
+      <button class="btn" data-stats-refresh="1">↻ 새로고침</button>
+      <span class="report-hint">전체 기간 누적 · 비율 분모는 전체 의뢰 횟수(미판정 포함)이므로 Pass율 + Fail율 &lt; 100%일 수 있습니다.</span>
+    </div>
+    <div class="summary stats-summary">${chips}</div>
+    ${certStatsTable(s.rows)}`;
+}
+
+const VIEWS = ['board', 'schedule', 'calendar', 'daily', 'weekly', 'certstats'];
 function render() {
   VIEWS.forEach((v) => $(`#view-${v}`).classList.toggle('hidden', state.view !== v));
   const isReport = state.view === 'daily' || state.view === 'weekly';
-  $('#summary').classList.toggle('hidden', isReport);
+  const isPanel = isReport || state.view === 'certstats';
+  $('#summary').classList.toggle('hidden', isPanel);
   $('#board-clock').classList.toggle('hidden', state.view !== 'board');
-  document.querySelector('.filters').classList.toggle('hidden', isReport);
+  document.querySelector('.filters').classList.toggle('hidden', isPanel);
   if (state.view === 'board') renderBoard();
   else if (state.view === 'schedule') renderSchedule();
   else if (state.view === 'calendar') renderCalendar();
+  else if (state.view === 'certstats') renderCertStats();
   else renderReport(state.view);
 }
 
@@ -347,6 +436,11 @@ const NEW_DEFAULTS = { cert_type: 'Netflix NTS', test_type: 'IR', test_purpose: 
 function buildRequesterOptions() {
   const names = [...new Set(state.items.map((i) => i.requester).filter(Boolean))].sort();
   $('#requester-list').innerHTML = names.map((n) => `<option value="${esc(n)}"></option>`).join('');
+}
+
+// 모델명: 이전에 한 번이라도 입력된 값을 datalist로 노출 (직접 입력도 그대로 가능)
+function buildModelOptions() {
+  $('#model-list').innerHTML = state.options.models.map((n) => `<option value="${esc(n)}"></option>`).join('');
 }
 
 function setCombo(prefix, value) {
@@ -404,6 +498,7 @@ function openModal(item) {
     $(sel).value = isNew ? (NEW_DEFAULTS[k] ?? '') : (item[k] ?? '');
   }
   buildRequesterOptions();
+  buildModelOptions();
   $('#f-requester').value = isNew ? '' : (item.requester || '');
   setCombo('tester', isNew ? '' : (item.tester || ''));
   applyRoleLock();
@@ -506,6 +601,11 @@ function bind() {
       sendBtn.disabled = false;
       sendBtn.textContent = orig;
     });
+  });
+
+  // 인증 통계 새로고침
+  $('#view-certstats').addEventListener('click', (e) => {
+    if (e.target.closest('[data-stats-refresh]')) renderCertStats();
   });
 
   // 일정표 엑셀 다운로드 + 컬럼 정렬

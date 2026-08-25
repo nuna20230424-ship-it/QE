@@ -32,6 +32,7 @@
       <button class="tab" data-view="calendar">캘린더</button>
       <button class="tab" data-view="daily">일일보고</button>
       <button class="tab" data-view="weekly">주간보고</button>
+      <button class="tab" data-view="certstats">인증 통계</button>
     </div>
     <div class="filters">
       <select id="filter-cert">
@@ -62,6 +63,7 @@
     <div id="view-calendar" class="view hidden"></div>
     <div id="view-daily" class="view hidden"></div>
     <div id="view-weekly" class="view hidden"></div>
+    <div id="view-certstats" class="view hidden"></div>
   </main>
 
   <!-- 등록 / 상세 모달 -->
@@ -99,6 +101,7 @@
                 <option value="Pre-Test">Pre-Test</option>
                 <option value="양산">양산</option>
                 <option value="self">self</option>
+                <option value="MR">MR</option>
               </select>
             </label>
             <label>Round
@@ -112,7 +115,8 @@
               </select>
             </label>
             <label>모델명*
-              <input id="f-model_name" required />
+              <input id="f-model_name" list="model-list" placeholder="선택 또는 직접 입력" autocomplete="off" required />
+              <datalist id="model-list"></datalist>
             </label>
             <label>FW 버전
               <input id="f-fw_version" />

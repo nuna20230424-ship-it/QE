@@ -29,6 +29,24 @@ app.get('/api/stats', (req, res) => {
   res.json(repo.stats());
 });
 
+// 입력 필드 자동목록용 선택지 (모델명: 한 번이라도 입력된 값 전체)
+app.get('/api/options', (req, res) => {
+  res.json({ models: repo.modelNames() });
+});
+
+// 모델(프로젝트)별 인증 통계. from·to를 함께 주면 해당 기간에 진행된 건만 집계
+app.get('/api/cert-stats', (req, res) => {
+  const { from, to } = req.query;
+  if ((from && !to) || (!from && to)) {
+    return res.status(400).json({ error: 'from과 to는 함께 지정해야 합니다.' });
+  }
+  const ymd = /^\d{4}-\d{2}-\d{2}$/;
+  if ((from && !ymd.test(from)) || (to && !ymd.test(to))) {
+    return res.status(400).json({ error: '날짜는 YYYY-MM-DD 형식이어야 합니다.' });
+  }
+  res.json(repo.certStats(from && to ? { from, to } : null));
+});
+
 // 일일/주간 현황보고 (미리보기용 HTML + 집계)
 app.get('/api/report/:period', (req, res) => {
   const p = req.params.period;

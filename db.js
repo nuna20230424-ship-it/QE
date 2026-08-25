@@ -2,7 +2,8 @@
 const path = require('path');
 const Database = require('better-sqlite3');
 
-const db = new Database(path.join(__dirname, 'data.db'));
+// 운영은 data.db 고정. DB_PATH는 스모크 테스트가 실 DB를 건드리지 않게 하는 용도.
+const db = new Database(process.env.DB_PATH || path.join(__dirname, 'data.db'));
 db.pragma('journal_mode = WAL');
 
 db.exec(`
@@ -50,6 +51,10 @@ for (const name of ['test_type', 'test_purpose', 'round', 'verdict', 'started_da
   if (!existingCols.includes(name)) db.exec(`ALTER TABLE requests ADD COLUMN ${name} TEXT`);
 }
 
+// 모델별 통계 집계(GROUP BY)와 모델명 목록(DISTINCT)이 전체 스캔을 타지 않도록 인덱스 보강
+db.exec('CREATE INDEX IF NOT EXISTS idx_requests_model_cert ON requests (model_name, cert_type)');
+db.exec('CREATE INDEX IF NOT EXISTS idx_requests_completed_date ON requests (completed_date)');
+
 const nowIso = () => new Date().toISOString();
 
 const ALLOWED = [
@@ -64,6 +69,14 @@ const LABELS = {
   scheduled_date: '예약일정', tester: '테스터', status: '상태', progress: '진행사항', result: '결과',
   verdict: '판정', started_date: '시작일', completed_date: '완료일',
 };
+
+// 의뢰가 "진행된" 것으로 볼 기간 판정용 대표 시작/종료일.
+// 시작일 → 예약확정일 → 희망일 순으로 대체하고, 종료일은 완료일 우선.
+const ACT_START = "COALESCE(NULLIF(started_date,''), NULLIF(scheduled_date,''), NULLIF(desired_date,''))";
+const ACT_END = "COALESCE(NULLIF(completed_date,''), NULLIF(started_date,''), NULLIF(scheduled_date,''), NULLIF(desired_date,''))";
+
+// 비율(%) 계산. 분모가 0이면 0으로 반환해 0 나눗셈을 차단한다.
+const pct = (n, d) => (d > 0 ? Math.round((n / d) * 1000) / 10 : 0);
 
 function logHistory(requestId, actor, action, detail) {
   db.prepare('INSERT INTO history (request_id, ts, actor, action, detail) VALUES (?,?,?,?,?)')
@@ -161,6 +174,57 @@ module.exports = {
 
   history(requestId) {
     return db.prepare('SELECT * FROM history WHERE request_id = ? ORDER BY id DESC').all(requestId);
+  },
+
+  // 한 번이라도 입력된 모델명 목록. DISTINCT로 중복을 제거해 콤보박스에 그대로 쓴다.
+  modelNames() {
+    return db.prepare(
+      "SELECT DISTINCT model_name FROM requests WHERE model_name IS NOT NULL AND TRIM(model_name) <> '' ORDER BY model_name COLLATE NOCASE"
+    ).all().map((r) => r.model_name);
+  },
+
+  // 모델(프로젝트) × 인증종류별 통계. range가 있으면 대표 진행구간이 기간과 겹치는 건만 집계.
+  // 집계는 SQL GROUP BY로 처리해 행 전체를 앱으로 끌어오지 않는다.
+  certStats(range) {
+    const where = range
+      ? `WHERE ${ACT_START} IS NOT NULL AND ${ACT_START} <= @to AND MAX(${ACT_END}, ${ACT_START}) >= @from`
+      : '';
+    const rows = db.prepare(`
+      SELECT model_name, cert_type,
+             COUNT(*)                                                   AS total,
+             SUM(CASE WHEN verdict = 'Pass' THEN 1 ELSE 0 END)          AS pass,
+             SUM(CASE WHEN verdict = 'Fail' THEN 1 ELSE 0 END)          AS fail,
+             SUM(CASE WHEN verdict = 'Drop' THEN 1 ELSE 0 END)          AS drop_cnt,
+             SUM(CASE WHEN status = '완료' THEN 1 ELSE 0 END)            AS completed,
+             MAX(CAST(NULLIF(round,'') AS INTEGER))                     AS max_round
+      FROM requests
+      ${where}
+      GROUP BY model_name, cert_type
+      ORDER BY model_name COLLATE NOCASE, cert_type
+    `).all(range || {});
+
+    const out = rows.map((r) => ({
+      ...r,
+      max_round: r.max_round || 0,
+      pending: r.total - r.pass - r.fail - r.drop_cnt,
+      pass_rate: pct(r.pass, r.total),
+      fail_rate: pct(r.fail, r.total),
+    }));
+
+    const sum = (k) => out.reduce((a, r) => a + r[k], 0);
+    const total = sum('total');
+    return {
+      range: range || null,
+      rows: out,
+      totals: {
+        models: new Set(out.map((r) => r.model_name)).size,
+        total,
+        pass: sum('pass'),
+        fail: sum('fail'),
+        pass_rate: pct(sum('pass'), total),
+        fail_rate: pct(sum('fail'), total),
+      },
+    };
   },
 
   // 요약 통계

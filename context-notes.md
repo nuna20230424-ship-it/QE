@@ -33,6 +33,26 @@
 - **자동 발송**: scheduler.js가 매일 19시(SEND_HOUR) 일일+주간 2통 발송. setTimeout으로 다음 19시 재예약(상시구동 전제). 수신 기본값은 notify.js DEFAULT_REPORT_TO, config.reportTo로 재정의.
 - **Fail 상세**: 완료&판정=Fail 건에 대해 진행사항(progress)+결과코멘트(result)를 별도 블록으로 첨부.
 
+## 5차 고도화 (2026-08-26, 작업지시서 기준)
+
+### 지시서 문면대로 두되 기록해 둘 판단 3건
+- **`MR`이 Test type과 Test 목적 양쪽에 존재**. 지시서가 `Test 목적`에 추가하라고 위치를 명시해 그대로 넣었다. 원래 의도가 Test type이었다면 `index.html`의 `f-test_purpose`에서 빼면 된다.
+- **`진행차수`의 정의가 Task 3과 Task 4에서 다르다.** Task 3은 기존 `round` 컬럼(1~5, 테스터 수동 입력), Task 4는 "누적 의뢰 횟수"(COUNT). 두 값을 통계 표에 `진행차수`(누적)와 `최근 Round 입력`(MAX) 두 칼럼으로 나란히 뒀다.
+- **Pass율 분모는 '전체 의뢰 횟수'**(지시서 문면). 미판정 건이 분모에 남아 Pass율 + Fail율 < 100%가 된다. 통계 화면과 주간보고 섹션에 이 취지를 문구로 박아 오해를 막았다. 판정 완료 건만 분모로 쓰려면 `db.js`의 `pct(r.pass, r.total)`을 `pct(r.pass, r.pass + r.fail)`로 바꾸면 된다.
+
+### 설계 결정
+- **모델명 목록은 `state.items`가 아니라 서버에서 받는다.** `state.items`는 상단 필터가 걸린 목록이라 필터를 켜면 과거 입력값이 사라진다. "1번이라도 입력된 값 전체"라는 요건을 지키려면 `SELECT DISTINCT`가 필요해 `/api/options`를 새로 뒀다. 의뢰자 필드는 기존대로 `state.items` 기반이라 같은 한계가 남아 있다(요건 밖이라 미변경).
+- **모델명에 DB UNIQUE 제약은 걸지 않았다.** 같은 모델을 여러 번 의뢰하는 게 정상이라 UNIQUE는 데이터 자체를 막는다. 중복 제거는 조회 시점의 `DISTINCT`로 처리한다.
+- **집계는 SQL `GROUP BY`로 내린다.** 기존 `stats()`/`reportData()`처럼 전체 행을 앱으로 끌어와 순회하면 의뢰가 쌓일수록 느려진다. `certStats()`는 `idx_requests_model_cert (model_name, cert_type)` 커버링 인덱스를 타고 집계만 반환한다. `ORDER BY … COLLATE NOCASE`는 임시 B-TREE를 쓰지만 정렬 대상이 이미 그룹핑된 소수 행이라 영향이 없다.
+- **"해당 주차에 진행된" 판정 기준**: 대표 시작일(`started_date` → `scheduled_date` → `desired_date`)과 대표 종료일(`completed_date` → 시작일 대체)이 만드는 구간이 주차와 겹치면 포함. 단일 기준일 방식은 주를 걸쳐 진행된 건을 놓쳐서 구간 겹침으로 갔다.
+- **주간보고의 두 기간이 다르다.** 본문(완료/진행중 집계)은 기존대로 **월~일**, 새 인증 통계 섹션만 지시서 문면대로 **월~금**. 섹션 머리말에 기간을 명시해 혼동을 막았다. 기존 동작을 바꾸지 않으려는 선택이다.
+- **0 나눗셈**은 `db.js`의 `pct(n, d)` 한 곳에서 막는다(`d > 0 ? … : 0`). 화면·리포트가 같은 값을 쓰므로 방어 지점이 하나다.
+- **`DB_PATH` 환경변수**를 추가했다. 스모크 테스트가 운영 `data.db`를 건드리지 않게 하는 용도이고, 미설정 시 기존과 동일하게 `data.db`를 쓴다.
+
+### 테스트
+- `npm test` → `test/smoke.js` 31건. 빈 DB 0 나눗셈, DISTINCT 중복 제거, 모델×인증 분리 집계, 주차 필터(지난주 건 제외), 리포트 문자열까지 확인한다.
+- 지시서에 없는 추가 산출물이다. 불필요하면 `test/`와 `package.json`의 `test` 스크립트를 지우면 된다.
+
 ## 실행
 - `npm install` 후 `npm start` (기본 PORT 3000, HOST 0.0.0.0). 환경변수 PORT/HOST로 변경 가능.
 - 이메일 발송은 config.json의 smtp 설정 필요(미설정 시 앱·스케줄러는 정상 동작하되 발송만 생략).

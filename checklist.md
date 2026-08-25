@@ -42,6 +42,18 @@
 - [x] 수신: nuna20230424@gmail.com, keonhee.cho@kaongroup.com (config.reportTo로 재정의 가능)
 - [ ] Mac Mini 재배포 (config.json에 smtp 채워야 실제 발송)
 
+## 5차 고도화 (2026-08-26 구현 · 작업지시서 4개 Task)
+- [x] Task 1 — Test 목적에 `MR` 옵션 추가
+- [x] Task 2 — 모델명 입력 자동 목록화 (`/api/options` + datalist, DISTINCT로 중복 제거)
+- [x] Task 3 — 완료 진행/결과를 `진행차수 3차, Pass` 형태로 표기 (보드 카드·일정표·리포트 3곳)
+- [x] Task 4-1 — `인증 통계` 탭: 모델×인증별 진행차수·Fail 횟수·Pass율·Fail율 (표 + 비율 바)
+- [x] Task 4-2 — 주간보고에 `모델별 인증 현황` 섹션 분리 (해당 주차 월~금 기준)
+- [x] 0 나눗셈 방어 (`pct()` 분모 0 → 0 반환) + 빈 DB 케이스 테스트
+- [x] 집계 성능 — `idx_requests_model_cert` 인덱스 + SQL GROUP BY 집계 (앱단 Full Scan 제거)
+- [x] `npm test` 스모크 31건 통과 + 전체 JS 구문검사 통과
+- [ ] Mac Mini 재배포 (`npm install` 후 재기동)
+- [ ] 브라우저 UI 실제 조작 검증 (등록→모델명 목록 노출→통계 탭)
+
 ## 향후(요청 시)
 - [ ] 사용자 인증/로그인 (현재는 LAN 신뢰 기반, 인증 없음)
 - [ ] Jira 티켓 링크 / 거증 첨부 (testrun 연계)

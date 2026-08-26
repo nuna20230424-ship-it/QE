@@ -1,5 +1,6 @@
 // 일일/주간 현황보고 기간 계산 및 HTML 생성 (앱 뷰·이메일 본문 공용, 인라인 스타일)
 const repo = require('./db');
+const notify = require('./notify');   // 메일 링크에 쓸 baseUrl 조회
 
 const pad2 = (n) => String(n).padStart(2, '0');
 const ymd = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
@@ -60,8 +61,9 @@ const tdNum = (t) => `<td style="padding:8px 10px;border-bottom:1px solid #eef1f
 const section = (title, inner) => `<h3 style="font-size:15px;margin:22px 0 8px;padding-bottom:5px;border-bottom:2px solid #e2e7ef;">${title}</h3>${inner}`;
 const emptyLine = (t) => `<p style="color:#6b7686;margin:6px 0;">${t}</p>`;
 
+const chip = (label, val, color) => `<span style="display:inline-block;margin:0 8px 8px 0;padding:6px 12px;border-radius:8px;background:#f4f6fa;border:1px solid #e2e7ef;font-size:13px;"><b style="color:${color};font-size:16px;">${val}</b> ${label}</span>`;
+
 function summaryLine(c) {
-  const chip = (label, val, color) => `<span style="display:inline-block;margin:0 8px 8px 0;padding:6px 12px;border-radius:8px;background:#f4f6fa;border:1px solid #e2e7ef;font-size:13px;"><b style="color:${color};font-size:16px;">${val}</b> ${label}</span>`;
   return `<div style="margin:14px 0 4px;">
     ${chip('완료', c.completed, '#2faa61')}
     ${chip('Pass', c.pass, '#1a56d6')}
@@ -172,71 +174,42 @@ function buildHtml(title, data, generatedAt, extra) {
   return shell(title, rangeLabel, body, generatedAt);
 }
 
-// ---- 엑셀(CSV) 첨부 ----
-// 화면의 '⤓ 엑셀 다운로드'와 같은 UTF-8 BOM CSV 서식. Excel에서 바로 열린다.
-const csvCell = (v) => {
-  const t = String(v ?? '');
-  return /[",\r\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t;
-};
-const csvBuffer = (lines) => Buffer.from(
-  '\uFEFF' + lines.map((r) => r.map(csvCell).join(',')).join('\r\n'), 'utf8'
-);
+// ---- 발송용 본문 (링크 전용) ----
+// 사내 자료가 사외 메일함에 남지 않도록, 메일에는 집계 수치와 대시보드 링크만 싣는다.
+// 모델명·담당자 실명·결함 코멘트는 사내망 대시보드에서만 볼 수 있다. 첨부도 붙이지 않는다.
+const MAIL_NOTE = '사내 자료 보호를 위해 이 메일에는 집계 수치만 담겨 있습니다. '
+  + '모델명 · 담당자 · 결과 코멘트 등 상세 내용은 사내 대시보드에서 확인하세요.';
 
-// 일일·주간 보고 첨부: 본문의 '완료 모델' / '진행중 모델' 표와 같은 항목
-const REPORT_COLS = [
-  ['인증종류', (r) => r.cert_type],
-  ['Test type', (r) => r.test_type],
-  ['Test 목적', (r) => r.test_purpose],
-  ['진행차수', (r) => (r.round ? `${r.round}차` : '')],
-  ['모델명', (r) => r.model_name],
-  ['FW', (r) => r.fw_version],
-  ['의뢰자', (r) => r.requester],
-  ['테스터', (r) => r.tester],
-  ['상태', (r) => r.status],
-  ['판정', (r) => r.verdict],
-  ['시작일', (r) => r.started_date],
-  ['완료일', (r) => compDate(r)],
-  ['진행사항', (r) => r.progress],
-  ['결과코멘트', (r) => r.result],
-];
-
-function reportCsvBuffer(title, data) {
-  const head = REPORT_COLS.map((c) => c[0]);
-  const rows = (list) => list.map((r) => REPORT_COLS.map((c) => c[1](r)));
-  return csvBuffer([
-    [title, data.from === data.to ? data.from : `${data.from} ~ ${data.to}`],
-    ['집계', `완료 ${data.counts.completed} (Pass ${data.counts.pass} / Fail ${data.counts.fail}) · 진행중 ${data.counts.inProgress}`],
-    [],
-    ['[완료 모델]'], head, ...rows(data.completed),
-    [],
-    ['[진행중 모델]'], head, ...rows(data.inProgress),
-  ]);
+// 인증 통계용 요약 칩 (건수·비율만)
+function statsSummaryLine(t) {
+  return `<div style="margin:14px 0 4px;">
+    ${chip('모델', t.models, '#1f2733')}
+    ${chip('판정', t.judged, '#1f2733')}
+    ${chip('Pass', t.pass, '#1a56d6')}
+    ${chip('Fail', t.fail, '#d23227')}
+    ${chip('Pass율', t.pass_rate + '%', '#1a56d6')}
+    ${chip('Fail율', t.fail_rate + '%', '#d23227')}
+  </div>`;
 }
 
-// 인증 통계 첨부: 화면 '인증 통계' 탭의 엑셀 다운로드와 칼럼·머리말이 같다.
-const STATS_COLS = [
-  ['모델명', (r) => r.model_name],
-  ['인증종류', (r) => r.cert_type],
-  ['결과', (r) => r.result],
-  ['Test 목적', (r) => r.test_purpose],
-  ['진행차수', (r) => r.round],
-  ['Pass', (r) => r.pass],
-  ['Fail', (r) => r.fail],
-  ['Pass율(%)', (r) => r.pass_rate],
-  ['Fail율(%)', (r) => r.fail_rate],
-];
+function dashboardLink(hint) {
+  const url = notify.baseUrl();
+  if (!url) {
+    return `<p style="color:#6b7686;font-size:13px;margin:16px 0 0;">
+      사내 대시보드에서 확인하세요${hint ? ` (${esc(hint)})` : ''}.
+      <br><span style="color:#c1793a;">※ config.json에 baseUrl이 없어 링크를 넣지 못했습니다.</span>
+    </p>`;
+  }
+  return `<div style="margin:18px 0 6px;">
+    <a href="${esc(url)}" style="display:inline-block;padding:10px 18px;border-radius:8px;background:#2f6df6;color:#ffffff;font-weight:700;font-size:14px;text-decoration:none;">대시보드 열기</a>
+    <div style="color:#6b7686;font-size:12px;margin-top:7px;">${esc(url)}${hint ? ` · ${esc(hint)}` : ''}</div>
+  </div>`;
+}
 
-function certStatsCsvBuffer(range, s) {
-  const t = s.totals;
-  return csvBuffer([
-    ['인증 통계', range ? `${range.from} ~ ${range.to} (월~금)` : '전체 기간 누적'],
-    ['집계 대상', '판정 완료(Pass/Fail) 건만 — 미판정 건은 제외'],
-    [],
-    STATS_COLS.map((c) => c[0]),
-    ...s.rows.map((r) => STATS_COLS.map((c) => c[1](r))),
-    [],
-    ['합계', `모델 ${t.models}건`, '', '', `판정 ${t.judged}건`, t.pass, t.fail, t.pass_rate, t.fail_rate],
-  ]);
+function mailBody(title, rangeLabel, summaryHtml, hint, generatedAt) {
+  const body = `${summaryHtml}${dashboardLink(hint)}
+    <p style="color:#9aa4b2;font-size:12px;margin:16px 0 0;line-height:1.6;">${MAIL_NOTE}</p>`;
+  return shell(title, rangeLabel, body, generatedAt);
 }
 
 function daily(now = new Date()) {
@@ -245,8 +218,9 @@ function daily(now = new Date()) {
   return {
     period: 'daily', title: '일일 현황보고', data,
     subject: `[인증일정] 일일 현황보고 (${from})`,
+    // html: 사내망 화면용(전체) / mailHtml: 발송용(집계 + 링크만)
     html: buildHtml('일일 현황보고', data, now.toLocaleString('ko-KR')),
-    attachments: [{ filename: `일일현황보고_${from}.csv`, content: reportCsvBuffer('일일 현황보고', data) }],
+    mailHtml: mailBody('일일 현황보고', from, summaryLine(data.counts), '일일보고 탭', now.toLocaleString('ko-KR')),
   };
 }
 
@@ -258,11 +232,7 @@ function weekly(now = new Date()) {
     period: 'weekly', title: '주간 현황보고', data,
     subject: `[인증일정] 주간 현황보고 (${from} ~ ${to})`,
     html: buildHtml('주간 현황보고', data, now.toLocaleString('ko-KR'), certStatsSection(now)),
-    // 본문이 월~일 집계 + 월~금 인증통계 두 부분이라 첨부도 두 개로 나눈다.
-    attachments: [
-      { filename: `주간현황보고_${from}_${to}.csv`, content: reportCsvBuffer('주간 현황보고', data) },
-      { filename: `인증통계_${wk.from}_${wk.to}.csv`, content: certStatsCsvBuffer(wk, repo.certStats(wk)) },
-    ],
+    mailHtml: mailBody('주간 현황보고', `${from} ~ ${to}`, summaryLine(data.counts), '주간보고 탭', now.toLocaleString('ko-KR')),
   };
 }
 
@@ -274,8 +244,8 @@ function certStats(now = new Date()) {
   return {
     period: 'certstats', title: '인증 통계 보고', range, data: s,
     subject: `[인증일정] 주간 인증 통계 (${range.from} ~ ${range.to})`,
-    html: shell('인증 통계 보고', rangeLabel, certStatsSection(now, range), now.toLocaleString('ko-KR')),
-    attachments: [{ filename: `인증통계_${range.from}_${range.to}.csv`, content: certStatsCsvBuffer(range, s) }],
+    html: shell('통계 보고', rangeLabel, certStatsSection(now, range), now.toLocaleString('ko-KR')),
+    mailHtml: mailBody('통계 보고', rangeLabel, statsSummaryLine(s.totals), '인증 통계 탭', now.toLocaleString('ko-KR')),
   };
 }
 

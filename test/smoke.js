@@ -157,8 +157,8 @@ ok('Fail 상세에 결과 코멘트 유지', w.html.includes('DRM 재생 실패'
 ok('본문 집계 구간은 월~일 유지', report.weekRange(now).to !== wk.to);
 ok('일일보고에는 통계 섹션 없음', !report.daily(now).html.includes('모델별 인증 현황'));
 
-// ---------- 보고 메일: 스케줄 · 첨부 · 인증통계 단독 보고 ----------
-head('보고 메일 스케줄 · 엑셀 첨부');
+// ---------- 보고 메일: 스케줄 · 링크 전용 본문 · 인증통계 단독 보고 ----------
+head('보고 메일 스케줄 · 링크 전용 본문');
 const sched = require('../scheduler');
 const job = (k) => sched.JOBS.find((j) => j.key === k);
 ok('일일보고 = 매일 18시', job('daily').hour === 18 && job('daily').days === null);
@@ -176,16 +176,32 @@ ok('금 19시 → 주간보고는 다음 주 금', (() => { const d = nextAt('we
 const monEarly = new Date(2026, 7, 31, 8, 0, 0);      // 월 8시
 ok('월 8시 → 인증통계는 당일 9시', (() => { const d = nextAt('certstats', monEarly); return d.getDate() === 31 && d.getHours() === 9; })());
 
-// 첨부(엑셀) — 화면 다운로드와 같은 UTF-8 BOM CSV
+// 발송 본문은 링크 전용 — 사내 자료가 사외 메일함에 남지 않아야 한다.
 const dRep = report.daily(now);
 const wRep = report.weekly(now);
 const cRep = report.certStats(now);
-ok('일일보고 첨부 1건', dRep.attachments.length === 1, String(dRep.attachments.length));
-ok('주간보고 첨부 2건 (현황 + 통계)', wRep.attachments.length === 2, String(wRep.attachments.length));
-ok('인증통계 첨부 1건', cRep.attachments.length === 1);
-ok('첨부 파일명 .csv', [...dRep.attachments, ...wRep.attachments, ...cRep.attachments].every((a) => a.filename.endsWith('.csv')));
-ok('첨부에 UTF-8 BOM', dRep.attachments[0].content.slice(0, 3).equals(Buffer.from([0xEF, 0xBB, 0xBF])));
-ok('첨부 CSV에 본문 항목 헤더', dRep.attachments[0].content.toString('utf8').includes('인증종류,Test type,Test 목적,진행차수,모델명'));
+const mails = [dRep, wRep, cRep];
+ok('첨부 없음 (사내 자료 반출 방지)', mails.every((r) => !r.attachments));
+ok('세 보고 모두 mailHtml 제공', mails.every((r) => typeof r.mailHtml === 'string' && r.mailHtml.length > 0));
+
+// 픽스처의 민감 값이 메일 본문에 한 글자도 없어야 한다.
+const SECRETS = ['KM-100', 'KM-200', 'KM-300', 'KM-400', 'KM-500', '이해찬', 'PL', 'DRM 재생 실패'];
+for (const r of mails) {
+  const hit = SECRETS.filter((v) => r.mailHtml.includes(v));
+  ok(`${r.period} 메일에 모델명·실명·결함코멘트 없음`, hit.length === 0, hit.join(', '));
+}
+ok('일일 메일에 집계 수치는 포함', dRep.mailHtml.includes('완료') && dRep.mailHtml.includes('Fail'));
+ok('통계 메일에 Pass율 포함', cRep.mailHtml.includes('Pass율'));
+ok('메일에 대시보드 안내 문구', mails.every((r) => r.mailHtml.includes('대시보드')));
+ok('메일에 사내자료 보호 안내', mails.every((r) => r.mailHtml.includes('사내 자료 보호')));
+
+// 화면용 html은 종전대로 상세를 담는다 (사내망에서만 열람)
+ok('화면용 html에는 상세 유지', dRep.html.includes('KM-100') || wRep.html.includes('KM-100'));
+ok('화면용과 발송용이 다른 본문', mails.every((r) => r.html !== r.mailHtml));
+
+// 수신자 기본값에 개인 Gmail이 없어야 한다
+const notifySrc = fs.readFileSync(path.join(__dirname, '..', 'notify.js'), 'utf8');
+ok('기본 수신자에 개인 Gmail 없음', !/DEFAULT_REPORT_TO[^;]*gmail\.com/i.test(notifySrc));
 
 // 인증통계 단독 보고는 '지난주' 월~금
 const lw = report.lastWorkWeekRange(now);

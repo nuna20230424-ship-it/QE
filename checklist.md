@@ -39,7 +39,7 @@
 - [x] 일일보고·주간보고 탭 + 뷰(새로고침·즉시발송 버튼)
 - [x] Fail 모델은 진행사항+결과코멘트 상세 표기
 - [x] `scheduler.js` — 매일 19시 일일+주간 리포트 자동 메일
-- [x] 수신: nuna20230424@gmail.com, keonhee.cho@kaongroup.com (config.reportTo로 재정의 가능)
+- [x] 수신: nuna20230424@gmail.com, keonhee.cho@kaongroup.com (config.reportTo로 재정의 가능) — **8차에서 개인 Gmail 제거됨**
 - [ ] Mac Mini 재배포 (config.json에 smtp 채워야 실제 발송)
 
 ## 5차 고도화 (2026-08-26 구현 · 작업지시서 4개 Task)

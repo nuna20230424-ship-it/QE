@@ -82,8 +82,9 @@ app.post('/api/report/:period/send', async (req, res) => {
   const fn = PERIODS[req.params.period];
   if (!fn) return res.status(400).json(badPeriod);
   const r = report[fn]();
-  const sent = await notify.sendReportMail(r.subject, r.html, r.attachments);
-  res.json({ sent, attachments: (r.attachments || []).map((a) => a.filename) });
+  // 발송 본문은 집계 + 링크만 담긴 mailHtml (화면용 r.html과 다름)
+  const sent = await notify.sendReportMail(r.subject, r.mailHtml);
+  res.json({ sent });
 });
 
 app.get('/api/requests/:id', (req, res) => {

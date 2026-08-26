@@ -122,7 +122,7 @@
 
 ### 미완 (사용자 작업 필요)
 - **`config.json`이 없어 실제 발송은 되지 않는다.** SMTP 사용자/앱 비밀번호는 비밀이라 대화·저장소에 넣지 않는다. `config.example.json`을 복사해 사용자가 직접 채워야 한다. 채우기 전까지 앱·스케줄러는 정상 동작하고 발송만 건너뛴다(`sent: false`).
-- 수신자 기본값(`nuna20230424@gmail.com`, `keonhee.cho@kaongroup.com`)은 이미 요청과 같아 코드 변경이 없었다.
+- 수신자 기본값(`nuna20230424@gmail.com`, `keonhee.cho@kaongroup.com`)은 이미 요청과 같아 코드 변경이 없었다. **→ 8차에서 개인 Gmail을 제거했다(아래 참조).**
 
 ## 실행
 - `npm install` 후 `npm start` (기본 PORT 3000, HOST 0.0.0.0). 환경변수 PORT/HOST로 변경 가능.

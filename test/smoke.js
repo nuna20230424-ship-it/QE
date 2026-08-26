@@ -213,10 +213,35 @@ ok('본문에 통계 섹션', cRep.html.includes('모델별 인증 현황'));
 ok('본문은 기존 보고 서식(겉틀) 사용', cRep.html.includes('QE 인증 일정 대시보드 자동 생성'));
 ok('인증통계 본문에 현황보고 표는 없음', !cRep.html.includes('완료 모델 (Pass / Fail)'));
 
-// 정리 실패가 테스트 결과를 뒤집지 않도록 분리한다. 임시 폴더가 남아도 OS가 회수한다.
-repo.close();
-try { fs.rmSync(TMP, { recursive: true, force: true }); }
-catch (e) { console.log(`\n  (임시 폴더 정리 실패, 무시함: ${e.code} ${TMP})`); }
+// ---------- 스케줄러 자동발송이 실제로 넘기는 본문 ----------
+// report.js의 mailHtml만 검증하면 스케줄러가 r.html을 넘겨도 통과한다. 호출 인자를 직접 가로채 확인한다.
+head('스케줄러 자동발송 본문');
+const notify = require('../notify');
+const origSend = notify.sendReportMail;
+const sent = [];
+notify.sendReportMail = async (subject, html) => { sent.push({ subject, html }); };
 
-console.log(`\n===== PASS ${pass} / FAIL ${fail} =====`);
-process.exit(fail ? 1 : 0);
+(async () => {
+  for (const k of ['daily', 'weekly', 'certstats']) await sched.sendNow(k);
+  notify.sendReportMail = origSend;
+
+  ok('세 보고 모두 발송 호출됨', sent.length === 3, String(sent.length));
+  const byKey = { daily: dRep, weekly: wRep, certstats: cRep };
+  ['daily', 'weekly', 'certstats'].forEach((k, i) => {
+    const s = sent[i] || {};
+    ok(`${k} 자동발송은 mailHtml 사용`, s.html === byKey[k].mailHtml);
+    ok(`${k} 자동발송이 화면용 html이 아님`, s.html !== byKey[k].html);
+    const hit = SECRETS.filter((v) => String(s.html).includes(v));
+    ok(`${k} 자동발송에 모델명·실명·결함코멘트 없음`, hit.length === 0, hit.join(', '));
+  });
+
+  // 정리 실패가 테스트 결과를 뒤집지 않도록 분리한다. 임시 폴더가 남아도 OS가 회수한다.
+  repo.close();
+  try { fs.rmSync(TMP, { recursive: true, force: true }); }
+  catch (e) { console.log(`
+  (임시 폴더 정리 실패, 무시함: ${e.code} ${TMP})`); }
+
+  console.log(`
+===== PASS ${pass} / FAIL ${fail} =====`);
+  process.exit(fail ? 1 : 0);
+})();

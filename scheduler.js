@@ -27,7 +27,8 @@ function msUntilNext(job, now = new Date()) {
 
 async function runJob(job) {
   const r = job.build();
-  await notify.sendReportMail(r.subject, r.html, r.attachments);
+  // 반드시 mailHtml(집계 + 링크만). r.html은 모델명·실명·결함 코멘트가 든 사내 화면용이다.
+  await notify.sendReportMail(r.subject, r.mailHtml);
 }
 
 function schedule(job) {

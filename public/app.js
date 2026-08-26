@@ -341,7 +341,7 @@ async function renderReport(period) {
     <div class="report-bar">
       <button class="btn" data-report-refresh="${period}">↻ 새로고침</button>
       <button class="btn" data-report-send="${period}">✉ 지금 메일 발송</button>
-      <span class="report-hint">${p === 'daily' ? '매일 18:00' : '매주 금요일 18:00'} 자동 발송 · 메일에는 집계 수치와 대시보드 링크만 포함됩니다</span>
+      <span class="report-hint">${period === 'daily' ? '매일 18:00' : '매주 금요일 18:00'} 자동 발송 · 메일에는 집계 수치와 대시보드 링크만 포함됩니다</span>
     </div>
     <div class="report-body">${r.html}</div>`;
 }

@@ -34,6 +34,7 @@ ok('판정 건수 0', empty.totals.judged === 0, String(empty.totals.judged));
 ok('pass_rate 0 (NaN/Infinity 아님)', empty.totals.pass_rate === 0, String(empty.totals.pass_rate));
 ok('fail_rate 0 (NaN/Infinity 아님)', empty.totals.fail_rate === 0, String(empty.totals.fail_rate));
 ok('modelNames 빈 배열', repo.modelNames().length === 0);
+ok('testPurposes 빈 배열', repo.testPurposes().length === 0);
 
 // ---------- 픽스처 ----------
 // KM-100 / Google xTS  / 3PL   : 3건 (1차 Pass, 3차 Fail, 4차 미판정) — 이번 주
@@ -69,6 +70,11 @@ const models = repo.modelNames();
 ok('중복 제거 (KM-100 4건 → 1개)', models.filter((m) => m === 'KM-100').length === 1, JSON.stringify(models));
 ok('모델 5개 전부 노출', models.length === 5, JSON.stringify(models));
 ok('이름순 정렬', JSON.stringify(models) === JSON.stringify([...models].sort()), JSON.stringify(models));
+
+const purposes = repo.testPurposes();
+ok('Test 목적 중복 제거 (3PL 4건 → 1개)', purposes.filter((v) => v === '3PL').length === 1, JSON.stringify(purposes));
+ok('입력된 목적 전부 노출', JSON.stringify(purposes) === JSON.stringify(['3PL', 'MR', 'Official', '양산']), JSON.stringify(purposes));
+ok('빈 목적은 제외', !purposes.some((v) => !v));
 
 // ---------- Task 4-1. 미판정 제외 + 누적 통계 ----------
 head('Task 4-1. 미판정 제외 · 누적 통계');

@@ -316,6 +316,13 @@ module.exports = {
     ).all().map((r) => r.model_name);
   },
 
+  // 한 번이라도 입력된 Test 목적 목록. 직접입력한 값이 다음 의뢰의 드롭다운에 뜨게 한다.
+  testPurposes() {
+    return db.prepare(
+      "SELECT DISTINCT TRIM(test_purpose) AS v FROM requests WHERE test_purpose IS NOT NULL AND TRIM(test_purpose) <> '' ORDER BY v COLLATE NOCASE"
+    ).all().map((r) => r.v);
+  },
+
   // range가 있으면 대표 진행구간이 그 기간과 겹치는 건만 집계한다.
   certStats: certStatsOf,
 

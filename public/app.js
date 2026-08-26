@@ -10,7 +10,7 @@ const state = {
   cal: { y: _now.getFullYear(), m: _now.getMonth() }, // m: 0-based
   sort: { key: null, dir: 'asc' }, // 일정표 정렬 상태
   boardExpanded: new Set(), // 5개 초과 시 펼친 상태의 상태칼럼
-  options: { models: [] }, // 입력 자동목록용 선택지 (필터와 무관한 전체 이력값)
+  options: { models: [], testPurposes: [] }, // 입력 자동목록용 선택지 (필터와 무관한 전체 이력값)
   // 인증 통계 뷰: 주간(월~금) / 전체 누적 전환, weekOffset 0 = 이번 주
   certStats: { mode: 'week', weekOffset: 0, data: null, range: null },
 };
@@ -65,6 +65,7 @@ async function loadOptions() {
   try {
     const o = await api('/api/options');
     state.options.models = o.models || [];
+    state.options.testPurposes = o.testPurposes || [];
   } catch { /* 목록을 못 받아도 직접 입력은 그대로 동작 */ }
 }
 
@@ -607,6 +608,23 @@ function buildRequesterOptions() {
   $('#requester-list').innerHTML = names.map((n) => `<option value="${esc(n)}"></option>`).join('');
 }
 
+// Test 목적: 이전에 직접 입력된 값을 기본 목록 뒤, '+ 직접 입력' 앞에 끼워 넣는다.
+// HTML의 기본 옵션을 그대로 두고 동적 항목만 data-dyn으로 표시해 매번 갈아끼운다.
+function buildPurposeOptions() {
+  const sel = $('#f-test_purpose-select');
+  sel.querySelectorAll('option[data-dyn]').forEach((o) => o.remove());
+  const fixed = new Set([...sel.options].map((o) => o.value));
+  const customOpt = sel.querySelector('option[value="__custom__"]');
+  for (const v of state.options.testPurposes) {
+    if (fixed.has(v)) continue;
+    const o = document.createElement('option');
+    o.value = v;
+    o.textContent = v;
+    o.dataset.dyn = '1';
+    sel.insertBefore(o, customOpt);
+  }
+}
+
 // 모델명: 이전에 한 번이라도 입력된 값을 datalist로 노출 (직접 입력도 그대로 가능)
 function buildModelOptions() {
   $('#model-list').innerHTML = state.options.models.map((n) => `<option value="${esc(n)}"></option>`).join('');
@@ -669,6 +687,7 @@ function openModal(item) {
   buildRequesterOptions();
   buildModelOptions();
   $('#f-requester').value = isNew ? '' : (item.requester || '');
+  buildPurposeOptions();
   setCombo('test_purpose', isNew ? NEW_DEFAULTS.test_purpose : (item.test_purpose || ''));
   setCombo('tester', isNew ? '' : (item.tester || ''));
 

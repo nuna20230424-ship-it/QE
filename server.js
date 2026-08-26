@@ -29,9 +29,9 @@ app.get('/api/stats', (req, res) => {
   res.json(repo.stats());
 });
 
-// 입력 필드 자동목록용 선택지 (모델명: 한 번이라도 입력된 값 전체)
+// 입력 필드 자동목록용 선택지 (모델명·Test 목적: 한 번이라도 입력된 값 전체)
 app.get('/api/options', (req, res) => {
-  res.json({ models: repo.modelNames() });
+  res.json({ models: repo.modelNames(), testPurposes: repo.testPurposes() });
 });
 
 // 모델(프로젝트)별 인증 통계. from·to를 함께 주면 해당 기간에 진행된 건만 집계

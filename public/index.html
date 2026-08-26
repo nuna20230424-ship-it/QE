@@ -125,8 +125,12 @@
               <input id="f-fw_version" />
             </label>
             <label>의뢰자
-              <input id="f-requester" list="requester-list" placeholder="선택 또는 직접 입력" autocomplete="off" />
-              <datalist id="requester-list"></datalist>
+              <div class="requester-field">
+                <input id="f-requester" list="requester-list" placeholder="선택 또는 직접 입력" autocomplete="off" />
+                <datalist id="requester-list"></datalist>
+                <button type="button" id="btn-requester-manage" title="의뢰자 목록 관리">목록</button>
+                <div id="requester-manage" class="requester-manage hidden"></div>
+              </div>
             </label>
             <label>Test 희망 일정
               <input id="f-desired_date" type="date" />

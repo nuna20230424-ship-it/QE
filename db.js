@@ -45,6 +45,15 @@ db.exec(`
   )
 `);
 
+// 의뢰자 드롭다운 제안에서 숨길 이름 목록 (의뢰 레코드는 보존, 제안에서만 제거)
+db.exec(`
+  CREATE TABLE IF NOT EXISTS hidden_requesters (
+    name      TEXT PRIMARY KEY,   -- 숨긴 의뢰자 이름
+    hidden_at TEXT NOT NULL,      -- 숨긴 시각
+    actor     TEXT               -- 숨긴 작업자
+  )
+`);
+
 // 기존 DB 호환: 신규 컬럼 누락 시 보강 (request_item 컬럼은 미사용 처리)
 const existingCols = db.prepare('PRAGMA table_info(requests)').all().map((c) => c.name);
 for (const name of ['test_type', 'test_purpose', 'round', 'verdict', 'started_date', 'completed_date', 'confirmed_at', 'started_at', 'completed_at']) {
@@ -332,6 +341,25 @@ module.exports = {
 
   // Task 6-2. 반복 Fail · 장기 미판정 경고.
   bottlenecks: bottlenecksOf,
+
+  // ---- 의뢰자 제안 목록 관리 (숨김) ----
+  hiddenRequesters() {
+    return db.prepare('SELECT name FROM hidden_requesters ORDER BY name').all().map((r) => r.name);
+  },
+
+  hideRequester(name, actor) {
+    const n = String(name ?? '').trim();
+    if (!n) return false;
+    db.prepare('INSERT OR IGNORE INTO hidden_requesters (name, hidden_at, actor) VALUES (?,?,?)')
+      .run(n, nowIso(), actor || '알수없음');
+    return true;
+  },
+
+  unhideRequester(name) {
+    const info = db.prepare('DELETE FROM hidden_requesters WHERE name = ?').run(String(name ?? '').trim());
+    return info.changes > 0;
+  },
+
 
   // 요약 통계
   stats() {

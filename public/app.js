@@ -251,6 +251,57 @@ function saveCsv(lines, fname) {
   URL.revokeObjectURL(a.href);
 }
 
+// ---- 보고 본문 복사 ----
+// 메일 작성창에 붙여넣었을 때 표·색상·서식이 그대로 살아나도록 text/html로 클립보드에 넣는다.
+// 대시보드는 사내망 http로 열리는데 navigator.clipboard는 보안 컨텍스트(https·localhost)에서만
+// 동작하므로, 화면 밖 요소를 선택해 복사하는 execCommand 경로가 사실상 기본 경로다.
+async function copyRichHtml(html, plain) {
+  if (window.isSecureContext && navigator.clipboard && window.ClipboardItem) {
+    await navigator.clipboard.write([new ClipboardItem({
+      'text/html': new Blob([html], { type: 'text/html' }),
+      'text/plain': new Blob([plain], { type: 'text/plain' }),
+    })]);
+    return;
+  }
+  const holder = document.createElement('div');
+  holder.innerHTML = html;
+  holder.setAttribute('style', 'position:fixed;left:-99999px;top:0;');
+  document.body.appendChild(holder);
+  const range = document.createRange();
+  range.selectNodeContents(holder);
+  const sel = window.getSelection();
+  sel.removeAllRanges();
+  sel.addRange(range);
+  const ok = document.execCommand('copy');
+  sel.removeAllRanges();
+  holder.remove();
+  if (!ok) throw new Error('브라우저가 복사를 거부했습니다. 본문을 직접 드래그해 복사해 주세요.');
+}
+
+// 서식을 못 받는 메일 클라이언트를 위한 텍스트 대체본
+function htmlToPlain(html) {
+  const d = document.createElement('div');
+  d.innerHTML = html;
+  return d.innerText.replace(/\n{3,}/g, '\n\n').trim();
+}
+
+// period: daily | weekly | certstats. query는 통계 탭의 기간(?from=&to=).
+async function copyReport(btn, period, query) {
+  const orig = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '복사 중…';
+  try {
+    const r = await api(`/api/report/${period}/copy${query || ''}`);
+    await copyRichHtml(r.html, htmlToPlain(r.html));
+    btn.textContent = '✓ 복사됨';
+  } catch (err) {
+    btn.textContent = orig;
+    alert(`복사하지 못했습니다: ${err.message}`);
+  }
+  btn.disabled = false;
+  setTimeout(() => { btn.textContent = orig; }, 2000);
+}
+
 function downloadExcel() {
   const cols = [
     ['예약/희망일', (it) => it.scheduled_date || it.desired_date],
@@ -341,7 +392,9 @@ async function renderReport(period) {
     <div class="report-bar">
       <button class="btn" data-report-refresh="${period}">↻ 새로고침</button>
       <button class="btn" data-report-send="${period}">✉ 지금 메일 발송</button>
-      <span class="report-hint">${period === 'daily' ? '매일 18:00' : '매주 금요일 18:00'} 자동 발송 · 메일에는 집계 수치와 대시보드 링크만 포함됩니다</span>
+      <button class="btn" data-report-copy="${period}">📋 본문 복사</button>
+      <span class="report-hint">${period === 'daily' ? '매일 18:00' : '매주 금요일 18:00'} 자동 발송 · 메일에는 집계 수치와 대시보드 링크만 포함됩니다
+        <br>본문 복사는 화면 그대로(모델명 · 담당자 · 코멘트 포함) 복사되므로 사내 수신자에게만 보내세요</span>
     </div>
     <div class="report-body">${r.html}</div>`;
 }
@@ -487,6 +540,7 @@ async function renderCertStats() {
       <span class="bar-right">
         <button class="btn" data-stats-excel="1">⤓ 엑셀 다운로드</button>
         <button class="btn" data-stats-send="1">✉ 지금 메일 발송</button>
+        <button class="btn" data-stats-copy="1">📋 본문 복사</button>
         <button class="btn" data-stats-refresh="1">↻ 새로고침</button>
       </span>
     </div>
@@ -833,6 +887,8 @@ function bind() {
   ['daily', 'weekly'].forEach((p) => {
     $(`#view-${p}`).addEventListener('click', async (e) => {
       if (e.target.closest('[data-report-refresh]')) { renderReport(p); return; }
+      const copyBtn = e.target.closest('[data-report-copy]');
+      if (copyBtn) { copyReport(copyBtn, p); return; }
       const sendBtn = e.target.closest('[data-report-send]');
       if (!sendBtn) return;
       sendBtn.disabled = true;
@@ -861,6 +917,12 @@ function bind() {
       const step = Number(wk.dataset.statsWeek);
       state.certStats.weekOffset = step === 0 ? 0 : state.certStats.weekOffset + step;
       renderCertStats();
+      return;
+    }
+    const copy = e.target.closest('[data-stats-copy]');
+    if (copy) {
+      const r = state.certStats.range;
+      copyReport(copy, 'certstats', r ? `?from=${r.from}&to=${r.to}` : '');
       return;
     }
     if (e.target.closest('[data-stats-excel]')) { downloadCertStatsCsv(); return; }

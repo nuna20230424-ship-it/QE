@@ -142,16 +142,20 @@ function certStatsTable(rows) {
     <tbody>${body}</tbody></table>`;
 }
 
-function certStatsSection(now = new Date(), range = null) {
-  const { from, to } = range || workWeekRange(now);
-  const s = repo.certStats({ from, to });
+// label 예: "주차 2026-08-24 ~ 2026-08-28 (월~금)" · "기간 전체 누적"
+function statsBlock(s, label) {
   const t = s.totals;
   const head = `<p style="color:#6b7686;font-size:12px;margin:6px 0 10px;">
-    대상 주차 ${esc(from)} ~ ${esc(to)} (월~금) · 모델 ${t.models}건 · 판정 ${t.judged}건 ·
+    대상 ${esc(label)} · 모델 ${t.models}건 · 판정 ${t.judged}건 ·
     Pass ${t.pass} / Fail ${t.fail} · Pass율 ${t.pass_rate}% · Fail율 ${t.fail_rate}%
     <br>판정 완료(Pass/Fail) 건만 집계하며 미판정 건은 제외합니다. 진행차수는 최신 판정 건의 Round입니다.
   </p>`;
   return section('모델별 인증 현황 (진행차수 · Pass/Fail 통계)', head + certStatsTable(s.rows));
+}
+
+function certStatsSection(now = new Date(), range = null) {
+  const { from, to } = range || workWeekRange(now);
+  return statsBlock(repo.certStats({ from, to }), `주차 ${from} ~ ${to} (월~금)`);
 }
 
 // 보고 메일 공통 겉틀. 일일·주간·인증통계 세 보고가 같은 서식을 쓰도록 한 곳에 둔다.
@@ -249,4 +253,21 @@ function certStats(now = new Date()) {
   };
 }
 
-module.exports = { daily, weekly, certStats, weekRange, dayRange, workWeekRange, lastWorkWeekRange, certStatsSection };
+// ---- 복사용 본문 ----
+// 대시보드 '인증 통계' 탭을 메일 작성창에 그대로 붙여넣기 위한 본문.
+// 탭에서 고른 기간을 그대로 쓰며, range가 null이면 전체 기간 누적이다.
+// 화면과 동일한 상세(모델명 포함)라 사내 수신자 전용이다. mailHtml(집계+링크)과는 용도가 다르다.
+function certStatsCopy(range, now = new Date()) {
+  const rangeLabel = range ? `${range.from} ~ ${range.to} (월~금)` : '전체 기간 누적';
+  const block = statsBlock(repo.certStats(range), range ? `주차 ${range.from} ~ ${range.to} (월~금)` : '기간 전체 누적');
+  return {
+    period: 'certstats',
+    subject: `[인증일정] 인증 통계 (${rangeLabel})`,
+    html: shell('통계 보고', rangeLabel, block, now.toLocaleString('ko-KR')),
+  };
+}
+
+module.exports = {
+  daily, weekly, certStats, certStatsCopy,
+  weekRange, dayRange, workWeekRange, lastWorkWeekRange, certStatsSection,
+};

@@ -213,6 +213,31 @@ ok('본문에 통계 섹션', cRep.html.includes('모델별 인증 현황'));
 ok('본문은 기존 보고 서식(겉틀) 사용', cRep.html.includes('QE 인증 일정 대시보드 자동 생성'));
 ok('인증통계 본문에 현황보고 표는 없음', !cRep.html.includes('완료 모델 (Pass / Fail)'));
 
+// ---------- 복사용 본문 (메일 작성창 붙여넣기) ----------
+head('복사용 본문');
+const copyWk = report.certStatsCopy({ from: wk.from, to: wk.to }, now);
+const copyAll = report.certStatsCopy(null, now);
+ok('통계 복사본에 대상 주차 표기', copyWk.html.includes(`대상 주차 ${wk.from} ~ ${wk.to}`));
+ok('통계 복사본 전체 누적 표기', copyAll.html.includes('대상 기간 전체 누적'));
+ok('통계 복사본 제목에 기간', copyWk.subject.includes(`${wk.from} ~ ${wk.to}`), copyWk.subject);
+ok('통계 복사본에 통계 표 포함', copyWk.html.includes('모델별 인증 현황'));
+ok('전체 누적이 주간보다 판정 건수 많거나 같음',
+  repo.certStats(null).totals.judged >= repo.certStats({ from: wk.from, to: wk.to }).totals.judged);
+
+// 주간보고 안의 통계 섹션과 같은 서식이어야 붙여넣기 결과가 동일하다.
+ok('주간보고 통계 섹션과 동일 서식', copyWk.html.includes(report.certStatsSection(now, wk)));
+
+// 메일 클라이언트는 <style>·class를 버리므로 복사본은 전부 인라인 스타일이어야 한다.
+const copyables = [dRep.html, wRep.html, copyWk.html, copyAll.html];
+ok('복사본에 class 속성 없음 (서식 유실 방지)', copyables.every((h) => !/ class=/.test(h)));
+ok('복사본에 style 속성 있음', copyables.every((h) => h.includes('style=')));
+ok('복사본에 <style> 블록 없음', copyables.every((h) => !h.includes('<style')));
+
+// 복사본은 화면 그대로(상세 포함) — 발송용 링크 본문과 달라야 한다.
+ok('일일 복사본에 모델명 포함', dRep.html.includes('KM-100'));
+ok('통계 복사본에 모델명 포함', copyAll.html.includes('KM-100'));
+ok('복사본은 발송용 본문과 다름', dRep.html !== dRep.mailHtml && copyWk.html !== cRep.mailHtml);
+
 // ---------- 스케줄러 자동발송이 실제로 넘기는 본문 ----------
 // report.js의 mailHtml만 검증하면 스케줄러가 r.html을 넘겨도 통과한다. 호출 인자를 직접 가로채 확인한다.
 head('스케줄러 자동발송 본문');

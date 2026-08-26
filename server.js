@@ -77,6 +77,29 @@ app.get('/api/report/:period', (req, res) => {
   res.json({ period: req.params.period, from, to, counts: r.data.counts || null, html: r.html });
 });
 
+// 화면 내용을 메일 작성창에 그대로 붙여넣기 위한 본문 (인라인 스타일).
+// 자동발송 본문(mailHtml)과 달리 모델명·담당자·코멘트가 들어간 화면용 html이라 사내 수신자 전용이다.
+// certstats는 통계 탭에서 고른 기간을 그대로 받는다. from·to가 없으면 전체 기간 누적.
+app.get('/api/report/:period/copy', (req, res) => {
+  const period = req.params.period;
+  if (period === 'certstats') {
+    const { from, to } = req.query;
+    if ((from && !to) || (!from && to)) {
+      return res.status(400).json({ error: 'from과 to는 함께 지정해야 합니다.' });
+    }
+    const ymd = /^\d{4}-\d{2}-\d{2}$/;
+    if ((from && !ymd.test(from)) || (to && !ymd.test(to))) {
+      return res.status(400).json({ error: '날짜는 YYYY-MM-DD 형식이어야 합니다.' });
+    }
+    const r = report.certStatsCopy(from && to ? { from, to } : null);
+    return res.json({ period, subject: r.subject, html: r.html });
+  }
+  const fn = PERIODS[period];
+  if (!fn) return res.status(400).json(badPeriod);
+  const r = report[fn]();
+  res.json({ period, subject: r.subject, html: r.html });
+});
+
 // 현황보고 즉시 메일 발송 (수동 트리거). 엑셀(CSV) 첨부 동봉.
 app.post('/api/report/:period/send', async (req, res) => {
   const fn = PERIODS[req.params.period];

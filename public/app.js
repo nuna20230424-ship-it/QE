@@ -485,7 +485,9 @@ async function renderCertStats() {
 const roundAuto = { seq: 0, key: null, info: null, touched: false };
 
 const setRoundHint = (text) => { $('#round-hint').textContent = text; };
-const roundKeyOf = () => `${$(F.model_name).value.trim()}\u0000${$(F.test_purpose).value}`;
+// Test 목적은 콤보(드롭다운 + 직접입력)라 select 값이 아니라 실제 입력값을 읽어야 한다.
+const purposeValue = () => readCombo('test_purpose');
+const roundKeyOf = () => `${$(F.model_name).value.trim()}\u0000${purposeValue()}`;
 
 async function autoFillRound() {
   if ($(F.id).value) return;                    // 기존 의뢰 상세에서는 저장된 차수를 건드리지 않는다
@@ -506,7 +508,7 @@ async function autoFillRound() {
   $('#round-spin').classList.remove('hidden');
   input.readOnly = true;                        // 조회 중 중복 입력 차단
   try {
-    const q = `model_name=${encodeURIComponent(model)}&test_purpose=${encodeURIComponent($(F.test_purpose).value)}`;
+    const q = `model_name=${encodeURIComponent(model)}&test_purpose=${encodeURIComponent(purposeValue())}`;
     const info = await api(`/api/next-round?${q}`);
     if (seq !== roundAuto.seq) return;
     roundAuto.info = info;
@@ -524,7 +526,7 @@ async function autoFillRound() {
 function openRoundModal() {
   const info = roundAuto.info;
   if (!info) return;
-  const purpose = $(F.test_purpose).value || '(미지정)';
+  const purpose = purposeValue() || '(미지정)';
   const items = info.history.map((h) => `
     <li class="tl-item">
       <span class="tl-dot tl-${(h.verdict || '').toLowerCase()}"></span>
@@ -588,9 +590,9 @@ function render() {
 }
 
 // ---- 모달 ----
-// 단순 1:1 필드 (requester·tester는 콤보라 별도 처리)
+// 단순 1:1 필드 (requester·tester·test_purpose는 콤보라 별도 처리)
 const F = {
-  id: '#f-id', cert_type: '#f-cert_type', test_type: '#f-test_type', test_purpose: '#f-test_purpose', round: '#f-round',
+  id: '#f-id', cert_type: '#f-cert_type', test_type: '#f-test_type', round: '#f-round',
   model_name: '#f-model_name', fw_version: '#f-fw_version',
   desired_date: '#f-desired_date', note: '#f-note',
   scheduled_date: '#f-scheduled_date', started_date: '#f-started_date', completed_date: '#f-completed_date',
@@ -667,6 +669,7 @@ function openModal(item) {
   buildRequesterOptions();
   buildModelOptions();
   $('#f-requester').value = isNew ? '' : (item.requester || '');
+  setCombo('test_purpose', isNew ? NEW_DEFAULTS.test_purpose : (item.test_purpose || ''));
   setCombo('tester', isNew ? '' : (item.tester || ''));
 
   // 진행차수 자동 산출 상태 초기화. 신규 등록일 때만 이력을 조회한다.
@@ -694,6 +697,7 @@ function readForm() {
     out[k] = $(sel).value;
   }
   out.requester = $('#f-requester').value.trim();
+  out.test_purpose = purposeValue();
   out.tester = readCombo('tester');
   return out;
 }
@@ -751,6 +755,7 @@ function bind() {
   $('#modal').addEventListener('click', (e) => { if (e.target.id === 'modal') closeModal(); });
   $('#req-form').addEventListener('submit', submitForm);
   $('#btn-delete').addEventListener('click', deleteItem);
+  bindCombo('test_purpose');
   bindCombo('tester');
 
   // Task 5. 모델명·Test 목적이 바뀌면 진행차수를 다시 산출 (타이핑은 250ms 디바운스)
@@ -759,7 +764,11 @@ function bind() {
     clearTimeout(roundTimer);
     roundTimer = setTimeout(autoFillRound, 250);
   });
-  $(F.test_purpose).addEventListener('change', autoFillRound);
+  $('#f-test_purpose-select').addEventListener('change', autoFillRound);
+  $('#f-test_purpose-custom').addEventListener('input', () => {
+    clearTimeout(roundTimer);
+    roundTimer = setTimeout(autoFillRound, 250);
+  });
   // 사용자가 직접 고친 차수는 이후 자동값이 덮어쓰지 않는다
   $(F.round).addEventListener('input', () => { roundAuto.touched = true; });
   $('#btn-round-info').addEventListener('click', openRoundModal);

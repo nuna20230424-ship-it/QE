@@ -98,14 +98,16 @@
               </select>
             </label>
             <label>Test 목적
-              <select id="f-test_purpose">
+              <select id="f-test_purpose-select">
                 <option value="3PL">3PL</option>
                 <option value="Official">Official</option>
                 <option value="Pre-Test">Pre-Test</option>
                 <option value="양산">양산</option>
                 <option value="self">self</option>
                 <option value="MR">MR</option>
+                <option value="__custom__">+ 직접 입력</option>
               </select>
+              <input id="f-test_purpose-custom" class="hidden combo-custom" placeholder="새 Test 목적 입력" />
             </label>
             <label>진행차수 (Round)
               <span class="round-field">

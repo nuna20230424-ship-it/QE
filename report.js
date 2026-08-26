@@ -26,6 +26,13 @@ function workWeekRange(now = new Date()) {
   return { from: ymd(mon), to: ymd(fri) };
 }
 
+// 지난주 월~금. 월요일 아침 인증 통계 보고는 이번 주가 아직 비어 있어 지난주 실적을 싣는다.
+function lastWorkWeekRange(now = new Date()) {
+  const base = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  base.setDate(base.getDate() - 7);
+  return workWeekRange(base);
+}
+
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => (
   { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]
 ));
@@ -133,8 +140,8 @@ function certStatsTable(rows) {
     <tbody>${body}</tbody></table>`;
 }
 
-function certStatsSection(now = new Date()) {
-  const { from, to } = workWeekRange(now);
+function certStatsSection(now = new Date(), range = null) {
+  const { from, to } = range || workWeekRange(now);
   const s = repo.certStats({ from, to });
   const t = s.totals;
   const head = `<p style="color:#6b7686;font-size:12px;margin:6px 0 10px;">
@@ -145,18 +152,91 @@ function certStatsSection(now = new Date()) {
   return section('모델별 인증 현황 (진행차수 · Pass/Fail 통계)', head + certStatsTable(s.rows));
 }
 
-function buildHtml(title, data, generatedAt, extra) {
-  const rangeLabel = data.from === data.to ? data.from : `${data.from} ~ ${data.to}`;
+// 보고 메일 공통 겉틀. 일일·주간·인증통계 세 보고가 같은 서식을 쓰도록 한 곳에 둔다.
+function shell(title, rangeLabel, body, generatedAt) {
   return `<div style="max-width:760px;margin:0;padding:20px;font-family:'Malgun Gothic','맑은 고딕',-apple-system,sans-serif;color:#1f2733;line-height:1.6;">
     <h2 style="font-size:19px;margin:0 0 2px;">QE 인증 ${esc(title)}</h2>
     <p style="color:#6b7686;font-size:13px;margin:0;">대상 기간 · ${esc(rangeLabel)}</p>
-    ${summaryLine(data.counts)}
+    ${body}
+    <p style="color:#9aa4b2;font-size:11px;margin-top:24px;">QE 인증 일정 대시보드 자동 생성${generatedAt ? ' · ' + esc(generatedAt) : ''}</p>
+  </div>`;
+}
+
+function buildHtml(title, data, generatedAt, extra) {
+  const rangeLabel = data.from === data.to ? data.from : `${data.from} ~ ${data.to}`;
+  const body = `${summaryLine(data.counts)}
     ${section('완료 모델 (Pass / Fail)', completedTable(data.completed))}
     ${failDetails(data.fail)}
     ${section('진행중 모델', inProgressTable(data.inProgress))}
-    ${extra || ''}
-    <p style="color:#9aa4b2;font-size:11px;margin-top:24px;">QE 인증 일정 대시보드 자동 생성${generatedAt ? ' · ' + esc(generatedAt) : ''}</p>
-  </div>`;
+    ${extra || ''}`;
+  return shell(title, rangeLabel, body, generatedAt);
+}
+
+// ---- 엑셀(CSV) 첨부 ----
+// 화면의 '⤓ 엑셀 다운로드'와 같은 UTF-8 BOM CSV 서식. Excel에서 바로 열린다.
+const csvCell = (v) => {
+  const t = String(v ?? '');
+  return /[",\r\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t;
+};
+const csvBuffer = (lines) => Buffer.from(
+  '\uFEFF' + lines.map((r) => r.map(csvCell).join(',')).join('\r\n'), 'utf8'
+);
+
+// 일일·주간 보고 첨부: 본문의 '완료 모델' / '진행중 모델' 표와 같은 항목
+const REPORT_COLS = [
+  ['인증종류', (r) => r.cert_type],
+  ['Test type', (r) => r.test_type],
+  ['Test 목적', (r) => r.test_purpose],
+  ['진행차수', (r) => (r.round ? `${r.round}차` : '')],
+  ['모델명', (r) => r.model_name],
+  ['FW', (r) => r.fw_version],
+  ['의뢰자', (r) => r.requester],
+  ['테스터', (r) => r.tester],
+  ['상태', (r) => r.status],
+  ['판정', (r) => r.verdict],
+  ['시작일', (r) => r.started_date],
+  ['완료일', (r) => compDate(r)],
+  ['진행사항', (r) => r.progress],
+  ['결과코멘트', (r) => r.result],
+];
+
+function reportCsvBuffer(title, data) {
+  const head = REPORT_COLS.map((c) => c[0]);
+  const rows = (list) => list.map((r) => REPORT_COLS.map((c) => c[1](r)));
+  return csvBuffer([
+    [title, data.from === data.to ? data.from : `${data.from} ~ ${data.to}`],
+    ['집계', `완료 ${data.counts.completed} (Pass ${data.counts.pass} / Fail ${data.counts.fail}) · 진행중 ${data.counts.inProgress}`],
+    [],
+    ['[완료 모델]'], head, ...rows(data.completed),
+    [],
+    ['[진행중 모델]'], head, ...rows(data.inProgress),
+  ]);
+}
+
+// 인증 통계 첨부: 화면 '인증 통계' 탭의 엑셀 다운로드와 칼럼·머리말이 같다.
+const STATS_COLS = [
+  ['모델명', (r) => r.model_name],
+  ['인증종류', (r) => r.cert_type],
+  ['결과', (r) => r.result],
+  ['Test 목적', (r) => r.test_purpose],
+  ['진행차수', (r) => r.round],
+  ['Pass', (r) => r.pass],
+  ['Fail', (r) => r.fail],
+  ['Pass율(%)', (r) => r.pass_rate],
+  ['Fail율(%)', (r) => r.fail_rate],
+];
+
+function certStatsCsvBuffer(range, s) {
+  const t = s.totals;
+  return csvBuffer([
+    ['인증 통계', range ? `${range.from} ~ ${range.to} (월~금)` : '전체 기간 누적'],
+    ['집계 대상', '판정 완료(Pass/Fail) 건만 — 미판정 건은 제외'],
+    [],
+    STATS_COLS.map((c) => c[0]),
+    ...s.rows.map((r) => STATS_COLS.map((c) => c[1](r))),
+    [],
+    ['합계', `모델 ${t.models}건`, '', '', `판정 ${t.judged}건`, t.pass, t.fail, t.pass_rate, t.fail_rate],
+  ]);
 }
 
 function daily(now = new Date()) {
@@ -166,17 +246,37 @@ function daily(now = new Date()) {
     period: 'daily', title: '일일 현황보고', data,
     subject: `[인증일정] 일일 현황보고 (${from})`,
     html: buildHtml('일일 현황보고', data, now.toLocaleString('ko-KR')),
+    attachments: [{ filename: `일일현황보고_${from}.csv`, content: reportCsvBuffer('일일 현황보고', data) }],
   };
 }
 
 function weekly(now = new Date()) {
   const { from, to } = weekRange(now);
   const data = repo.reportData(from, to);
+  const wk = workWeekRange(now);
   return {
     period: 'weekly', title: '주간 현황보고', data,
     subject: `[인증일정] 주간 현황보고 (${from} ~ ${to})`,
     html: buildHtml('주간 현황보고', data, now.toLocaleString('ko-KR'), certStatsSection(now)),
+    // 본문이 월~일 집계 + 월~금 인증통계 두 부분이라 첨부도 두 개로 나눈다.
+    attachments: [
+      { filename: `주간현황보고_${from}_${to}.csv`, content: reportCsvBuffer('주간 현황보고', data) },
+      { filename: `인증통계_${wk.from}_${wk.to}.csv`, content: certStatsCsvBuffer(wk, repo.certStats(wk)) },
+    ],
   };
 }
 
-module.exports = { daily, weekly, weekRange, dayRange, workWeekRange, certStatsSection };
+// 인증 통계 단독 보고 (월요일 아침 발송). 대상은 지난주 월~금.
+function certStats(now = new Date()) {
+  const range = lastWorkWeekRange(now);
+  const s = repo.certStats(range);
+  const rangeLabel = `${range.from} ~ ${range.to} (월~금)`;
+  return {
+    period: 'certstats', title: '인증 통계 보고', range, data: s,
+    subject: `[인증일정] 주간 인증 통계 (${range.from} ~ ${range.to})`,
+    html: shell('인증 통계 보고', rangeLabel, certStatsSection(now, range), now.toLocaleString('ko-KR')),
+    attachments: [{ filename: `인증통계_${range.from}_${range.to}.csv`, content: certStatsCsvBuffer(range, s) }],
+  };
+}
+
+module.exports = { daily, weekly, certStats, weekRange, dayRange, workWeekRange, lastWorkWeekRange, certStatsSection };

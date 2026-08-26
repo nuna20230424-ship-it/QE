@@ -157,6 +157,46 @@ ok('Fail 상세에 결과 코멘트 유지', w.html.includes('DRM 재생 실패'
 ok('본문 집계 구간은 월~일 유지', report.weekRange(now).to !== wk.to);
 ok('일일보고에는 통계 섹션 없음', !report.daily(now).html.includes('모델별 인증 현황'));
 
+// ---------- 보고 메일: 스케줄 · 첨부 · 인증통계 단독 보고 ----------
+head('보고 메일 스케줄 · 엑셀 첨부');
+const sched = require('../scheduler');
+const job = (k) => sched.JOBS.find((j) => j.key === k);
+ok('일일보고 = 매일 18시', job('daily').hour === 18 && job('daily').days === null);
+ok('주간보고 = 금요일 18시', job('weekly').hour === 18 && JSON.stringify(job('weekly').days) === '[5]');
+ok('인증통계 = 월요일 9시', job('certstats').hour === 9 && JSON.stringify(job('certstats').days) === '[1]');
+
+// 다음 발송 시각 계산 (요일·시각이 맞는 시점으로 넘어가는지)
+const nextAt = (k, from) => new Date(from.getTime() + sched.msUntilNext(job(k), from));
+const wed = new Date(2026, 7, 26, 10, 0, 0);          // 2026-08-26 수 10:00
+ok('수 10시 → 일일보고는 당일 18시', (() => { const d = nextAt('daily', wed); return d.getDate() === 26 && d.getHours() === 18; })());
+ok('수 10시 → 주간보고는 금 18시', (() => { const d = nextAt('weekly', wed); return d.getDay() === 5 && d.getDate() === 28 && d.getHours() === 18; })());
+ok('수 10시 → 인증통계는 다음 월 9시', (() => { const d = nextAt('certstats', wed); return d.getDay() === 1 && d.getDate() === 31 && d.getHours() === 9; })());
+const friLate = new Date(2026, 7, 28, 19, 0, 0);      // 금 19시 (그날 18시는 이미 지남)
+ok('금 19시 → 주간보고는 다음 주 금', (() => { const d = nextAt('weekly', friLate); return d.getDay() === 5 && d.getDate() === 4 && d.getMonth() === 8; })());
+const monEarly = new Date(2026, 7, 31, 8, 0, 0);      // 월 8시
+ok('월 8시 → 인증통계는 당일 9시', (() => { const d = nextAt('certstats', monEarly); return d.getDate() === 31 && d.getHours() === 9; })());
+
+// 첨부(엑셀) — 화면 다운로드와 같은 UTF-8 BOM CSV
+const dRep = report.daily(now);
+const wRep = report.weekly(now);
+const cRep = report.certStats(now);
+ok('일일보고 첨부 1건', dRep.attachments.length === 1, String(dRep.attachments.length));
+ok('주간보고 첨부 2건 (현황 + 통계)', wRep.attachments.length === 2, String(wRep.attachments.length));
+ok('인증통계 첨부 1건', cRep.attachments.length === 1);
+ok('첨부 파일명 .csv', [...dRep.attachments, ...wRep.attachments, ...cRep.attachments].every((a) => a.filename.endsWith('.csv')));
+ok('첨부에 UTF-8 BOM', dRep.attachments[0].content.slice(0, 3).equals(Buffer.from([0xEF, 0xBB, 0xBF])));
+ok('첨부 CSV에 본문 항목 헤더', dRep.attachments[0].content.toString('utf8').includes('인증종류,Test type,Test 목적,진행차수,모델명'));
+
+// 인증통계 단독 보고는 '지난주' 월~금
+const lw = report.lastWorkWeekRange(now);
+ok('지난주 월요일 시작', new Date(`${lw.from}T00:00:00`).getDay() === 1, lw.from);
+ok('지난주 금요일 종료', new Date(`${lw.to}T00:00:00`).getDay() === 5, lw.to);
+ok('이번 주보다 7일 앞', new Date(wk.from) - new Date(lw.from) === 7 * 86400000);
+ok('제목에 지난주 기간', cRep.subject.includes(`${lw.from} ~ ${lw.to}`), cRep.subject);
+ok('본문에 통계 섹션', cRep.html.includes('모델별 인증 현황'));
+ok('본문은 기존 보고 서식(겉틀) 사용', cRep.html.includes('QE 인증 일정 대시보드 자동 생성'));
+ok('인증통계 본문에 현황보고 표는 없음', !cRep.html.includes('완료 모델 (Pass / Fail)'));
+
 // 정리 실패가 테스트 결과를 뒤집지 않도록 분리한다. 임시 폴더가 남아도 OS가 회수한다.
 repo.close();
 try { fs.rmSync(TMP, { recursive: true, force: true }); }

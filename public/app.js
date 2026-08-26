@@ -431,6 +431,21 @@ function downloadCertStatsCsv() {
   saveCsv(lines, `인증통계_${stamp}.csv`);
 }
 
+// 인증 통계 보고를 지금 메일로 보낸다. 대상은 지난주 월~금(월요일 자동발송과 동일).
+async function sendCertStatsMail(btn) {
+  btn.disabled = true;
+  const orig = btn.textContent;
+  btn.textContent = '발송 중…';
+  try {
+    const res = await api('/api/report/certstats/send', { method: 'POST', body: '{}' });
+    alert(res.sent
+      ? `인증 통계 보고를 발송했습니다. (첨부 ${res.attachments.join(', ')})`
+      : '메일 설정(config.json)이 없어 발송하지 못했습니다.');
+  } catch (err) { alert(err.message); }
+  btn.disabled = false;
+  btn.textContent = orig;
+}
+
 async function renderCertStats() {
   const root = $('#view-certstats');
   const cs = state.certStats;
@@ -471,6 +486,7 @@ async function renderCertStats() {
       ${nav}
       <span class="bar-right">
         <button class="btn" data-stats-excel="1">⤓ 엑셀 다운로드</button>
+        <button class="btn" data-stats-send="1">✉ 지금 메일 발송</button>
         <button class="btn" data-stats-refresh="1">↻ 새로고침</button>
       </span>
     </div>
@@ -848,6 +864,8 @@ function bind() {
       return;
     }
     if (e.target.closest('[data-stats-excel]')) { downloadCertStatsCsv(); return; }
+    const send = e.target.closest('[data-stats-send]');
+    if (send) { sendCertStatsMail(send); return; }
     if (e.target.closest('[data-stats-refresh]')) renderCertStats();
   });
 

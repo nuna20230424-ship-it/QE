@@ -64,20 +64,26 @@ app.get('/api/bottlenecks', (req, res) => {
 });
 
 // 일일/주간 현황보고 (미리보기용 HTML + 집계)
+const PERIODS = { daily: 'daily', weekly: 'weekly', certstats: 'certStats' };
+const badPeriod = { error: 'period는 daily · weekly · certstats 중 하나여야 합니다.' };
+
 app.get('/api/report/:period', (req, res) => {
-  const p = req.params.period;
-  if (p !== 'daily' && p !== 'weekly') return res.status(400).json({ error: 'period는 daily 또는 weekly여야 합니다.' });
-  const r = report[p]();
-  res.json({ period: p, from: r.data.from, to: r.data.to, counts: r.data.counts, html: r.html });
+  const fn = PERIODS[req.params.period];
+  if (!fn) return res.status(400).json(badPeriod);
+  const r = report[fn]();
+  // 인증 통계는 reportData가 아니라 집계 결과라 기간을 range에서 꺼낸다.
+  const from = r.data.from || (r.range && r.range.from);
+  const to = r.data.to || (r.range && r.range.to);
+  res.json({ period: req.params.period, from, to, counts: r.data.counts || null, html: r.html });
 });
 
-// 현황보고 즉시 메일 발송 (수동 트리거)
+// 현황보고 즉시 메일 발송 (수동 트리거). 엑셀(CSV) 첨부 동봉.
 app.post('/api/report/:period/send', async (req, res) => {
-  const p = req.params.period;
-  if (p !== 'daily' && p !== 'weekly') return res.status(400).json({ error: 'period는 daily 또는 weekly여야 합니다.' });
-  const r = report[p]();
-  const sent = await notify.sendReportMail(r.subject, r.html);
-  res.json({ sent });
+  const fn = PERIODS[req.params.period];
+  if (!fn) return res.status(400).json(badPeriod);
+  const r = report[fn]();
+  const sent = await notify.sendReportMail(r.subject, r.html, r.attachments);
+  res.json({ sent, attachments: (r.attachments || []).map((a) => a.filename) });
 });
 
 app.get('/api/requests/:id', (req, res) => {

@@ -74,20 +74,24 @@ async function sendStatusNotification(req, event) {
 // 일일/주간 현황보고 수신자 기본값 (config.reportTo 로 재정의 가능)
 const DEFAULT_REPORT_TO = ['nuna20230424@gmail.com', 'keonhee.cho@kaongroup.com'];
 
-async function sendReportMail(subject, html) {
+// attachments: nodemailer 첨부 배열 [{ filename, content }]. 엑셀(CSV) 첨부에 쓴다.
+async function sendReportMail(subject, html, attachments) {
   if (!transporter || !config) {
     console.log('[notify] config.json 미설정 → 현황보고 메일 생략');
     return false;
   }
   const to = (config.reportTo && config.reportTo.length) ? config.reportTo : DEFAULT_REPORT_TO;
+  const files = attachments && attachments.length ? attachments : undefined;
   try {
     await transporter.sendMail({
       from: config.smtp.from || config.smtp.user,
       to: to.join(','),
       subject,
       html,
+      attachments: files,
     });
-    console.log(`[notify] 현황보고 발송: ${subject} → ${to.join(', ')}`);
+    const note = files ? ` (첨부 ${files.length}건)` : '';
+    console.log(`[notify] 현황보고 발송: ${subject} → ${to.join(', ')}${note}`);
     return true;
   } catch (err) {
     console.error('[notify] 현황보고 발송 실패:', err.message);

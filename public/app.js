@@ -11,6 +11,8 @@ const state = {
   sort: { key: null, dir: 'asc' }, // 일정표 정렬 상태
   boardExpanded: new Set(), // 5개 초과 시 펼친 상태의 상태칼럼
   options: { models: [] }, // 입력 자동목록용 선택지 (필터와 무관한 전체 이력값)
+  // 인증 통계 뷰: 주간(월~금) / 전체 누적 전환, weekOffset 0 = 이번 주
+  certStats: { mode: 'week', weekOffset: 0, data: null, range: null },
 };
 
 const BOARD_LIMIT = 5; // 보드 칼럼당 기본 노출 카드 수
@@ -235,6 +237,19 @@ function csvCell(v) {
   const s = String(v ?? '');
   return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
+// UTF-8 BOM을 붙여 저장 (Excel이 BOM 없으면 한글을 깨뜨린다)
+function saveCsv(lines, fname) {
+  const csv = lines.map((r) => r.map(csvCell).join(',')).join('\r\n');
+  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = fname;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(a.href);
+}
+
 function downloadExcel() {
   const cols = [
     ['예약/희망일', (it) => it.scheduled_date || it.desired_date],
@@ -257,17 +272,8 @@ function downloadExcel() {
   ];
   const lines = [cols.map((c) => c[0])];
   for (const it of state.items) lines.push(cols.map((c) => c[1](it)));
-  const csv = lines.map((r) => r.map(csvCell).join(',')).join('\r\n');
-  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
   const t = new Date();
-  const fname = `인증일정_${t.getFullYear()}-${pad2(t.getMonth() + 1)}-${pad2(t.getDate())}.csv`;
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = fname;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(a.href);
+  saveCsv(lines, `인증일정_${t.getFullYear()}-${pad2(t.getMonth() + 1)}-${pad2(t.getDate())}.csv`);
 }
 
 // ---- 캘린더 ----
@@ -348,7 +354,19 @@ function rateBar(pass, fail) {
   </span>`;
 }
 
-function certStatsTable(rows) {
+// 기준 주(offset 0 = 이번 주)의 월요일~금요일. label은 "8/24~8/28" 형식.
+function weekRangeOf(offset) {
+  const mon = new Date();
+  mon.setHours(0, 0, 0, 0);
+  mon.setDate(mon.getDate() - ((mon.getDay() + 6) % 7) + offset * 7);
+  const fri = new Date(mon);
+  fri.setDate(mon.getDate() + 4);
+  const iso = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+  const short = (d) => `${d.getMonth() + 1}/${d.getDate()}`;
+  return { from: iso(mon), to: iso(fri), label: `${short(mon)}~${short(fri)}` };
+}
+
+function certStatsTable(rows, countLabel) {
   if (!rows.length) return '<p class="col-empty">집계할 의뢰가 없습니다.</p>';
   const body = rows.map((r) => `
     <tr>
@@ -368,7 +386,7 @@ function certStatsTable(rows) {
     <table class="stats-table">
       <thead><tr>
         <th>모델명</th><th>인증종류</th>
-        <th class="num">진행차수<br><small>누적 의뢰</small></th>
+        <th class="num">진행차수<br><small>${countLabel}</small></th>
         <th class="num">최근<br><small>Round 입력</small></th>
         <th class="num">Pass</th><th class="num">Fail</th><th class="num">미판정</th>
         <th class="num">Pass율</th><th class="num">Fail율</th>
@@ -379,30 +397,85 @@ function certStatsTable(rows) {
     </div>`;
 }
 
+// 현재 화면에 뜬 통계를 CSV로 저장 (일정표와 동일하게 UTF-8 BOM → Excel 한글 정상)
+function downloadCertStatsCsv() {
+  const cs = state.certStats;
+  if (!cs.data) return;
+  const isWeek = !!cs.range;
+  const period = isWeek ? `${cs.range.from} ~ ${cs.range.to} (월~금)` : '전체 기간 누적';
+  const cols = [
+    ['모델명', (r) => r.model_name],
+    ['인증종류', (r) => r.cert_type],
+    [isWeek ? '진행차수(주간 의뢰)' : '진행차수(누적 의뢰)', (r) => r.total],
+    ['최근 Round 입력', (r) => r.max_round || ''],
+    ['Pass', (r) => r.pass],
+    ['Fail', (r) => r.fail],
+    ['미판정', (r) => r.pending],
+    ['Pass율(%)', (r) => r.pass_rate],
+    ['Fail율(%)', (r) => r.fail_rate],
+  ];
+  const t = cs.data.totals;
+  const lines = [
+    ['인증 통계', period],
+    ['비율 분모', '전체 의뢰 횟수(미판정 포함) → Pass율 + Fail율이 100%에 못 미칠 수 있음'],
+    [],
+    cols.map((c) => c[0]),
+    ...cs.data.rows.map((r) => cols.map((c) => c[1](r))),
+    [],
+    ['합계', `모델 ${t.models}건`, t.total, '', t.pass, t.fail, '', t.pass_rate, t.fail_rate],
+  ];
+  const stamp = isWeek ? `${cs.range.from}_${cs.range.to}` : '전체누적';
+  saveCsv(lines, `인증통계_${stamp}.csv`);
+}
+
 async function renderCertStats() {
   const root = $('#view-certstats');
+  const cs = state.certStats;
+  const isWeek = cs.mode === 'week';
+  const wk = weekRangeOf(cs.weekOffset);
   root.innerHTML = '<p class="col-empty">불러오는 중…</p>';
+
   let s;
-  try { s = await api('/api/cert-stats'); }
+  try { s = await api(`/api/cert-stats${isWeek ? `?from=${wk.from}&to=${wk.to}` : ''}`); }
   catch (err) { root.innerHTML = `<p class="col-empty">통계를 불러오지 못했습니다: ${esc(err.message)}</p>`; return; }
+  cs.data = s;
+  cs.range = isWeek ? wk : null;
 
   const t = s.totals;
+  const countLabel = isWeek ? '주간 의뢰' : '누적 의뢰';
   const chips = [
     { k: '모델 수', v: t.models },
-    { k: '누적 의뢰', v: t.total },
+    { k: countLabel, v: t.total },
     { k: 'Pass', v: t.pass },
     { k: 'Fail', v: t.fail, warn: t.fail > 0 },
     { k: '전체 Pass율', v: `${t.pass_rate}%` },
     { k: '전체 Fail율', v: `${t.fail_rate}%` },
   ].map((c) => `<div class="sumcard ${c.warn ? 'warn' : ''}"><div class="k">${c.k}</div><div class="v">${c.v}</div></div>`).join('');
 
+  const nav = isWeek ? `
+    <span class="week-nav">
+      <button class="btn" data-stats-week="-1" title="이전 주">‹</button>
+      <b class="week-label">${wk.label}</b><small>(월~금)</small>
+      <button class="btn" data-stats-week="1" title="다음 주">›</button>
+      ${cs.weekOffset !== 0 ? '<button class="btn" data-stats-week="0">이번 주</button>' : ''}
+    </span>` : '';
+
   root.innerHTML = `
     <div class="report-bar">
-      <button class="btn" data-stats-refresh="1">↻ 새로고침</button>
-      <span class="report-hint">전체 기간 누적 · 비율 분모는 전체 의뢰 횟수(미판정 포함)이므로 Pass율 + Fail율 &lt; 100%일 수 있습니다.</span>
+      <span class="seg">
+        <button class="seg-btn ${isWeek ? 'active' : ''}" data-stats-mode="week">주간</button>
+        <button class="seg-btn ${isWeek ? '' : 'active'}" data-stats-mode="all">전체 누적</button>
+      </span>
+      ${nav}
+      <span class="bar-right">
+        <button class="btn" data-stats-excel="1">⤓ 엑셀 다운로드</button>
+        <button class="btn" data-stats-refresh="1">↻ 새로고침</button>
+      </span>
     </div>
+    <p class="report-hint stats-period">대상 기간 · ${isWeek ? `${wk.from} ~ ${wk.to} (월~금)` : '전체 기간 누적'}
+      · 비율 분모는 전체 의뢰 횟수(미판정 포함)이므로 Pass율 + Fail율이 100%에 못 미칠 수 있습니다.</p>
     <div class="summary stats-summary">${chips}</div>
-    ${certStatsTable(s.rows)}`;
+    ${certStatsTable(s.rows, countLabel)}`;
 }
 
 const VIEWS = ['board', 'schedule', 'calendar', 'daily', 'weekly', 'certstats'];
@@ -603,8 +676,23 @@ function bind() {
     });
   });
 
-  // 인증 통계 새로고침
+  // 인증 통계: 주간/누적 전환 · 주 이동 · 엑셀 다운로드 · 새로고침
   $('#view-certstats').addEventListener('click', (e) => {
+    const mode = e.target.closest('[data-stats-mode]');
+    if (mode) {
+      state.certStats.mode = mode.dataset.statsMode;
+      state.certStats.weekOffset = 0;
+      renderCertStats();
+      return;
+    }
+    const wk = e.target.closest('[data-stats-week]');
+    if (wk) {
+      const step = Number(wk.dataset.statsWeek);
+      state.certStats.weekOffset = step === 0 ? 0 : state.certStats.weekOffset + step;
+      renderCertStats();
+      return;
+    }
+    if (e.target.closest('[data-stats-excel]')) { downloadCertStatsCsv(); return; }
     if (e.target.closest('[data-stats-refresh]')) renderCertStats();
   });
 

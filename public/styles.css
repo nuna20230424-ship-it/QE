@@ -111,6 +111,15 @@ main { padding: 0 22px 40px; }
 
 /* 인증 통계 (모델별) */
 .stats-summary { padding: 0 0 14px; }
+.stats-period { margin: 0 0 12px; }
+.report-bar .bar-right { margin-left: auto; display: flex; gap: 8px; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.seg-btn { border: 0; background: var(--panel); color: var(--muted); font-weight: 700; font-size: 13px; padding: 7px 14px; cursor: pointer; }
+.seg-btn + .seg-btn { border-left: 1px solid var(--line); }
+.seg-btn:hover { background: #f1f4f9; color: var(--text); }
+.seg-btn.active { background: #1a56d6; color: #fff; }
+.week-nav { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; }
+.week-nav .week-label { color: var(--text); font-size: 15px; font-weight: 800; font-variant-numeric: tabular-nums; }
 .stats-table tbody tr { cursor: default; }
 .stats-table th.num, .stats-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
 .stats-table th small { display: block; font-weight: 600; font-size: 10px; opacity: 0.85; }

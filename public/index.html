@@ -55,6 +55,9 @@
 
   <div id="summary" class="summary"></div>
 
+  <!-- 반복 Fail · 장기 미판정 병목 경고 (현황 보드에서만 노출) -->
+  <div id="bottlenecks" class="bottlenecks hidden"></div>
+
   <div id="board-clock" class="board-clock hidden"></div>
 
   <main>
@@ -104,15 +107,13 @@
                 <option value="MR">MR</option>
               </select>
             </label>
-            <label>Round
-              <select id="f-round">
-                <option value="">—</option>
-                <option value="1">1</option>
-                <option value="2">2</option>
-                <option value="3">3</option>
-                <option value="4">4</option>
-                <option value="5">5</option>
-              </select>
+            <label>진행차수 (Round)
+              <span class="round-field">
+                <input id="f-round" type="number" min="1" step="1" placeholder="자동 산출" autocomplete="off" />
+                <span id="round-spin" class="spinner hidden" title="이력 조회 중"></span>
+                <button type="button" id="btn-round-info" class="info-btn hidden" title="진행차수 산출 근거 보기">ⓘ</button>
+              </span>
+              <small id="round-hint" class="field-hint">모델명과 Test 목적을 고르면 자동으로 채워집니다.</small>
             </label>
             <label>모델명*
               <input id="f-model_name" list="model-list" placeholder="선택 또는 직접 입력" autocomplete="off" required />
@@ -198,6 +199,17 @@
           <button type="submit" class="btn btn-primary">저장</button>
         </div>
       </form>
+    </div>
+  </div>
+
+  <!-- 진행차수 산출 근거 (이전 차수 타임라인) -->
+  <div id="round-modal" class="modal-backdrop hidden">
+    <div class="modal modal-sm">
+      <div class="modal-head">
+        <h2 id="round-modal-title">진행차수 산출 근거</h2>
+        <button id="round-modal-close" class="icon-btn">✕</button>
+      </div>
+      <div id="round-modal-body" class="round-modal-body"></div>
     </div>
   </div>
 

@@ -47,6 +47,22 @@ app.get('/api/cert-stats', (req, res) => {
   res.json(repo.certStats(from && to ? { from, to } : null));
 });
 
+// Task 5. 모델명 + Test 목적으로 신규 의뢰의 진행차수를 산출. 근거 이력도 함께 돌려준다.
+app.get('/api/next-round', (req, res) => {
+  const model = String(req.query.model_name || '').trim();
+  if (!model) return res.status(400).json({ error: 'model_name은 필수입니다.' });
+  res.json(repo.nextRound(model, req.query.test_purpose));
+});
+
+// Task 6-2. 반복 Fail·장기 미판정 병목 경고
+app.get('/api/bottlenecks', (req, res) => {
+  const num = (v, d) => (Number.isFinite(Number(v)) && Number(v) > 0 ? Number(v) : d);
+  res.json(repo.bottlenecks({
+    roundThreshold: num(req.query.round, 5),
+    staleDays: num(req.query.days, 14),
+  }));
+});
+
 // 일일/주간 현황보고 (미리보기용 HTML + 집계)
 app.get('/api/report/:period', (req, res) => {
   const p = req.params.period;

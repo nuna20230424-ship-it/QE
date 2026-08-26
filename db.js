@@ -75,12 +75,140 @@ const LABELS = {
 const ACT_START = "COALESCE(NULLIF(started_date,''), NULLIF(scheduled_date,''), NULLIF(desired_date,''))";
 const ACT_END = "COALESCE(NULLIF(completed_date,''), NULLIF(started_date,''), NULLIF(scheduled_date,''), NULLIF(desired_date,''))";
 
+// 의뢰 하나의 대표 진행일(YYYY-MM-DD). 완료일 → 시작일 → 예약일 → 희망일 → 등록일 순.
+const ACT_DATE = `substr(COALESCE(NULLIF(completed_date,''), NULLIF(started_date,''), NULLIF(scheduled_date,''), NULLIF(desired_date,''), created_at), 1, 10)`;
+// "가장 최근 건"을 고르기 위한 정렬키. 대표 진행일이 같으면 id가 큰 쪽(나중 등록)이 최신.
+const SORT_KEY = `(${ACT_DATE} || '#' || printf('%010d', id))`;
+// Test 목적 미입력 건도 한 그룹으로 묶이도록 정규화한다.
+const PURPOSE = `COALESCE(NULLIF(TRIM(test_purpose),''), '(미지정)')`;
+// 통계 대상: 판정이 끝난 건(Pass/Fail)만. '미판정'과 Drop은 지시서 4-1에 따라 산출에서 제외한다.
+const JUDGED = `verdict IN ('Pass','Fail')`;
+
 // 비율(%) 계산. 분모가 0이면 0으로 반환해 0 나눗셈을 차단한다.
 const pct = (n, d) => (d > 0 ? Math.round((n / d) * 1000) / 10 : 0);
 
 function logHistory(requestId, actor, action, detail) {
   db.prepare('INSERT INTO history (request_id, ts, actor, action, detail) VALUES (?,?,?,?,?)')
     .run(requestId, nowIso(), actor || '알수없음', action, detail || '');
+}
+
+// 모델(프로젝트) × 인증종류 × Test 목적별 통계.
+// 미판정·Drop 건은 집계에서 빠지므로 분모는 판정 완료 건수이고 Pass율 + Fail율 = 100%가 된다.
+// `결과`와 `진행차수`는 그 조합의 가장 최근 판정 건에서 함께 가져와 두 값이 같은 의뢰를 가리킨다.
+// MAX(SORT_KEY)와 함께 쓴 bare column(verdict·round)은 최댓값을 만든 행의 값을 돌려주는 SQLite 규칙에 기댄다.
+function certStatsOf(range) {
+  const cond = [JUDGED];
+  if (range) cond.push(`${ACT_START} IS NOT NULL`, `${ACT_START} <= @to`, `MAX(${ACT_END}, ${ACT_START}) >= @from`);
+  const rows = db.prepare(`
+    SELECT model_name, cert_type, ${PURPOSE} AS test_purpose,
+           COUNT(*)                                          AS judged,
+           SUM(CASE WHEN verdict = 'Pass' THEN 1 ELSE 0 END) AS pass,
+           SUM(CASE WHEN verdict = 'Fail' THEN 1 ELSE 0 END) AS fail,
+           MAX(${SORT_KEY})                                  AS latest_key,
+           verdict                                           AS result,
+           round                                             AS last_round,
+           ${ACT_DATE}                                       AS last_date
+    FROM requests
+    WHERE ${cond.join(' AND ')}
+    GROUP BY model_name, cert_type, ${PURPOSE}
+    ORDER BY model_name COLLATE NOCASE, cert_type, test_purpose
+  `).all(range || {});
+
+  const out = rows.map((r) => ({
+    model_name: r.model_name,
+    cert_type: r.cert_type,
+    test_purpose: r.test_purpose,
+    result: r.result,                            // 최신 판정 (Pass | Fail)
+    round: Number(r.last_round) || r.judged,     // 진행차수 = 최신 판정 건의 Round (미입력 시 판정 횟수로 대체)
+    last_date: r.last_date,
+    judged: r.judged,
+    pass: r.pass,
+    fail: r.fail,
+    pass_rate: pct(r.pass, r.judged),
+    fail_rate: pct(r.fail, r.judged),
+  }));
+
+  const sum = (k) => out.reduce((a, r) => a + r[k], 0);
+  const judged = sum('judged');
+  return {
+    range: range || null,
+    rows: out,
+    totals: {
+      models: new Set(out.map((r) => r.model_name)).size,
+      judged,
+      pass: sum('pass'),
+      fail: sum('fail'),
+      pass_rate: pct(sum('pass'), judged),
+      fail_rate: pct(sum('fail'), judged),
+    },
+  };
+}
+
+// (모델명 × Test 목적) 조합의 판정 이력을 최신순으로. 진행차수 산출과 ⓘ 히스토리가 함께 쓴다.
+// 지시서 Task 5가 키를 "모델명과 Test 목적"으로 명시해 인증종류는 조건에 넣지 않는다.
+function roundHistoryOf(modelName, testPurpose) {
+  const model = String(modelName || '').trim();
+  if (!model) return [];
+  return db.prepare(`
+    SELECT id, cert_type, ${PURPOSE} AS test_purpose, round, verdict, status,
+           ${ACT_DATE} AS on_date, progress, result
+    FROM requests
+    WHERE TRIM(model_name) = @model AND ${PURPOSE} = @purpose AND ${JUDGED}
+    ORDER BY ${SORT_KEY} DESC
+  `).all({ model, purpose: String(testPurpose || '').trim() || '(미지정)' });
+}
+
+// Task 5. 신규 의뢰의 진행차수 자동 산출.
+//   직전 판정이 Fail → 직전 차수 + 1 / 직전 판정이 Pass 이거나 이력이 없으면 → 1차
+function nextRoundOf(modelName, testPurpose) {
+  const history = roundHistoryOf(modelName, testPurpose);
+  const prev = history[0] || null;
+  if (!prev) {
+    return { round: 1, basis: 'new', reason: '이전 의뢰 이력이 없어 1차로 시작합니다.', prev: null, history };
+  }
+  if (prev.verdict === 'Fail') {
+    const prevRound = Number(prev.round) || history.length;
+    return {
+      round: prevRound + 1,
+      basis: 'fail',
+      reason: `직전 의뢰(${prev.on_date})가 ${prevRound}차 Fail이라 ${prevRound + 1}차로 이어집니다.`,
+      prev,
+      history,
+    };
+  }
+  return {
+    round: 1,
+    basis: 'pass',
+    reason: `직전 의뢰(${prev.on_date})가 Pass로 종료되어 1차부터 다시 시작합니다.`,
+    prev,
+    history,
+  };
+}
+
+// Task 6-2. QA 리더가 먼저 봐야 할 리스크 2종.
+//   반복 Fail   — 최신 판정이 Fail이면서 진행차수가 임계 이상인 조합
+//   장기 미판정 — 판정 없이 임계 일수를 넘긴 채 아직 종료되지 않은 건
+function bottlenecksOf({ roundThreshold = 5, staleDays = 14 } = {}) {
+  const repeated = certStatsOf(null).rows
+    .filter((r) => r.result === 'Fail' && r.round >= roundThreshold)
+    .map((r) => ({
+      model_name: r.model_name, cert_type: r.cert_type, test_purpose: r.test_purpose,
+      round: r.round, fail: r.fail, last_date: r.last_date,
+    }));
+
+  const limit = new Date(Date.now() - staleDays * 86400000).toISOString().slice(0, 10);
+  const stale = db.prepare(`
+    SELECT id, model_name, cert_type, ${PURPOSE} AS test_purpose, round, status, tester,
+           ${ACT_START} AS since,
+           CAST(julianday('now') - julianday(${ACT_START}) AS INTEGER) AS days
+    FROM requests
+    WHERE (verdict IS NULL OR TRIM(verdict) = '')
+      AND status NOT IN ('완료', '보류', '중단')
+      AND ${ACT_START} IS NOT NULL AND ${ACT_START} <= @limit
+    ORDER BY since
+  `).all({ limit });
+
+  return { roundThreshold, staleDays, repeated, stale, count: repeated.length + stale.length };
 }
 
 module.exports = {
@@ -188,49 +316,15 @@ module.exports = {
     ).all().map((r) => r.model_name);
   },
 
-  // 모델(프로젝트) × 인증종류별 통계. range가 있으면 대표 진행구간이 기간과 겹치는 건만 집계.
-  // 집계는 SQL GROUP BY로 처리해 행 전체를 앱으로 끌어오지 않는다.
-  certStats(range) {
-    const where = range
-      ? `WHERE ${ACT_START} IS NOT NULL AND ${ACT_START} <= @to AND MAX(${ACT_END}, ${ACT_START}) >= @from`
-      : '';
-    const rows = db.prepare(`
-      SELECT model_name, cert_type,
-             COUNT(*)                                                   AS total,
-             SUM(CASE WHEN verdict = 'Pass' THEN 1 ELSE 0 END)          AS pass,
-             SUM(CASE WHEN verdict = 'Fail' THEN 1 ELSE 0 END)          AS fail,
-             SUM(CASE WHEN verdict = 'Drop' THEN 1 ELSE 0 END)          AS drop_cnt,
-             SUM(CASE WHEN status = '완료' THEN 1 ELSE 0 END)            AS completed,
-             MAX(CAST(NULLIF(round,'') AS INTEGER))                     AS max_round
-      FROM requests
-      ${where}
-      GROUP BY model_name, cert_type
-      ORDER BY model_name COLLATE NOCASE, cert_type
-    `).all(range || {});
+  // range가 있으면 대표 진행구간이 그 기간과 겹치는 건만 집계한다.
+  certStats: certStatsOf,
 
-    const out = rows.map((r) => ({
-      ...r,
-      max_round: r.max_round || 0,
-      pending: r.total - r.pass - r.fail - r.drop_cnt,
-      pass_rate: pct(r.pass, r.total),
-      fail_rate: pct(r.fail, r.total),
-    }));
+  // Task 5. 진행차수 자동 산출과 그 근거가 되는 판정 이력.
+  nextRound: nextRoundOf,
+  roundHistory: roundHistoryOf,
 
-    const sum = (k) => out.reduce((a, r) => a + r[k], 0);
-    const total = sum('total');
-    return {
-      range: range || null,
-      rows: out,
-      totals: {
-        models: new Set(out.map((r) => r.model_name)).size,
-        total,
-        pass: sum('pass'),
-        fail: sum('fail'),
-        pass_rate: pct(sum('pass'), total),
-        fail_rate: pct(sum('fail'), total),
-      },
-    };
-  },
+  // Task 6-2. 반복 Fail · 장기 미판정 경고.
+  bottlenecks: bottlenecksOf,
 
   // 요약 통계
   stats() {

@@ -106,22 +106,30 @@ function inProgressTable(rows) {
 }
 
 // ---- 모델별 인증 통계 (주간업무보고 전용 섹션) ----
-// 지표: 진행차수(누적 의뢰 횟수) · Pass/Fail 횟수 · 전체 의뢰 대비 Pass율/Fail율.
-// 분모가 '전체 의뢰 횟수'라 미판정 건도 포함되므로 Pass율 + Fail율은 100%가 되지 않는다.
+// 지표: 결과(최신 판정) · Test 목적 · 진행차수(최신 판정 건의 Round) · Pass/Fail 횟수 · Pass율/Fail율.
+// 미판정 건은 집계에서 제외하므로 분모는 판정 완료 건수이고 Pass율 + Fail율 = 100%다.
+// 메일 클라이언트가 <style>을 제거하므로 결과 강조도 인라인 스타일로 넣는다.
+const resultCell = (v) => (
+  v === 'Pass' ? '<b style="color:#1257c9;">Pass</b>'
+    : v === 'Fail' ? '<b style="background:#d23227;color:#ffffff;padding:1px 7px;border-radius:3px;">Fail</b>'
+      : '—'
+);
+
 function certStatsTable(rows) {
-  if (!rows.length) return emptyLine('해당 주차에 진행된 인증 의뢰가 없습니다.');
+  if (!rows.length) return emptyLine('해당 주차에 판정이 끝난 인증 의뢰가 없습니다.');
   const body = rows.map((r) => `<tr>
     ${td('<strong>' + esc(r.model_name) + '</strong>')}
     ${td(esc(r.cert_type))}
-    ${tdNum(r.total + '차')}
+    ${td(resultCell(r.result))}
+    ${td(esc(r.test_purpose))}
+    ${tdNum(r.round + '차')}
     ${tdNum(r.pass)}
     ${tdNum(r.fail ? `<b style="color:#d23227;">${r.fail}</b>` : 0)}
-    ${tdNum(r.pending)}
     ${tdNum(r.pass_rate + '%')}
     ${tdNum(r.fail ? `<b style="color:#d23227;">${r.fail_rate}%</b>` : '0%')}
   </tr>`).join('');
   return `<table style="width:100%;border-collapse:collapse;border:1px solid #e2e7ef;">
-    <thead><tr>${th('모델명')}${th('인증종류')}${thNum('진행차수')}${thNum('Pass')}${thNum('Fail')}${thNum('미판정')}${thNum('Pass율')}${thNum('Fail율')}</tr></thead>
+    <thead><tr>${th('모델명')}${th('인증종류')}${th('결과')}${th('Test 목적')}${thNum('진행차수')}${thNum('Pass')}${thNum('Fail')}${thNum('Pass율')}${thNum('Fail율')}</tr></thead>
     <tbody>${body}</tbody></table>`;
 }
 
@@ -130,9 +138,9 @@ function certStatsSection(now = new Date()) {
   const s = repo.certStats({ from, to });
   const t = s.totals;
   const head = `<p style="color:#6b7686;font-size:12px;margin:6px 0 10px;">
-    대상 주차 ${esc(from)} ~ ${esc(to)} (월~금) · 모델 ${t.models}건 · 누적 의뢰 ${t.total}차 ·
+    대상 주차 ${esc(from)} ~ ${esc(to)} (월~금) · 모델 ${t.models}건 · 판정 ${t.judged}건 ·
     Pass ${t.pass} / Fail ${t.fail} · Pass율 ${t.pass_rate}% · Fail율 ${t.fail_rate}%
-    <br>비율 분모는 전체 의뢰 횟수(미판정 포함)입니다.
+    <br>판정 완료(Pass/Fail) 건만 집계하며 미판정 건은 제외합니다. 진행차수는 최신 판정 건의 Round입니다.
   </p>`;
   return section('모델별 인증 현황 (진행차수 · Pass/Fail 통계)', head + certStatsTable(s.rows));
 }

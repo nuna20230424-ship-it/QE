@@ -345,9 +345,9 @@ async function renderReport(period) {
     <div class="report-body">${r.html}</div>`;
 }
 
-// ---- 인증 통계 (모델별 누적) ----
-// 지표: 진행차수(누적 의뢰 횟수) · Fail 횟수 · 전체 의뢰 대비 Pass율 / Fail율.
-// 비율 분모는 '전체 의뢰 횟수'라 미판정 건도 포함되므로 Pass율 + Fail율은 100%가 되지 않는다.
+// ---- 인증 통계 (모델 × 인증종류 × Test 목적) ----
+// 지표: 결과(최신 판정) · 진행차수(최신 판정 건의 Round) · Fail 횟수 · Pass율 / Fail율.
+// 미판정 건은 집계에서 빠지므로 분모는 판정 완료 건수이고 Pass율 + Fail율 = 100%다.
 function rateBar(pass, fail) {
   return `<span class="rate-bar" title="Pass ${pass}% / Fail ${fail}%">
     <i class="rb-pass" style="width:${pass}%"></i><i class="rb-fail" style="width:${fail}%"></i>
@@ -366,17 +366,20 @@ function weekRangeOf(offset) {
   return { from: iso(mon), to: iso(fri), label: `${short(mon)}~${short(fri)}` };
 }
 
-function certStatsTable(rows, countLabel) {
-  if (!rows.length) return '<p class="col-empty">집계할 의뢰가 없습니다.</p>';
+// 결과 셀: Pass는 파란 볼드, Fail은 빨간 음영 + 흰 볼드 (지시서 4-3)
+const resultCell = (v) => (v ? `<span class="res res-${v.toLowerCase()}">${esc(v)}</span>` : '—');
+
+function certStatsTable(rows) {
+  if (!rows.length) return '<p class="col-empty">집계할 판정 완료 의뢰가 없습니다.</p>';
   const body = rows.map((r) => `
     <tr>
       <td><strong>${esc(r.model_name)}</strong></td>
       <td><span class="badge badge-${certClass(r.cert_type)}">${esc(r.cert_type)}</span></td>
-      <td class="num">${r.total}차</td>
-      <td class="num">${r.max_round ? `${r.max_round}차` : '—'}</td>
+      <td>${resultCell(r.result)}</td>
+      <td>${esc(r.test_purpose)}</td>
+      <td class="num">${r.round}차</td>
       <td class="num">${r.pass}</td>
       <td class="num ${r.fail ? 'em-fail' : ''}">${r.fail}</td>
-      <td class="num">${r.pending}</td>
       <td class="num">${r.pass_rate}%</td>
       <td class="num ${r.fail ? 'em-fail' : ''}">${r.fail_rate}%</td>
       <td>${rateBar(r.pass_rate, r.fail_rate)}</td>
@@ -385,10 +388,9 @@ function certStatsTable(rows, countLabel) {
     <div class="table-wrap">
     <table class="stats-table">
       <thead><tr>
-        <th>모델명</th><th>인증종류</th>
-        <th class="num">진행차수<br><small>${countLabel}</small></th>
-        <th class="num">최근<br><small>Round 입력</small></th>
-        <th class="num">Pass</th><th class="num">Fail</th><th class="num">미판정</th>
+        <th>모델명</th><th>인증종류</th><th>결과</th><th>Test 목적</th>
+        <th class="num">진행차수</th>
+        <th class="num">Pass</th><th class="num">Fail</th>
         <th class="num">Pass율</th><th class="num">Fail율</th>
         <th>비율</th>
       </tr></thead>
@@ -406,23 +408,23 @@ function downloadCertStatsCsv() {
   const cols = [
     ['모델명', (r) => r.model_name],
     ['인증종류', (r) => r.cert_type],
-    [isWeek ? '진행차수(주간 의뢰)' : '진행차수(누적 의뢰)', (r) => r.total],
-    ['최근 Round 입력', (r) => r.max_round || ''],
+    ['결과', (r) => r.result],
+    ['Test 목적', (r) => r.test_purpose],
+    ['진행차수', (r) => r.round],
     ['Pass', (r) => r.pass],
     ['Fail', (r) => r.fail],
-    ['미판정', (r) => r.pending],
     ['Pass율(%)', (r) => r.pass_rate],
     ['Fail율(%)', (r) => r.fail_rate],
   ];
   const t = cs.data.totals;
   const lines = [
     ['인증 통계', period],
-    ['비율 분모', '전체 의뢰 횟수(미판정 포함) → Pass율 + Fail율이 100%에 못 미칠 수 있음'],
+    ['집계 대상', '판정 완료(Pass/Fail) 건만 — 미판정 건은 제외'],
     [],
     cols.map((c) => c[0]),
     ...cs.data.rows.map((r) => cols.map((c) => c[1](r))),
     [],
-    ['합계', `모델 ${t.models}건`, t.total, '', t.pass, t.fail, '', t.pass_rate, t.fail_rate],
+    ['합계', `모델 ${t.models}건`, '', '', `판정 ${t.judged}건`, t.pass, t.fail, t.pass_rate, t.fail_rate],
   ];
   const stamp = isWeek ? `${cs.range.from}_${cs.range.to}` : '전체누적';
   saveCsv(lines, `인증통계_${stamp}.csv`);
@@ -442,10 +444,9 @@ async function renderCertStats() {
   cs.range = isWeek ? wk : null;
 
   const t = s.totals;
-  const countLabel = isWeek ? '주간 의뢰' : '누적 의뢰';
   const chips = [
     { k: '모델 수', v: t.models },
-    { k: countLabel, v: t.total },
+    { k: isWeek ? '주간 판정' : '누적 판정', v: t.judged },
     { k: 'Pass', v: t.pass },
     { k: 'Fail', v: t.fail, warn: t.fail > 0 },
     { k: '전체 Pass율', v: `${t.pass_rate}%` },
@@ -473,9 +474,101 @@ async function renderCertStats() {
       </span>
     </div>
     <p class="report-hint stats-period">대상 기간 · ${isWeek ? `${wk.from} ~ ${wk.to} (월~금)` : '전체 기간 누적'}
-      · 비율 분모는 전체 의뢰 횟수(미판정 포함)이므로 Pass율 + Fail율이 100%에 못 미칠 수 있습니다.</p>
+      · 판정 완료(Pass/Fail) 건만 집계하며 미판정 건은 제외합니다. 진행차수는 최신 판정 건의 Round입니다.</p>
     <div class="summary stats-summary">${chips}</div>
-    ${certStatsTable(s.rows, countLabel)}`;
+    ${certStatsTable(s.rows)}`;
+}
+
+// ---- Task 5. 진행차수 자동 산출 ----
+// 모델명 · Test 목적이 정해지는 순간 서버 이력을 조회해 차수를 채운다.
+// 자동값은 제안일 뿐이라 사용자가 직접 고칠 수 있고, 한 번 고치면 다시 덮어쓰지 않는다.
+const roundAuto = { seq: 0, key: null, info: null, touched: false };
+
+const setRoundHint = (text) => { $('#round-hint').textContent = text; };
+const roundKeyOf = () => `${$(F.model_name).value.trim()}\u0000${$(F.test_purpose).value}`;
+
+async function autoFillRound() {
+  if ($(F.id).value) return;                    // 기존 의뢰 상세에서는 저장된 차수를 건드리지 않는다
+  const key = roundKeyOf();
+  if (key === roundAuto.key) return;            // 같은 조합이면 다시 조회하지 않는다
+  roundAuto.key = key;
+
+  const model = $(F.model_name).value.trim();
+  if (!model) {
+    roundAuto.info = null;
+    $('#btn-round-info').classList.add('hidden');
+    setRoundHint('모델명과 Test 목적을 고르면 자동으로 채워집니다.');
+    return;
+  }
+
+  const seq = ++roundAuto.seq;                  // 늦게 도착한 응답이 최신 값을 덮지 않게 한다
+  const input = $(F.round);
+  $('#round-spin').classList.remove('hidden');
+  input.readOnly = true;                        // 조회 중 중복 입력 차단
+  try {
+    const q = `model_name=${encodeURIComponent(model)}&test_purpose=${encodeURIComponent($(F.test_purpose).value)}`;
+    const info = await api(`/api/next-round?${q}`);
+    if (seq !== roundAuto.seq) return;
+    roundAuto.info = info;
+    if (!roundAuto.touched) input.value = info.round;
+    $('#btn-round-info').classList.toggle('hidden', !info.history.length);
+    setRoundHint(roundAuto.touched ? `${info.reason} (직접 입력한 값을 유지합니다)` : info.reason);
+  } catch (err) {
+    if (seq === roundAuto.seq) setRoundHint(`이력을 불러오지 못했습니다: ${err.message}`);
+  } finally {
+    if (seq === roundAuto.seq) { $('#round-spin').classList.add('hidden'); input.readOnly = false; }
+  }
+}
+
+// Task 6-1. 산출 근거 — '왜 4차인지'를 이전 차수 타임라인으로 보여준다.
+function openRoundModal() {
+  const info = roundAuto.info;
+  if (!info) return;
+  const purpose = $(F.test_purpose).value || '(미지정)';
+  const items = info.history.map((h) => `
+    <li class="tl-item">
+      <span class="tl-dot tl-${(h.verdict || '').toLowerCase()}"></span>
+      <div class="tl-body">
+        <div class="tl-line"><b>${h.round ? `${esc(h.round)}차` : '차수 미입력'}</b>
+          ${resultCell(h.verdict)}<span class="tl-date">${esc(h.on_date)}</span></div>
+        <div class="tl-meta">${esc(h.cert_type)}</div>
+        ${h.result || h.progress ? `<div class="tl-note">${esc(h.result || h.progress)}</div>` : ''}
+      </div>
+    </li>`).join('');
+  $('#round-modal-body').innerHTML = `
+    <p class="round-why"><b>${esc($(F.model_name).value.trim())}</b> · ${esc(purpose)}
+      → 산출 <b>${info.round}차</b><br><span class="field-hint">${esc(info.reason)}</span></p>
+    ${info.history.length
+      ? `<ol class="timeline">${items}</ol>`
+      : '<p class="col-empty">이전 판정 이력이 없습니다.</p>'}`;
+  $('#round-modal').classList.remove('hidden');
+}
+
+const closeRoundModal = () => $('#round-modal').classList.add('hidden');
+
+// ---- Task 6-2. 병목 경고 위젯 (현황 보드 상단) ----
+// 반복 Fail로 차수가 높아진 조합과, 판정 없이 오래 머문 건을 리더가 먼저 보도록 끌어올린다.
+async function renderBottlenecks() {
+  const el = $('#bottlenecks');
+  if (state.view !== 'board') { el.classList.add('hidden'); return; }
+  let b;
+  try { b = await api('/api/bottlenecks'); } catch { el.classList.add('hidden'); return; }
+  if (!b.count) { el.classList.add('hidden'); return; }
+
+  const rep = b.repeated.map((r) => `
+    <li><span class="bn-badge bn-fail">${r.round}차</span>
+      <b>${esc(r.model_name)}</b> · ${esc(r.cert_type)} · ${esc(r.test_purpose)}
+      <span class="bn-sub">누적 Fail ${r.fail}회 · 최근 ${esc(r.last_date)}</span></li>`).join('');
+  const stale = b.stale.map((r) => `
+    <li data-id="${r.id}"><span class="bn-badge bn-stale">${r.days}일</span>
+      <b>${esc(r.model_name)}</b> · ${esc(r.cert_type)} · ${esc(r.status)}
+      <span class="bn-sub">${esc(r.since)}부터 미판정${r.tester ? ` · ${esc(r.tester)}` : ''}</span></li>`).join('');
+
+  el.innerHTML = `
+    <div class="bn-head">⚠ 확인이 필요한 건 ${b.count}건</div>
+    ${b.repeated.length ? `<div class="bn-group"><h4>반복 Fail — ${b.roundThreshold}차 이상</h4><ul>${rep}</ul></div>` : ''}
+    ${b.stale.length ? `<div class="bn-group"><h4>장기 미판정 — ${b.staleDays}일 초과</h4><ul>${stale}</ul></div>` : ''}`;
+  el.classList.remove('hidden');
 }
 
 const VIEWS = ['board', 'schedule', 'calendar', 'daily', 'weekly', 'certstats'];
@@ -486,6 +579,7 @@ function render() {
   $('#summary').classList.toggle('hidden', isPanel);
   $('#board-clock').classList.toggle('hidden', state.view !== 'board');
   document.querySelector('.filters').classList.toggle('hidden', isPanel);
+  renderBottlenecks();
   if (state.view === 'board') renderBoard();
   else if (state.view === 'schedule') renderSchedule();
   else if (state.view === 'calendar') renderCalendar();
@@ -574,6 +668,18 @@ function openModal(item) {
   buildModelOptions();
   $('#f-requester').value = isNew ? '' : (item.requester || '');
   setCombo('tester', isNew ? '' : (item.tester || ''));
+
+  // 진행차수 자동 산출 상태 초기화. 신규 등록일 때만 이력을 조회한다.
+  roundAuto.key = null;
+  roundAuto.info = null;
+  roundAuto.touched = false;
+  $('#btn-round-info').classList.add('hidden');
+  $('#round-spin').classList.add('hidden');
+  setRoundHint(isNew
+    ? '모델명과 Test 목적을 고르면 자동으로 채워집니다.'
+    : '저장된 진행차수입니다. 필요하면 직접 수정할 수 있습니다.');
+  if (isNew) autoFillRound();
+
   applyRoleLock();
   loadHistory(isNew ? null : item.id);
   $('#modal').classList.remove('hidden');
@@ -646,6 +752,27 @@ function bind() {
   $('#req-form').addEventListener('submit', submitForm);
   $('#btn-delete').addEventListener('click', deleteItem);
   bindCombo('tester');
+
+  // Task 5. 모델명·Test 목적이 바뀌면 진행차수를 다시 산출 (타이핑은 250ms 디바운스)
+  let roundTimer;
+  $(F.model_name).addEventListener('input', () => {
+    clearTimeout(roundTimer);
+    roundTimer = setTimeout(autoFillRound, 250);
+  });
+  $(F.test_purpose).addEventListener('change', autoFillRound);
+  // 사용자가 직접 고친 차수는 이후 자동값이 덮어쓰지 않는다
+  $(F.round).addEventListener('input', () => { roundAuto.touched = true; });
+  $('#btn-round-info').addEventListener('click', openRoundModal);
+  $('#round-modal-close').addEventListener('click', closeRoundModal);
+  $('#round-modal').addEventListener('click', (e) => { if (e.target.id === 'round-modal') closeRoundModal(); });
+
+  // 병목 경고에서 장기 미판정 건 클릭 → 상세 (필터에 걸려 목록에 없을 수 있어 직접 조회)
+  $('#bottlenecks').addEventListener('click', async (e) => {
+    const el = e.target.closest('[data-id]');
+    if (!el) return;
+    try { openModal(await api(`/api/requests/${el.dataset.id}`)); }
+    catch (err) { alert(err.message); }
+  });
 
   // 보드 칼럼 "더보기/접기" 토글
   $('#view-board').addEventListener('click', (e) => {

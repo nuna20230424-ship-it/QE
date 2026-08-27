@@ -71,9 +71,11 @@ async function sendStatusNotification(req, event) {
   }
 }
 
-// 일일/주간 현황보고 수신자 기본값 (config.reportTo 로 재정의 가능)
-const DEFAULT_REPORT_TO = ['nuna20230424@gmail.com', 'keonhee.cho@kaongroup.com'];
+// 보고 메일 수신자 기본값 (config.reportTo 로 재정의 가능).
+// 사내 자료가 사외 개인계정에 남지 않도록 회사 도메인만 둔다.
+const DEFAULT_REPORT_TO = ['keonhee.cho@kaongroup.com'];
 
+// 본문은 report.js가 만든 링크 전용 HTML. 첨부는 붙이지 않는다(사내 자료 반출 방지).
 async function sendReportMail(subject, html) {
   if (!transporter || !config) {
     console.log('[notify] config.json 미설정 → 현황보고 메일 생략');
@@ -96,4 +98,7 @@ async function sendReportMail(subject, html) {
 }
 
 init();
-module.exports = { sendStatusNotification, sendReportMail };
+// report.js가 메일 링크에 쓸 대시보드 주소
+const baseUrl = () => (config && config.baseUrl) || '';
+
+module.exports = { sendStatusNotification, sendReportMail, baseUrl };

@@ -2,7 +2,8 @@
 const path = require('path');
 const Database = require('better-sqlite3');
 
-const db = new Database(path.join(__dirname, 'data.db'));
+// 운영은 data.db 고정. DB_PATH는 스모크 테스트가 실 DB를 건드리지 않게 하는 용도.
+const db = new Database(process.env.DB_PATH || path.join(__dirname, 'data.db'));
 db.pragma('journal_mode = WAL');
 
 db.exec(`
@@ -44,11 +45,24 @@ db.exec(`
   )
 `);
 
+// 의뢰자 드롭다운 제안에서 숨길 이름 목록 (의뢰 레코드는 보존, 제안에서만 제거)
+db.exec(`
+  CREATE TABLE IF NOT EXISTS hidden_requesters (
+    name      TEXT PRIMARY KEY,   -- 숨긴 의뢰자 이름
+    hidden_at TEXT NOT NULL,      -- 숨긴 시각
+    actor     TEXT               -- 숨긴 작업자
+  )
+`);
+
 // 기존 DB 호환: 신규 컬럼 누락 시 보강 (request_item 컬럼은 미사용 처리)
 const existingCols = db.prepare('PRAGMA table_info(requests)').all().map((c) => c.name);
 for (const name of ['test_type', 'test_purpose', 'round', 'verdict', 'started_date', 'completed_date', 'confirmed_at', 'started_at', 'completed_at']) {
   if (!existingCols.includes(name)) db.exec(`ALTER TABLE requests ADD COLUMN ${name} TEXT`);
 }
+
+// 모델별 통계 집계(GROUP BY)와 모델명 목록(DISTINCT)이 전체 스캔을 타지 않도록 인덱스 보강
+db.exec('CREATE INDEX IF NOT EXISTS idx_requests_model_cert ON requests (model_name, cert_type)');
+db.exec('CREATE INDEX IF NOT EXISTS idx_requests_completed_date ON requests (completed_date)');
 
 const nowIso = () => new Date().toISOString();
 
@@ -65,9 +79,145 @@ const LABELS = {
   verdict: '판정', started_date: '시작일', completed_date: '완료일',
 };
 
+// 의뢰가 "진행된" 것으로 볼 기간 판정용 대표 시작/종료일.
+// 시작일 → 예약확정일 → 희망일 순으로 대체하고, 종료일은 완료일 우선.
+const ACT_START = "COALESCE(NULLIF(started_date,''), NULLIF(scheduled_date,''), NULLIF(desired_date,''))";
+const ACT_END = "COALESCE(NULLIF(completed_date,''), NULLIF(started_date,''), NULLIF(scheduled_date,''), NULLIF(desired_date,''))";
+
+// 의뢰 하나의 대표 진행일(YYYY-MM-DD). 완료일 → 시작일 → 예약일 → 희망일 → 등록일 순.
+const ACT_DATE = `substr(COALESCE(NULLIF(completed_date,''), NULLIF(started_date,''), NULLIF(scheduled_date,''), NULLIF(desired_date,''), created_at), 1, 10)`;
+// "가장 최근 건"을 고르기 위한 정렬키. 대표 진행일이 같으면 id가 큰 쪽(나중 등록)이 최신.
+const SORT_KEY = `(${ACT_DATE} || '#' || printf('%010d', id))`;
+// Test 목적 미입력 건도 한 그룹으로 묶이도록 정규화한다.
+const PURPOSE = `COALESCE(NULLIF(TRIM(test_purpose),''), '(미지정)')`;
+// 통계 대상: 판정이 끝난 건(Pass/Fail)만. '미판정'과 Drop은 지시서 4-1에 따라 산출에서 제외한다.
+const JUDGED = `verdict IN ('Pass','Fail')`;
+
+// 비율(%) 계산. 분모가 0이면 0으로 반환해 0 나눗셈을 차단한다.
+const pct = (n, d) => (d > 0 ? Math.round((n / d) * 1000) / 10 : 0);
+
 function logHistory(requestId, actor, action, detail) {
   db.prepare('INSERT INTO history (request_id, ts, actor, action, detail) VALUES (?,?,?,?,?)')
     .run(requestId, nowIso(), actor || '알수없음', action, detail || '');
+}
+
+// 모델(프로젝트) × 인증종류 × Test 목적별 통계.
+// 미판정·Drop 건은 집계에서 빠지므로 분모는 판정 완료 건수이고 Pass율 + Fail율 = 100%가 된다.
+// `결과`와 `진행차수`는 그 조합의 가장 최근 판정 건에서 함께 가져와 두 값이 같은 의뢰를 가리킨다.
+// MAX(SORT_KEY)와 함께 쓴 bare column(verdict·round)은 최댓값을 만든 행의 값을 돌려주는 SQLite 규칙에 기댄다.
+function certStatsOf(range) {
+  const cond = [JUDGED];
+  if (range) cond.push(`${ACT_START} IS NOT NULL`, `${ACT_START} <= @to`, `MAX(${ACT_END}, ${ACT_START}) >= @from`);
+  const rows = db.prepare(`
+    SELECT model_name, cert_type, ${PURPOSE} AS test_purpose,
+           COUNT(*)                                          AS judged,
+           SUM(CASE WHEN verdict = 'Pass' THEN 1 ELSE 0 END) AS pass,
+           SUM(CASE WHEN verdict = 'Fail' THEN 1 ELSE 0 END) AS fail,
+           MAX(${SORT_KEY})                                  AS latest_key,
+           verdict                                           AS result,
+           round                                             AS last_round,
+           ${ACT_DATE}                                       AS last_date
+    FROM requests
+    WHERE ${cond.join(' AND ')}
+    GROUP BY model_name, cert_type, ${PURPOSE}
+    ORDER BY model_name COLLATE NOCASE, cert_type, test_purpose
+  `).all(range || {});
+
+  const out = rows.map((r) => ({
+    model_name: r.model_name,
+    cert_type: r.cert_type,
+    test_purpose: r.test_purpose,
+    result: r.result,                            // 최신 판정 (Pass | Fail)
+    round: Number(r.last_round) || r.judged,     // 진행차수 = 최신 판정 건의 Round (미입력 시 판정 횟수로 대체)
+    last_date: r.last_date,
+    judged: r.judged,
+    pass: r.pass,
+    fail: r.fail,
+    pass_rate: pct(r.pass, r.judged),
+    fail_rate: pct(r.fail, r.judged),
+  }));
+
+  const sum = (k) => out.reduce((a, r) => a + r[k], 0);
+  const judged = sum('judged');
+  return {
+    range: range || null,
+    rows: out,
+    totals: {
+      models: new Set(out.map((r) => r.model_name)).size,
+      judged,
+      pass: sum('pass'),
+      fail: sum('fail'),
+      pass_rate: pct(sum('pass'), judged),
+      fail_rate: pct(sum('fail'), judged),
+    },
+  };
+}
+
+// (모델명 × Test 목적) 조합의 판정 이력을 최신순으로. 진행차수 산출과 ⓘ 히스토리가 함께 쓴다.
+// 지시서 Task 5가 키를 "모델명과 Test 목적"으로 명시해 인증종류는 조건에 넣지 않는다.
+function roundHistoryOf(modelName, testPurpose) {
+  const model = String(modelName || '').trim();
+  if (!model) return [];
+  return db.prepare(`
+    SELECT id, cert_type, ${PURPOSE} AS test_purpose, round, verdict, status,
+           ${ACT_DATE} AS on_date, progress, result
+    FROM requests
+    WHERE TRIM(model_name) = @model AND ${PURPOSE} = @purpose AND ${JUDGED}
+    ORDER BY ${SORT_KEY} DESC
+  `).all({ model, purpose: String(testPurpose || '').trim() || '(미지정)' });
+}
+
+// Task 5. 신규 의뢰의 진행차수 자동 산출.
+//   직전 판정이 Fail → 직전 차수 + 1 / 직전 판정이 Pass 이거나 이력이 없으면 → 1차
+function nextRoundOf(modelName, testPurpose) {
+  const history = roundHistoryOf(modelName, testPurpose);
+  const prev = history[0] || null;
+  if (!prev) {
+    return { round: 1, basis: 'new', reason: '이전 의뢰 이력이 없어 1차로 시작합니다.', prev: null, history };
+  }
+  if (prev.verdict === 'Fail') {
+    const prevRound = Number(prev.round) || history.length;
+    return {
+      round: prevRound + 1,
+      basis: 'fail',
+      reason: `직전 의뢰(${prev.on_date})가 ${prevRound}차 Fail이라 ${prevRound + 1}차로 이어집니다.`,
+      prev,
+      history,
+    };
+  }
+  return {
+    round: 1,
+    basis: 'pass',
+    reason: `직전 의뢰(${prev.on_date})가 Pass로 종료되어 1차부터 다시 시작합니다.`,
+    prev,
+    history,
+  };
+}
+
+// Task 6-2. QA 리더가 먼저 봐야 할 리스크 2종.
+//   반복 Fail   — 최신 판정이 Fail이면서 진행차수가 임계 이상인 조합
+//   장기 미판정 — 판정 없이 임계 일수를 넘긴 채 아직 종료되지 않은 건
+function bottlenecksOf({ roundThreshold = 5, staleDays = 14 } = {}) {
+  const repeated = certStatsOf(null).rows
+    .filter((r) => r.result === 'Fail' && r.round >= roundThreshold)
+    .map((r) => ({
+      model_name: r.model_name, cert_type: r.cert_type, test_purpose: r.test_purpose,
+      round: r.round, fail: r.fail, last_date: r.last_date,
+    }));
+
+  const limit = new Date(Date.now() - staleDays * 86400000).toISOString().slice(0, 10);
+  const stale = db.prepare(`
+    SELECT id, model_name, cert_type, ${PURPOSE} AS test_purpose, round, status, tester,
+           ${ACT_START} AS since,
+           CAST(julianday('now') - julianday(${ACT_START}) AS INTEGER) AS days
+    FROM requests
+    WHERE (verdict IS NULL OR TRIM(verdict) = '')
+      AND status NOT IN ('완료', '보류', '중단')
+      AND ${ACT_START} IS NOT NULL AND ${ACT_START} <= @limit
+    ORDER BY since
+  `).all({ limit });
+
+  return { roundThreshold, staleDays, repeated, stale, count: repeated.length + stale.length };
 }
 
 module.exports = {
@@ -162,6 +312,54 @@ module.exports = {
   history(requestId) {
     return db.prepare('SELECT * FROM history WHERE request_id = ? ORDER BY id DESC').all(requestId);
   },
+
+  // 파일 핸들 해제. 테스트가 임시 DB를 지우려면 필요하다(Windows는 열린 파일 삭제를 막는다).
+  close() {
+    db.close();
+  },
+
+  // 한 번이라도 입력된 모델명 목록. DISTINCT로 중복을 제거해 콤보박스에 그대로 쓴다.
+  modelNames() {
+    return db.prepare(
+      "SELECT DISTINCT model_name FROM requests WHERE model_name IS NOT NULL AND TRIM(model_name) <> '' ORDER BY model_name COLLATE NOCASE"
+    ).all().map((r) => r.model_name);
+  },
+
+  // 한 번이라도 입력된 Test 목적 목록. 직접입력한 값이 다음 의뢰의 드롭다운에 뜨게 한다.
+  testPurposes() {
+    return db.prepare(
+      "SELECT DISTINCT TRIM(test_purpose) AS v FROM requests WHERE test_purpose IS NOT NULL AND TRIM(test_purpose) <> '' ORDER BY v COLLATE NOCASE"
+    ).all().map((r) => r.v);
+  },
+
+  // range가 있으면 대표 진행구간이 그 기간과 겹치는 건만 집계한다.
+  certStats: certStatsOf,
+
+  // Task 5. 진행차수 자동 산출과 그 근거가 되는 판정 이력.
+  nextRound: nextRoundOf,
+  roundHistory: roundHistoryOf,
+
+  // Task 6-2. 반복 Fail · 장기 미판정 경고.
+  bottlenecks: bottlenecksOf,
+
+  // ---- 의뢰자 제안 목록 관리 (숨김) ----
+  hiddenRequesters() {
+    return db.prepare('SELECT name FROM hidden_requesters ORDER BY name').all().map((r) => r.name);
+  },
+
+  hideRequester(name, actor) {
+    const n = String(name ?? '').trim();
+    if (!n) return false;
+    db.prepare('INSERT OR IGNORE INTO hidden_requesters (name, hidden_at, actor) VALUES (?,?,?)')
+      .run(n, nowIso(), actor || '알수없음');
+    return true;
+  },
+
+  unhideRequester(name) {
+    const info = db.prepare('DELETE FROM hidden_requesters WHERE name = ?').run(String(name ?? '').trim());
+    return info.changes > 0;
+  },
+
 
   // 요약 통계
   stats() {

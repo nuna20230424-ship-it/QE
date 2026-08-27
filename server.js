@@ -29,21 +29,105 @@ app.get('/api/stats', (req, res) => {
   res.json(repo.stats());
 });
 
-// 일일/주간 현황보고 (미리보기용 HTML + 집계)
-app.get('/api/report/:period', (req, res) => {
-  const p = req.params.period;
-  if (p !== 'daily' && p !== 'weekly') return res.status(400).json({ error: 'period는 daily 또는 weekly여야 합니다.' });
-  const r = report[p]();
-  res.json({ period: p, from: r.data.from, to: r.data.to, counts: r.data.counts, html: r.html });
+// 입력 필드 자동목록용 선택지 (모델명·Test 목적: 한 번이라도 입력된 값 전체)
+app.get('/api/options', (req, res) => {
+  res.json({ models: repo.modelNames(), testPurposes: repo.testPurposes() });
 });
 
-// 현황보고 즉시 메일 발송 (수동 트리거)
+// 모델(프로젝트)별 인증 통계. from·to를 함께 주면 해당 기간에 진행된 건만 집계
+app.get('/api/cert-stats', (req, res) => {
+  const { from, to } = req.query;
+  if ((from && !to) || (!from && to)) {
+    return res.status(400).json({ error: 'from과 to는 함께 지정해야 합니다.' });
+  }
+  const ymd = /^\d{4}-\d{2}-\d{2}$/;
+  if ((from && !ymd.test(from)) || (to && !ymd.test(to))) {
+    return res.status(400).json({ error: '날짜는 YYYY-MM-DD 형식이어야 합니다.' });
+  }
+  res.json(repo.certStats(from && to ? { from, to } : null));
+});
+
+// Task 5. 모델명 + Test 목적으로 신규 의뢰의 진행차수를 산출. 근거 이력도 함께 돌려준다.
+app.get('/api/next-round', (req, res) => {
+  const model = String(req.query.model_name || '').trim();
+  if (!model) return res.status(400).json({ error: 'model_name은 필수입니다.' });
+  res.json(repo.nextRound(model, req.query.test_purpose));
+});
+
+// Task 6-2. 반복 Fail·장기 미판정 병목 경고
+app.get('/api/bottlenecks', (req, res) => {
+  const num = (v, d) => (Number.isFinite(Number(v)) && Number(v) > 0 ? Number(v) : d);
+  res.json(repo.bottlenecks({
+    roundThreshold: num(req.query.round, 5),
+    staleDays: num(req.query.days, 14),
+  }));
+});
+
+// 일일/주간 현황보고 (미리보기용 HTML + 집계)
+const PERIODS = { daily: 'daily', weekly: 'weekly', certstats: 'certStats' };
+const badPeriod = { error: 'period는 daily · weekly · certstats 중 하나여야 합니다.' };
+
+app.get('/api/report/:period', (req, res) => {
+  const fn = PERIODS[req.params.period];
+  if (!fn) return res.status(400).json(badPeriod);
+  const r = report[fn]();
+  // 인증 통계는 reportData가 아니라 집계 결과라 기간을 range에서 꺼낸다.
+  const from = r.data.from || (r.range && r.range.from);
+  const to = r.data.to || (r.range && r.range.to);
+  res.json({ period: req.params.period, from, to, counts: r.data.counts || null, html: r.html });
+});
+
+// 화면 내용을 메일 작성창에 그대로 붙여넣기 위한 본문 (인라인 스타일).
+// 자동발송 본문(mailHtml)과 달리 모델명·담당자·코멘트가 들어간 화면용 html이라 사내 수신자 전용이다.
+// certstats는 통계 탭에서 고른 기간을 그대로 받는다. from·to가 없으면 전체 기간 누적.
+app.get('/api/report/:period/copy', (req, res) => {
+  const period = req.params.period;
+  if (period === 'certstats') {
+    const { from, to } = req.query;
+    if ((from && !to) || (!from && to)) {
+      return res.status(400).json({ error: 'from과 to는 함께 지정해야 합니다.' });
+    }
+    const ymd = /^\d{4}-\d{2}-\d{2}$/;
+    if ((from && !ymd.test(from)) || (to && !ymd.test(to))) {
+      return res.status(400).json({ error: '날짜는 YYYY-MM-DD 형식이어야 합니다.' });
+    }
+    const r = report.certStatsCopy(from && to ? { from, to } : null);
+    return res.json({ period, subject: r.subject, html: r.html });
+  }
+  const fn = PERIODS[period];
+  if (!fn) return res.status(400).json(badPeriod);
+  const r = report[fn]();
+  res.json({ period, subject: r.subject, html: r.html });
+});
+
+// 현황보고 즉시 메일 발송 (수동 트리거). 엑셀(CSV) 첨부 동봉.
 app.post('/api/report/:period/send', async (req, res) => {
-  const p = req.params.period;
-  if (p !== 'daily' && p !== 'weekly') return res.status(400).json({ error: 'period는 daily 또는 weekly여야 합니다.' });
-  const r = report[p]();
-  const sent = await notify.sendReportMail(r.subject, r.html);
+  const fn = PERIODS[req.params.period];
+  if (!fn) return res.status(400).json(badPeriod);
+  const r = report[fn]();
+  // 발송 본문은 집계 + 링크만 담긴 mailHtml (화면용 r.html과 다름)
+  const sent = await notify.sendReportMail(r.subject, r.mailHtml);
   res.json({ sent });
+});
+
+// 의뢰자 제안 목록에서 숨긴 이름 조회/추가/복원 (의뢰 레코드는 보존)
+app.get('/api/requesters/hidden', (req, res) => {
+  res.json({ hidden: repo.hiddenRequesters() });
+});
+
+app.post('/api/requesters/hidden', (req, res) => {
+  const name = req.body && req.body.name;
+  if (!name || !String(name).trim()) {
+    return res.status(400).json({ error: '숨길 의뢰자 이름이 필요합니다.' });
+  }
+  repo.hideRequester(name, actorOf(req));
+  res.status(201).json({ hidden: repo.hiddenRequesters() });
+});
+
+app.delete('/api/requesters/hidden/:name', (req, res) => {
+  const ok = repo.unhideRequester(decodeURIComponent(req.params.name));
+  if (!ok) return res.status(404).json({ error: '숨김 목록에 없는 이름입니다.' });
+  res.json({ hidden: repo.hiddenRequesters() });
 });
 
 app.get('/api/requests/:id', (req, res) => {

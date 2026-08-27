@@ -10,6 +10,10 @@ const state = {
   cal: { y: _now.getFullYear(), m: _now.getMonth() }, // m: 0-based
   sort: { key: null, dir: 'asc' }, // 일정표 정렬 상태
   boardExpanded: new Set(), // 5개 초과 시 펼친 상태의 상태칼럼
+  options: { models: [], testPurposes: [] }, // 입력 자동목록용 선택지 (필터와 무관한 전체 이력값)
+  // 인증 통계 뷰: 주간(월~금) / 전체 누적 전환, weekOffset 0 = 이번 주
+  certStats: { mode: 'week', weekOffset: 0, data: null, range: null },
+  hiddenRequesters: [], // 의뢰자 제안에서 숨긴 이름 (의뢰 레코드는 보존)
 };
 
 const BOARD_LIMIT = 5; // 보드 칼럼당 기본 노출 카드 수
@@ -51,8 +55,19 @@ function buildQuery() {
 
 async function load() {
   state.items = await api(`/api/requests${buildQuery()}`);
+  await loadOptions();
   render();
   renderSummary();
+}
+
+// 모델명 자동목록: 한 번이라도 입력된 값 전체를 서버에서 받는다.
+// state.items는 필터가 걸린 목록이므로 여기서 쓰면 값이 누락된다.
+async function loadOptions() {
+  try {
+    const o = await api('/api/options');
+    state.options.models = o.models || [];
+    state.options.testPurposes = o.testPurposes || [];
+  } catch { /* 목록을 못 받아도 직접 입력은 그대로 동작 */ }
 }
 
 // ---- 공통 ----
@@ -89,9 +104,19 @@ async function renderSummary() {
 }
 
 // ---- 보드 ----
+// 진행차수(Round)와 판정을 한 문구로 조합: "진행차수 3차, Pass"
+// 둘 중 하나만 있으면 있는 쪽만, 둘 다 없으면 빈 문자열.
+function roundVerdictLabel(it) {
+  const round = it.round ? `진행차수 ${it.round}차` : '';
+  return [round, it.verdict || ''].filter(Boolean).join(', ');
+}
+
 // 판정 배지: 보드는 완료건만, 일정표 판정 컬럼은 값이 있으면 항상
-const verdictChip = (v) => (v ? `<span class="verdict v-${v}">${esc(v)}</span>` : '');
-const verdictBadge = (it) => (it.status === '완료' && it.verdict ? verdictChip(it.verdict) : '');
+const verdictChip = (it) => {
+  const label = roundVerdictLabel(it);
+  return label ? `<span class="verdict v-${it.verdict || 'none'}">${esc(label)}</span>` : '';
+};
+const verdictBadge = (it) => (it.status === '완료' ? verdictChip(it) : '');
 
 // 일정 표기: 시작일 ~ 완료일 (없으면 예약확정일 → 희망일 단일)
 function schedLabel(it) {
@@ -183,7 +208,7 @@ function renderSchedule() {
         <td>${esc(it.requester) || '—'}</td>
         <td>${esc(it.tester) || '—'}</td>
         <td><span class="status-pill st-${it.status}"><span class="dot bg-${it.status}"></span>${it.status}</span></td>
-        <td>${verdictChip(it.verdict) || '—'}</td>
+        <td>${verdictChip(it) || '—'}</td>
         <td class="cell-comment">${esc(it.result) || '—'}</td>
       </tr>`;
   }).join('');
@@ -214,6 +239,70 @@ function csvCell(v) {
   const s = String(v ?? '');
   return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
+// UTF-8 BOM을 붙여 저장 (Excel이 BOM 없으면 한글을 깨뜨린다)
+function saveCsv(lines, fname) {
+  const csv = lines.map((r) => r.map(csvCell).join(',')).join('\r\n');
+  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = fname;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(a.href);
+}
+
+// ---- 보고 본문 복사 ----
+// 메일 작성창에 붙여넣었을 때 표·색상·서식이 그대로 살아나도록 text/html로 클립보드에 넣는다.
+// 대시보드는 사내망 http로 열리는데 navigator.clipboard는 보안 컨텍스트(https·localhost)에서만
+// 동작하므로, 화면 밖 요소를 선택해 복사하는 execCommand 경로가 사실상 기본 경로다.
+async function copyRichHtml(html, plain) {
+  if (window.isSecureContext && navigator.clipboard && window.ClipboardItem) {
+    await navigator.clipboard.write([new ClipboardItem({
+      'text/html': new Blob([html], { type: 'text/html' }),
+      'text/plain': new Blob([plain], { type: 'text/plain' }),
+    })]);
+    return;
+  }
+  const holder = document.createElement('div');
+  holder.innerHTML = html;
+  holder.setAttribute('style', 'position:fixed;left:-99999px;top:0;');
+  document.body.appendChild(holder);
+  const range = document.createRange();
+  range.selectNodeContents(holder);
+  const sel = window.getSelection();
+  sel.removeAllRanges();
+  sel.addRange(range);
+  const ok = document.execCommand('copy');
+  sel.removeAllRanges();
+  holder.remove();
+  if (!ok) throw new Error('브라우저가 복사를 거부했습니다. 본문을 직접 드래그해 복사해 주세요.');
+}
+
+// 서식을 못 받는 메일 클라이언트를 위한 텍스트 대체본
+function htmlToPlain(html) {
+  const d = document.createElement('div');
+  d.innerHTML = html;
+  return d.innerText.replace(/\n{3,}/g, '\n\n').trim();
+}
+
+// period: daily | weekly | certstats. query는 통계 탭의 기간(?from=&to=).
+async function copyReport(btn, period, query) {
+  const orig = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '복사 중…';
+  try {
+    const r = await api(`/api/report/${period}/copy${query || ''}`);
+    await copyRichHtml(r.html, htmlToPlain(r.html));
+    btn.textContent = '✓ 복사됨';
+  } catch (err) {
+    btn.textContent = orig;
+    alert(`복사하지 못했습니다: ${err.message}`);
+  }
+  btn.disabled = false;
+  setTimeout(() => { btn.textContent = orig; }, 2000);
+}
+
 function downloadExcel() {
   const cols = [
     ['예약/희망일', (it) => it.scheduled_date || it.desired_date],
@@ -236,17 +325,8 @@ function downloadExcel() {
   ];
   const lines = [cols.map((c) => c[0])];
   for (const it of state.items) lines.push(cols.map((c) => c[1](it)));
-  const csv = lines.map((r) => r.map(csvCell).join(',')).join('\r\n');
-  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
   const t = new Date();
-  const fname = `인증일정_${t.getFullYear()}-${pad2(t.getMonth() + 1)}-${pad2(t.getDate())}.csv`;
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = fname;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(a.href);
+  saveCsv(lines, `인증일정_${t.getFullYear()}-${pad2(t.getMonth() + 1)}-${pad2(t.getDate())}.csv`);
 }
 
 // ---- 캘린더 ----
@@ -313,28 +393,278 @@ async function renderReport(period) {
     <div class="report-bar">
       <button class="btn" data-report-refresh="${period}">↻ 새로고침</button>
       <button class="btn" data-report-send="${period}">✉ 지금 메일 발송</button>
-      <span class="report-hint">매일 오후 7시 자동 발송 · 수신: nuna20230424@gmail.com, keonhee.cho@kaongroup.com</span>
+      <button class="btn" data-report-copy="${period}">📋 본문 복사</button>
+      <span class="report-hint">${period === 'daily' ? '매일 18:00' : '매주 금요일 18:00'} 자동 발송 · 메일에는 집계 수치와 대시보드 링크만 포함됩니다
+        <br>본문 복사는 화면 그대로(모델명 · 담당자 · 코멘트 포함) 복사되므로 사내 수신자에게만 보내세요</span>
     </div>
     <div class="report-body">${r.html}</div>`;
 }
 
-const VIEWS = ['board', 'schedule', 'calendar', 'daily', 'weekly'];
+// ---- 인증 통계 (모델 × 인증종류 × Test 목적) ----
+// 지표: 결과(최신 판정) · 진행차수(최신 판정 건의 Round) · Fail 횟수 · Pass율 / Fail율.
+// 미판정 건은 집계에서 빠지므로 분모는 판정 완료 건수이고 Pass율 + Fail율 = 100%다.
+function rateBar(pass, fail) {
+  return `<span class="rate-bar" title="Pass ${pass}% / Fail ${fail}%">
+    <i class="rb-pass" style="width:${pass}%"></i><i class="rb-fail" style="width:${fail}%"></i>
+  </span>`;
+}
+
+// 기준 주(offset 0 = 이번 주)의 월요일~금요일. label은 "8/24~8/28" 형식.
+function weekRangeOf(offset) {
+  const mon = new Date();
+  mon.setHours(0, 0, 0, 0);
+  mon.setDate(mon.getDate() - ((mon.getDay() + 6) % 7) + offset * 7);
+  const fri = new Date(mon);
+  fri.setDate(mon.getDate() + 4);
+  const iso = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+  const short = (d) => `${d.getMonth() + 1}/${d.getDate()}`;
+  return { from: iso(mon), to: iso(fri), label: `${short(mon)}~${short(fri)}` };
+}
+
+// 결과 셀: Pass는 파란 볼드, Fail은 빨간 음영 + 흰 볼드 (지시서 4-3)
+const resultCell = (v) => (v ? `<span class="res res-${v.toLowerCase()}">${esc(v)}</span>` : '—');
+
+function certStatsTable(rows) {
+  if (!rows.length) return '<p class="col-empty">집계할 판정 완료 의뢰가 없습니다.</p>';
+  const body = rows.map((r) => `
+    <tr>
+      <td><strong>${esc(r.model_name)}</strong></td>
+      <td><span class="badge badge-${certClass(r.cert_type)}">${esc(r.cert_type)}</span></td>
+      <td>${resultCell(r.result)}</td>
+      <td>${esc(r.test_purpose)}</td>
+      <td class="num">${r.round}차</td>
+      <td class="num">${r.pass}</td>
+      <td class="num ${r.fail ? 'em-fail' : ''}">${r.fail}</td>
+      <td class="num">${r.pass_rate}%</td>
+      <td class="num ${r.fail ? 'em-fail' : ''}">${r.fail_rate}%</td>
+      <td>${rateBar(r.pass_rate, r.fail_rate)}</td>
+    </tr>`).join('');
+  return `
+    <div class="table-wrap">
+    <table class="stats-table">
+      <thead><tr>
+        <th>모델명</th><th>인증종류</th><th>결과</th><th>Test 목적</th>
+        <th class="num">진행차수</th>
+        <th class="num">Pass</th><th class="num">Fail</th>
+        <th class="num">Pass율</th><th class="num">Fail율</th>
+        <th>비율</th>
+      </tr></thead>
+      <tbody>${body}</tbody>
+    </table>
+    </div>`;
+}
+
+// 현재 화면에 뜬 통계를 CSV로 저장 (일정표와 동일하게 UTF-8 BOM → Excel 한글 정상)
+function downloadCertStatsCsv() {
+  const cs = state.certStats;
+  if (!cs.data) return;
+  const isWeek = !!cs.range;
+  const period = isWeek ? `${cs.range.from} ~ ${cs.range.to} (월~금)` : '전체 기간 누적';
+  const cols = [
+    ['모델명', (r) => r.model_name],
+    ['인증종류', (r) => r.cert_type],
+    ['결과', (r) => r.result],
+    ['Test 목적', (r) => r.test_purpose],
+    ['진행차수', (r) => r.round],
+    ['Pass', (r) => r.pass],
+    ['Fail', (r) => r.fail],
+    ['Pass율(%)', (r) => r.pass_rate],
+    ['Fail율(%)', (r) => r.fail_rate],
+  ];
+  const t = cs.data.totals;
+  const lines = [
+    ['인증 통계', period],
+    ['집계 대상', '판정 완료(Pass/Fail) 건만 — 미판정 건은 제외'],
+    [],
+    cols.map((c) => c[0]),
+    ...cs.data.rows.map((r) => cols.map((c) => c[1](r))),
+    [],
+    ['합계', `모델 ${t.models}건`, '', '', `판정 ${t.judged}건`, t.pass, t.fail, t.pass_rate, t.fail_rate],
+  ];
+  const stamp = isWeek ? `${cs.range.from}_${cs.range.to}` : '전체누적';
+  saveCsv(lines, `인증통계_${stamp}.csv`);
+}
+
+// 인증 통계 보고를 지금 메일로 보낸다. 대상은 지난주 월~금(월요일 자동발송과 동일).
+async function sendCertStatsMail(btn) {
+  btn.disabled = true;
+  const orig = btn.textContent;
+  btn.textContent = '발송 중…';
+  try {
+    const res = await api('/api/report/certstats/send', { method: 'POST', body: '{}' });
+    alert(res.sent
+      ? '인증 통계 보고를 발송했습니다. (집계 + 대시보드 링크만 발송됩니다)'
+      : '메일 설정(config.json)이 없어 발송하지 못했습니다.');
+  } catch (err) { alert(err.message); }
+  btn.disabled = false;
+  btn.textContent = orig;
+}
+
+async function renderCertStats() {
+  const root = $('#view-certstats');
+  const cs = state.certStats;
+  const isWeek = cs.mode === 'week';
+  const wk = weekRangeOf(cs.weekOffset);
+  root.innerHTML = '<p class="col-empty">불러오는 중…</p>';
+
+  let s;
+  try { s = await api(`/api/cert-stats${isWeek ? `?from=${wk.from}&to=${wk.to}` : ''}`); }
+  catch (err) { root.innerHTML = `<p class="col-empty">통계를 불러오지 못했습니다: ${esc(err.message)}</p>`; return; }
+  cs.data = s;
+  cs.range = isWeek ? wk : null;
+
+  const t = s.totals;
+  const chips = [
+    { k: '모델 수', v: t.models },
+    { k: isWeek ? '주간 판정' : '누적 판정', v: t.judged },
+    { k: 'Pass', v: t.pass },
+    { k: 'Fail', v: t.fail, warn: t.fail > 0 },
+    { k: '전체 Pass율', v: `${t.pass_rate}%` },
+    { k: '전체 Fail율', v: `${t.fail_rate}%` },
+  ].map((c) => `<div class="sumcard ${c.warn ? 'warn' : ''}"><div class="k">${c.k}</div><div class="v">${c.v}</div></div>`).join('');
+
+  const nav = isWeek ? `
+    <span class="week-nav">
+      <button class="btn" data-stats-week="-1" title="이전 주">‹</button>
+      <b class="week-label">${wk.label}</b><small>(월~금)</small>
+      <button class="btn" data-stats-week="1" title="다음 주">›</button>
+      ${cs.weekOffset !== 0 ? '<button class="btn" data-stats-week="0">이번 주</button>' : ''}
+    </span>` : '';
+
+  root.innerHTML = `
+    <div class="report-bar">
+      <span class="seg">
+        <button class="seg-btn ${isWeek ? 'active' : ''}" data-stats-mode="week">주간</button>
+        <button class="seg-btn ${isWeek ? '' : 'active'}" data-stats-mode="all">전체 누적</button>
+      </span>
+      ${nav}
+      <span class="bar-right">
+        <button class="btn" data-stats-excel="1">⤓ 엑셀 다운로드</button>
+        <button class="btn" data-stats-send="1">✉ 지금 메일 발송</button>
+        <button class="btn" data-stats-copy="1">📋 본문 복사</button>
+        <button class="btn" data-stats-refresh="1">↻ 새로고침</button>
+      </span>
+    </div>
+    <p class="report-hint stats-period">대상 기간 · ${isWeek ? `${wk.from} ~ ${wk.to} (월~금)` : '전체 기간 누적'}
+      · 판정 완료(Pass/Fail) 건만 집계하며 미판정 건은 제외합니다. 진행차수는 최신 판정 건의 Round입니다.</p>
+    <div class="summary stats-summary">${chips}</div>
+    ${certStatsTable(s.rows)}`;
+}
+
+// ---- Task 5. 진행차수 자동 산출 ----
+// 모델명 · Test 목적이 정해지는 순간 서버 이력을 조회해 차수를 채운다.
+// 자동값은 제안일 뿐이라 사용자가 직접 고칠 수 있고, 한 번 고치면 다시 덮어쓰지 않는다.
+const roundAuto = { seq: 0, key: null, info: null, touched: false };
+
+const setRoundHint = (text) => { $('#round-hint').textContent = text; };
+// Test 목적은 콤보(드롭다운 + 직접입력)라 select 값이 아니라 실제 입력값을 읽어야 한다.
+const purposeValue = () => readCombo('test_purpose');
+const roundKeyOf = () => `${$(F.model_name).value.trim()}\u0000${purposeValue()}`;
+
+async function autoFillRound() {
+  if ($(F.id).value) return;                    // 기존 의뢰 상세에서는 저장된 차수를 건드리지 않는다
+  const key = roundKeyOf();
+  if (key === roundAuto.key) return;            // 같은 조합이면 다시 조회하지 않는다
+  roundAuto.key = key;
+
+  const model = $(F.model_name).value.trim();
+  if (!model) {
+    roundAuto.info = null;
+    $('#btn-round-info').classList.add('hidden');
+    setRoundHint('모델명과 Test 목적을 고르면 자동으로 채워집니다.');
+    return;
+  }
+
+  const seq = ++roundAuto.seq;                  // 늦게 도착한 응답이 최신 값을 덮지 않게 한다
+  const input = $(F.round);
+  $('#round-spin').classList.remove('hidden');
+  input.readOnly = true;                        // 조회 중 중복 입력 차단
+  try {
+    const q = `model_name=${encodeURIComponent(model)}&test_purpose=${encodeURIComponent(purposeValue())}`;
+    const info = await api(`/api/next-round?${q}`);
+    if (seq !== roundAuto.seq) return;
+    roundAuto.info = info;
+    if (!roundAuto.touched) input.value = info.round;
+    $('#btn-round-info').classList.toggle('hidden', !info.history.length);
+    setRoundHint(roundAuto.touched ? `${info.reason} (직접 입력한 값을 유지합니다)` : info.reason);
+  } catch (err) {
+    if (seq === roundAuto.seq) setRoundHint(`이력을 불러오지 못했습니다: ${err.message}`);
+  } finally {
+    if (seq === roundAuto.seq) { $('#round-spin').classList.add('hidden'); input.readOnly = false; }
+  }
+}
+
+// Task 6-1. 산출 근거 — '왜 4차인지'를 이전 차수 타임라인으로 보여준다.
+function openRoundModal() {
+  const info = roundAuto.info;
+  if (!info) return;
+  const purpose = purposeValue() || '(미지정)';
+  const items = info.history.map((h) => `
+    <li class="tl-item">
+      <span class="tl-dot tl-${(h.verdict || '').toLowerCase()}"></span>
+      <div class="tl-body">
+        <div class="tl-line"><b>${h.round ? `${esc(h.round)}차` : '차수 미입력'}</b>
+          ${resultCell(h.verdict)}<span class="tl-date">${esc(h.on_date)}</span></div>
+        <div class="tl-meta">${esc(h.cert_type)}</div>
+        ${h.result || h.progress ? `<div class="tl-note">${esc(h.result || h.progress)}</div>` : ''}
+      </div>
+    </li>`).join('');
+  $('#round-modal-body').innerHTML = `
+    <p class="round-why"><b>${esc($(F.model_name).value.trim())}</b> · ${esc(purpose)}
+      → 산출 <b>${info.round}차</b><br><span class="field-hint">${esc(info.reason)}</span></p>
+    ${info.history.length
+      ? `<ol class="timeline">${items}</ol>`
+      : '<p class="col-empty">이전 판정 이력이 없습니다.</p>'}`;
+  $('#round-modal').classList.remove('hidden');
+}
+
+const closeRoundModal = () => $('#round-modal').classList.add('hidden');
+
+// ---- Task 6-2. 병목 경고 위젯 (현황 보드 상단) ----
+// 반복 Fail로 차수가 높아진 조합과, 판정 없이 오래 머문 건을 리더가 먼저 보도록 끌어올린다.
+async function renderBottlenecks() {
+  const el = $('#bottlenecks');
+  if (state.view !== 'board') { el.classList.add('hidden'); return; }
+  let b;
+  try { b = await api('/api/bottlenecks'); } catch { el.classList.add('hidden'); return; }
+  if (!b.count) { el.classList.add('hidden'); return; }
+
+  const rep = b.repeated.map((r) => `
+    <li><span class="bn-badge bn-fail">${r.round}차</span>
+      <b>${esc(r.model_name)}</b> · ${esc(r.cert_type)} · ${esc(r.test_purpose)}
+      <span class="bn-sub">누적 Fail ${r.fail}회 · 최근 ${esc(r.last_date)}</span></li>`).join('');
+  const stale = b.stale.map((r) => `
+    <li data-id="${r.id}"><span class="bn-badge bn-stale">${r.days}일</span>
+      <b>${esc(r.model_name)}</b> · ${esc(r.cert_type)} · ${esc(r.status)}
+      <span class="bn-sub">${esc(r.since)}부터 미판정${r.tester ? ` · ${esc(r.tester)}` : ''}</span></li>`).join('');
+
+  el.innerHTML = `
+    <div class="bn-head">⚠ 확인이 필요한 건 ${b.count}건</div>
+    ${b.repeated.length ? `<div class="bn-group"><h4>반복 Fail — ${b.roundThreshold}차 이상</h4><ul>${rep}</ul></div>` : ''}
+    ${b.stale.length ? `<div class="bn-group"><h4>장기 미판정 — ${b.staleDays}일 초과</h4><ul>${stale}</ul></div>` : ''}`;
+  el.classList.remove('hidden');
+}
+
+const VIEWS = ['board', 'schedule', 'calendar', 'daily', 'weekly', 'certstats'];
 function render() {
   VIEWS.forEach((v) => $(`#view-${v}`).classList.toggle('hidden', state.view !== v));
   const isReport = state.view === 'daily' || state.view === 'weekly';
-  $('#summary').classList.toggle('hidden', isReport);
+  const isPanel = isReport || state.view === 'certstats';
+  $('#summary').classList.toggle('hidden', isPanel);
   $('#board-clock').classList.toggle('hidden', state.view !== 'board');
-  document.querySelector('.filters').classList.toggle('hidden', isReport);
+  document.querySelector('.filters').classList.toggle('hidden', isPanel);
+  renderBottlenecks();
   if (state.view === 'board') renderBoard();
   else if (state.view === 'schedule') renderSchedule();
   else if (state.view === 'calendar') renderCalendar();
+  else if (state.view === 'certstats') renderCertStats();
   else renderReport(state.view);
 }
 
 // ---- 모달 ----
-// 단순 1:1 필드 (requester·tester는 콤보라 별도 처리)
+// 단순 1:1 필드 (requester·tester·test_purpose는 콤보라 별도 처리)
 const F = {
-  id: '#f-id', cert_type: '#f-cert_type', test_type: '#f-test_type', test_purpose: '#f-test_purpose', round: '#f-round',
+  id: '#f-id', cert_type: '#f-cert_type', test_type: '#f-test_type', round: '#f-round',
   model_name: '#f-model_name', fw_version: '#f-fw_version',
   desired_date: '#f-desired_date', note: '#f-note',
   scheduled_date: '#f-scheduled_date', started_date: '#f-started_date', completed_date: '#f-completed_date',
@@ -344,9 +674,63 @@ const NEW_DEFAULTS = { cert_type: 'Netflix NTS', test_type: 'IR', test_purpose: 
 
 // ---- 콤보 박스(선택 + 직접입력) 헬퍼 ----
 // 의뢰자: 기존 이름을 datalist로 제공하되 자유롭게 수정·직접입력 가능한 입력 필드
+// 숨김 처리된 이름은 제안에서 제외 (의뢰 레코드 자체는 유지)
+function requesterSuggestions() {
+  const hidden = new Set(state.hiddenRequesters);
+  return [...new Set(state.items.map((i) => i.requester).filter(Boolean))]
+    .filter((n) => !hidden.has(n))
+    .sort();
+}
+
 function buildRequesterOptions() {
-  const names = [...new Set(state.items.map((i) => i.requester).filter(Boolean))].sort();
-  $('#requester-list').innerHTML = names.map((n) => `<option value="${esc(n)}"></option>`).join('');
+  $('#requester-list').innerHTML = requesterSuggestions().map((n) => `<option value="${esc(n)}"></option>`).join('');
+}
+
+// 서버에서 숨긴 의뢰자 목록 로드
+async function loadHiddenRequesters() {
+  try {
+    const r = await api('/api/requesters/hidden');
+    state.hiddenRequesters = r.hidden || [];
+  } catch { state.hiddenRequesters = []; }
+}
+
+// 의뢰자 관리 팝오버 렌더 (제안 목록: 삭제 / 숨긴 목록: 복원)
+function renderRequesterManager() {
+  const pop = $('#requester-manage');
+  if (!pop || pop.classList.contains('hidden')) return;
+  const visible = requesterSuggestions();
+  const hidden = [...state.hiddenRequesters].sort();
+  const visHtml = visible.length
+    ? visible.map((n) => `<li><span>${esc(n)}</span><button type="button" class="rm-del" data-name="${esc(n)}">삭제</button></li>`).join('')
+    : '<li class="rm-empty">표시할 의뢰자가 없습니다.</li>';
+  const hidHtml = hidden.length
+    ? `<div class="rm-hidden"><p class="rm-title">숨긴 의뢰자</p><ul>${
+        hidden.map((n) => `<li><span>${esc(n)}</span><button type="button" class="rm-restore" data-name="${esc(n)}">복원</button></li>`).join('')
+      }</ul></div>`
+    : '';
+  pop.innerHTML = `<p class="rm-title">의뢰자 목록</p><ul>${visHtml}</ul>${hidHtml}`;
+}
+
+// Test 목적: 이전에 직접 입력된 값을 기본 목록 뒤, '+ 직접 입력' 앞에 끼워 넣는다.
+// HTML의 기본 옵션을 그대로 두고 동적 항목만 data-dyn으로 표시해 매번 갈아끼운다.
+function buildPurposeOptions() {
+  const sel = $('#f-test_purpose-select');
+  sel.querySelectorAll('option[data-dyn]').forEach((o) => o.remove());
+  const fixed = new Set([...sel.options].map((o) => o.value));
+  const customOpt = sel.querySelector('option[value="__custom__"]');
+  for (const v of state.options.testPurposes) {
+    if (fixed.has(v)) continue;
+    const o = document.createElement('option');
+    o.value = v;
+    o.textContent = v;
+    o.dataset.dyn = '1';
+    sel.insertBefore(o, customOpt);
+  }
+}
+
+// 모델명: 이전에 한 번이라도 입력된 값을 datalist로 노출 (직접 입력도 그대로 가능)
+function buildModelOptions() {
+  $('#model-list').innerHTML = state.options.models.map((n) => `<option value="${esc(n)}"></option>`).join('');
 }
 
 function setCombo(prefix, value) {
@@ -404,14 +788,32 @@ function openModal(item) {
     $(sel).value = isNew ? (NEW_DEFAULTS[k] ?? '') : (item[k] ?? '');
   }
   buildRequesterOptions();
+  buildModelOptions();
   $('#f-requester').value = isNew ? '' : (item.requester || '');
+  buildPurposeOptions();
+  setCombo('test_purpose', isNew ? NEW_DEFAULTS.test_purpose : (item.test_purpose || ''));
   setCombo('tester', isNew ? '' : (item.tester || ''));
+
+  // 진행차수 자동 산출 상태 초기화. 신규 등록일 때만 이력을 조회한다.
+  roundAuto.key = null;
+  roundAuto.info = null;
+  roundAuto.touched = false;
+  $('#btn-round-info').classList.add('hidden');
+  $('#round-spin').classList.add('hidden');
+  setRoundHint(isNew
+    ? '모델명과 Test 목적을 고르면 자동으로 채워집니다.'
+    : '저장된 진행차수입니다. 필요하면 직접 수정할 수 있습니다.');
+  if (isNew) autoFillRound();
+
   applyRoleLock();
   loadHistory(isNew ? null : item.id);
   $('#modal').classList.remove('hidden');
 }
 
-function closeModal() { $('#modal').classList.add('hidden'); }
+function closeModal() {
+  $('#modal').classList.add('hidden');
+  $('#requester-manage').classList.add('hidden');
+}
 
 function readForm() {
   const out = { actor: actor() };
@@ -420,6 +822,7 @@ function readForm() {
     out[k] = $(sel).value;
   }
   out.requester = $('#f-requester').value.trim();
+  out.test_purpose = purposeValue();
   out.tester = readCombo('tester');
   return out;
 }
@@ -445,6 +848,38 @@ async function deleteItem() {
     closeModal();
     await load();
   } catch (err) { alert(err.message); }
+}
+
+// 의뢰자 제안 목록 관리 동작
+async function hideRequesterName(name) {
+  if (!name) return;
+  if (!confirm(`'${name}'을(를) 의뢰자 제안 목록에서 삭제할까요?\n(기존 의뢰 건은 그대로 유지됩니다)`)) return;
+  try {
+    const r = await api('/api/requesters/hidden', {
+      method: 'POST',
+      body: JSON.stringify({ name, actor: actor() }),
+    });
+    state.hiddenRequesters = r.hidden || [];
+    buildRequesterOptions();
+    renderRequesterManager();
+  } catch (err) { alert(err.message); }
+}
+
+async function restoreRequesterName(name) {
+  if (!name) return;
+  try {
+    const r = await api(`/api/requesters/hidden/${encodeURIComponent(name)}`, { method: 'DELETE' });
+    state.hiddenRequesters = r.hidden || [];
+    buildRequesterOptions();
+    renderRequesterManager();
+  } catch (err) { alert(err.message); }
+}
+
+function toggleRequesterManager(force) {
+  const pop = $('#requester-manage');
+  const show = force !== undefined ? force : pop.classList.contains('hidden');
+  pop.classList.toggle('hidden', !show);
+  if (show) renderRequesterManager();
 }
 
 // ---- 이벤트 ----
@@ -477,7 +912,54 @@ function bind() {
   $('#modal').addEventListener('click', (e) => { if (e.target.id === 'modal') closeModal(); });
   $('#req-form').addEventListener('submit', submitForm);
   $('#btn-delete').addEventListener('click', deleteItem);
+  bindCombo('test_purpose');
   bindCombo('tester');
+
+  // Task 5. 모델명·Test 목적이 바뀌면 진행차수를 다시 산출 (타이핑은 250ms 디바운스)
+  let roundTimer;
+  $(F.model_name).addEventListener('input', () => {
+    clearTimeout(roundTimer);
+    roundTimer = setTimeout(autoFillRound, 250);
+  });
+  $('#f-test_purpose-select').addEventListener('change', autoFillRound);
+  $('#f-test_purpose-custom').addEventListener('input', () => {
+    clearTimeout(roundTimer);
+    roundTimer = setTimeout(autoFillRound, 250);
+  });
+  // 사용자가 직접 고친 차수는 이후 자동값이 덮어쓰지 않는다
+  $(F.round).addEventListener('input', () => { roundAuto.touched = true; });
+  $('#btn-round-info').addEventListener('click', openRoundModal);
+  $('#round-modal-close').addEventListener('click', closeRoundModal);
+  $('#round-modal').addEventListener('click', (e) => { if (e.target.id === 'round-modal') closeRoundModal(); });
+
+  // 병목 경고에서 장기 미판정 건 클릭 → 상세 (필터에 걸려 목록에 없을 수 있어 직접 조회)
+  $('#bottlenecks').addEventListener('click', async (e) => {
+    const el = e.target.closest('[data-id]');
+    if (!el) return;
+    try { openModal(await api(`/api/requests/${el.dataset.id}`)); }
+    catch (err) { alert(err.message); }
+  });
+
+  // 의뢰자 제안 목록 관리 (열기/닫기 + 삭제/복원)
+  $('#btn-requester-manage').addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    toggleRequesterManager();
+  });
+  $('#requester-manage').addEventListener('click', (e) => {
+    const del = e.target.closest('.rm-del');
+    const res = e.target.closest('.rm-restore');
+    if (del) { hideRequesterName(del.dataset.name); return; }
+    if (res) { restoreRequesterName(res.dataset.name); return; }
+  });
+  // 팝오버 바깥 클릭 시 닫기
+  document.addEventListener('click', (e) => {
+    const pop = $('#requester-manage');
+    if (pop && !pop.classList.contains('hidden')
+        && !e.target.closest('#requester-manage') && !e.target.closest('#btn-requester-manage')) {
+      pop.classList.add('hidden');
+    }
+  });
 
   // 보드 칼럼 "더보기/접기" 토글
   $('#view-board').addEventListener('click', (e) => {
@@ -494,6 +976,8 @@ function bind() {
   ['daily', 'weekly'].forEach((p) => {
     $(`#view-${p}`).addEventListener('click', async (e) => {
       if (e.target.closest('[data-report-refresh]')) { renderReport(p); return; }
+      const copyBtn = e.target.closest('[data-report-copy]');
+      if (copyBtn) { copyReport(copyBtn, p); return; }
       const sendBtn = e.target.closest('[data-report-send]');
       if (!sendBtn) return;
       sendBtn.disabled = true;
@@ -506,6 +990,34 @@ function bind() {
       sendBtn.disabled = false;
       sendBtn.textContent = orig;
     });
+  });
+
+  // 인증 통계: 주간/누적 전환 · 주 이동 · 엑셀 다운로드 · 새로고침
+  $('#view-certstats').addEventListener('click', (e) => {
+    const mode = e.target.closest('[data-stats-mode]');
+    if (mode) {
+      state.certStats.mode = mode.dataset.statsMode;
+      state.certStats.weekOffset = 0;
+      renderCertStats();
+      return;
+    }
+    const wk = e.target.closest('[data-stats-week]');
+    if (wk) {
+      const step = Number(wk.dataset.statsWeek);
+      state.certStats.weekOffset = step === 0 ? 0 : state.certStats.weekOffset + step;
+      renderCertStats();
+      return;
+    }
+    const copy = e.target.closest('[data-stats-copy]');
+    if (copy) {
+      const r = state.certStats.range;
+      copyReport(copy, 'certstats', r ? `?from=${r.from}&to=${r.to}` : '');
+      return;
+    }
+    if (e.target.closest('[data-stats-excel]')) { downloadCertStatsCsv(); return; }
+    const send = e.target.closest('[data-stats-send]');
+    if (send) { sendCertStatsMail(send); return; }
+    if (e.target.closest('[data-stats-refresh]')) renderCertStats();
   });
 
   // 일정표 엑셀 다운로드 + 컬럼 정렬
@@ -545,6 +1057,7 @@ function bind() {
 }
 
 bind();
+loadHiddenRequesters();
 load().catch((err) => alert(err.message));
 
 // 1분마다 자동 새로고침 (편집 중 모달이 열려 있으면 건너뜀)

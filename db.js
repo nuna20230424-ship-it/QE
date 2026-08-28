@@ -337,7 +337,7 @@ module.exports = {
   openRequests() {
     return db.prepare(`
       SELECT id, cert_type, test_type, test_purpose, round, model_name, fw_version,
-             requester, tester, status, desired_date, scheduled_date, started_date,
+             requester, tester, status, desired_date, scheduled_date, started_date, created_at,
              ${ACT_START} AS plan_date
       FROM requests
       WHERE status IN ('예약대기', '예약확정', '진행중')

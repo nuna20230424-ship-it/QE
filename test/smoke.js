@@ -518,6 +518,118 @@ ok('좁은 구간에서도 배치분 + 초과 = 전체',
   rsBig.daily.days.reduce((a, d) => a + d.used, 0) + rsBig.daily.overflow === rsBig.totals.slots,
   `${rsBig.daily.days.reduce((a, d) => a + d.used, 0)} + ${rsBig.daily.overflow} vs ${rsBig.totals.slots}`);
 
+// ---------- Task 6. 대시보드 5개 위젯 ----------
+// 별도 픽스처로 다섯 지표를 한 번에 검증한다 (DB를 건드리지 않는 순수 함수).
+head('Task 6-G. 대시보드 위젯 (가동률·부하·파이프라인·타입·알림)');
+const DASH = [
+  // 이은경 — NTS 12(진행중, 계획 과거) + xTS IR 3(예약확정, 9/1) = 15 slot → 300% 초과 + 일정 충돌
+  { id: 1, cert_type: 'Netflix NTS', test_type: 'IR', model_name: 'D-100', status: '진행중', tester: '이은경', plan_date: '2026-08-26', created_at: '2026-08-01T00:00:00Z' },
+  { id: 2, cert_type: 'Google xTS', test_type: 'IR', model_name: 'D-200', status: '예약확정', tester: '이은경', plan_date: '2026-09-01', created_at: '2026-08-10T00:00:00Z' },
+  // 미배정 AVTS 4(예약대기, 희망일 경과) → 최장 대기 + 자동 할당 대상
+  { id: 3, cert_type: 'Amazon AVTS', test_type: 'LR', model_name: 'D-300', status: '예약대기', tester: '', plan_date: '2026-09-01', desired_date: '2026-08-20', created_at: '2026-07-20T00:00:00Z' },
+  // 문유림 — xTS MR 2(진행중, 오늘 시작) → D-2에 리소스 확보
+  { id: 4, cert_type: 'Google xTS', test_type: 'MR', model_name: 'D-400', status: '진행중', tester: '문유림', plan_date: '2026-08-28', created_at: '2026-08-25T00:00:00Z' },
+];
+const ds = resources.summarize(DASH, AS_OF, 20);
+
+// 1. 실시간 가동률 — 1일 총 가용(4) 대비 오늘 점유 중인 확정 업무
+const u = ds.utilization;
+ok('가동률 기준일 = 기준일', u.date === AS_OF, u.date);
+ok('1일 총 가용 = 인원수 4', u.capacity === 4, String(u.capacity));
+ok('오늘 점유 2 slot (이은경 NTS + 문유림 xTS)', u.used === 2, String(u.used));
+ok('가동률 50%', u.usage_pct === 50, String(u.usage_pct));
+ok('잔여 가용 2 slot', u.free === 2, String(u.free));
+ok('점유 담당자 = 이은경·문유림', u.busy.join(',') === '이은경,문유림', u.busy.join(','));
+ok('여유 담당자 = 조아라·이해찬', u.idle.join(',') === '조아라,이해찬', u.idle.join(','));
+// 예약대기는 확정 전이라 가동률에서 빠진다 (D-300은 9/1 계획이라 오늘 자체에도 없음)
+ok('오늘 예약대기 점유 0', u.waiting === 0, String(u.waiting));
+ok('이번 주 보조 지표 존재', u.week && u.week.label === '8/24~8/28', JSON.stringify(u.week && u.week.label));
+// 빈 입력이어도 가용은 나오고 잔여가 전량이어야 한다
+const uEmpty = resources.summarize([], AS_OF, 10).utilization;
+ok('빈 입력 가동률 0%', uEmpty.usage_pct === 0);
+ok('빈 입력 잔여 = 가용 전량 4', uEmpty.free === 4, String(uEmpty.free));
+ok('빈 입력 여유 인원 4명', uEmpty.idle.length === 4);
+
+// 2. 팀원별 업무 부하도 (신호등)
+const dRow = (n) => ds.rows.find((r) => r.tester === n);
+ok('신호등 임계 80/100', ds.load_levels.safe === 80 && ds.load_levels.warn === 100,
+  JSON.stringify(ds.load_levels));
+ok('이은경 15 slot → 300% → over(초과)', dRow('이은경').usage_pct === 300 && dRow('이은경').level === 'over',
+  `${dRow('이은경').usage_pct}% ${dRow('이은경').level}`);
+ok('문유림 2 slot → 40% → safe(안정)', dRow('문유림').level === 'safe', dRow('문유림').level);
+ok('조아라 0 slot → safe', dRow('조아라').level === 'safe');
+// 임계 경계 — 80%(4 slot) safe, 100%(5 slot) warn, 그 위 over
+ok('80% 경계는 safe', resources.loadLevelOf(80) === 'safe');
+ok('80.1%는 warn', resources.loadLevelOf(80.1) === 'warn');
+ok('100% 경계는 warn', resources.loadLevelOf(100) === 'warn');
+ok('100.1%는 over', resources.loadLevelOf(100.1) === 'over');
+ok('가용 없는 행은 신호등 없음', ds.unassigned.level === null);
+
+// 3. 진행 상태별 파이프라인
+const stage = (st) => ds.pipeline.stages.find((x) => x.status === st);
+ok('파이프라인 3단계 순서', ds.pipeline.stages.map((x) => x.status).join(',') === '예약대기,예약확정,진행중',
+  ds.pipeline.stages.map((x) => x.status).join(','));
+ok('예약대기 1건 4 slot', stage('예약대기').count === 1 && stage('예약대기').slots === 4,
+  `${stage('예약대기').count}건 ${stage('예약대기').slots} slot`);
+ok('예약확정 1건 3 slot', stage('예약확정').count === 1 && stage('예약확정').slots === 3);
+ok('진행중 2건 14 slot', stage('진행중').count === 2 && stage('진행중').slots === 14,
+  `${stage('진행중').count}건 ${stage('진행중').slots} slot`);
+ok('예약대기 중 담당 미정 1건', stage('예약대기').unassigned === 1);
+ok('단계별 slot 합 = 풀 물량', ds.pipeline.stages.reduce((a, x) => a + x.slots, 0) === ds.totals.slots,
+  `${ds.pipeline.stages.reduce((a, x) => a + x.slots, 0)} vs ${ds.totals.slots}`);
+// 최장 대기 — 등록 2026-07-20 → 2026-08-28까지 39일
+const waitList = ds.pipeline.longest_waiting;
+ok('최장 대기 1건 노출', waitList.length === 1, String(waitList.length));
+ok('최장 대기 = D-300', waitList[0].model_name === 'D-300', waitList[0].model_name);
+ok('대기 39일 계산', waitList[0].waiting_days === 39, String(waitList[0].waiting_days));
+ok('희망일 경과 표시', waitList[0].desired_overdue === true);
+ok('최장 대기는 최대 2건', resources.summarize(DASH, AS_OF, 20).pipeline.longest_waiting.length <= 2);
+
+// 4. 인증 타입별 점유 현황
+const td = ds.type_distribution;
+ok('타입 4종 노출 (건 있는 것만)', td.length === 4, String(td.length));
+ok('slot 많은 순 정렬', td[0].label === 'NTS (IR, LR, MR, 파생)' && td[0].slots === 12,
+  `${td[0].label} ${td[0].slots}`);
+ok('NTS 비중 57.1% (12/21)', td[0].share === 57.1, String(td[0].share));
+ok('타입 slot 합 = 풀 물량', td.reduce((a, x) => a + x.slots, 0) === ds.totals.slots,
+  `${td.reduce((a, x) => a + x.slots, 0)} vs ${ds.totals.slots}`);
+ok('비중 합 ≈ 100%', Math.abs(td.reduce((a, x) => a + x.share, 0) - 100) < 0.5,
+  String(td.reduce((a, x) => a + x.share, 0)));
+ok('건당 소요 slot 병기', td.find((x) => x.label === 'ATVS').unit_slots === 4);
+ok('건 없는 타입은 제외', resources.summarize([], AS_OF, 10).type_distribution.length === 0);
+
+// 5. 스마트 알림
+const al = ds.alerts;
+ok('초과 할당 경고 = 이은경', al.overloaded.length === 1 && al.overloaded[0].tester === '이은경',
+  JSON.stringify(al.overloaded));
+// 리소스 충돌 — 직렬 배치는 겹침을 밀어내므로 '계획 일정' 기준으로 판정해야 잡힌다
+ok('리소스 충돌 1건 감지', al.conflicts.length === 1, String(al.conflicts.length));
+ok('충돌 담당자 = 이은경', al.conflicts[0].tester === '이은경');
+ok('충돌 대상 2건 명시', al.conflicts[0].items.length === 2 &&
+  al.conflicts[0].items.map((i) => i.model_name).join(',') === 'D-100,D-200',
+  JSON.stringify(al.conflicts[0].items.map((i) => i.model_name)));
+ok('충돌 중복 일수 산출', al.conflicts[0].overlap_days === 10, String(al.conflicts[0].overlap_days));
+// 일정 밀림 — D-200은 계획 9/1인데 이은경 NTS가 안 끝나 9/15로 밀린다
+ok('일정 밀림 감지', al.delays.some((d) => d.model_name === 'D-200' && d.delay_days === 10),
+  JSON.stringify(al.delays.map((d) => `${d.model_name}:${d.delay_days}`)));
+ok('밀림은 최대 5건', al.delays.length <= 5);
+// 일정 여유 — 문유림 xTS MR 2 slot이 8/28·8/31 점유 → 9/1(D-2)에 확보
+ok('리소스 확보 예정 감지', al.releases.some((r) => r.tester === '문유림' && r.d_day === 2),
+  JSON.stringify(al.releases.map((r) => `${r.tester}:D-${r.d_day}`)));
+ok('확보 예정은 D-day 순', al.releases.every((r, i) => i === 0 || al.releases[i - 1].d_day <= r.d_day));
+ok('확보되는 건과 slot 명시', al.releases[0].model_name === 'D-400' && al.releases[0].slots === 2,
+  `${al.releases[0].model_name} ${al.releases[0].slots}`);
+ok('알림 건수 합계', al.count === al.conflicts.length + al.delays.length + al.releases.length + al.overloaded.length,
+  String(al.count));
+// 충돌이 없는 조합에서는 경고도 없어야 한다 (거짓 경보 방지)
+const clean = resources.summarize([
+  { id: 9, cert_type: 'Google xTS', test_type: 'MR', model_name: 'C-1', status: '진행중', tester: '조아라', plan_date: '2026-08-28' },
+], AS_OF, 20);
+ok('충돌 없으면 경고 없음', clean.alerts.conflicts.length === 0);
+ok('밀림 없으면 경고 없음', clean.alerts.delays.length === 0);
+ok('초과 없으면 경고 없음', clean.alerts.overloaded.length === 0);
+ok('빈 입력이면 알림 0건', resources.summarize([], AS_OF, 10).alerts.count === 0);
+
 // ---------- Task 6. 리소스 산정 대상 조회 ----------
 head('Task 6-D. openRequests 대상 필터');
 const OPEN_STATUS = ['예약대기', '예약확정', '진행중'];

@@ -65,7 +65,10 @@ app.get('/api/resources', (req, res) => {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(asOf)) {
     return res.status(400).json({ error: 'as_of는 YYYY-MM-DD 형식이어야 합니다.' });
   }
-  res.json(resources.summarize(repo.openRequests(), asOf));
+  // days = 일별 현황을 볼 영업일 수 (기본 20일 = 4주). 과도한 계산을 막으려 5~60으로 제한한다.
+  const days = Number(req.query.days);
+  const horizon = Number.isFinite(days) ? Math.min(60, Math.max(5, Math.trunc(days))) : 20;
+  res.json(resources.summarize(repo.openRequests(), asOf, horizon));
 });
 
 // Task 6-2. 반복 Fail·장기 미판정 병목 경고

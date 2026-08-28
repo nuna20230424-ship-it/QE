@@ -329,23 +329,28 @@ const RS = (rows) => resources.summarize(rows, AS_OF);
 // 빈 입력: 0 나눗셈·NaN이 새지 않아야 한다
 const rsEmpty = RS([]);
 ok('빈 입력 총 slot 0', rsEmpty.totals.slots === 0);
-ok('빈 입력 기준선 0', rsEmpty.totals.baseline === 0, String(rsEmpty.totals.baseline));
+ok('빈 입력 소요 주수 0 (NaN 아님)', rsEmpty.totals.weeks_needed === 0, String(rsEmpty.totals.weeks_needed));
 ok('빈 입력 소진 예상 0', rsEmpty.totals.days === 0, String(rsEmpty.totals.days));
 ok('빈 입력 소진일 null (지어낸 날짜 아님)', rsEmpty.totals.eta === null);
 ok('빈 입력에도 담당 4명 행 유지', rsEmpty.rows.length === 4, String(rsEmpty.rows.length));
 ok('빈 입력 담당자 순서 고정', rsEmpty.rows.map((r) => r.tester).join(',') === '이은경,조아라,이해찬,문유림');
-ok('빈 입력 편차 0', rsEmpty.totals.spread === 0);
 ok('빈 입력 미정의 없음', rsEmpty.undefined_rules.length === 0);
-// 물량이 0이면 전체 리소스도 0% — 100%로 부풀리지 않는다
-ok('빈 입력 전체 0% (100% 아님)', rsEmpty.totals.total_pct === 0, String(rsEmpty.totals.total_pct));
-ok('빈 입력 점유율 전부 0 (NaN 아님)', rsEmpty.rows.every((r) => r.share === 0), JSON.stringify(rsEmpty.rows.map((r) => r.share)));
-ok('빈 입력 미배정 0%', rsEmpty.totals.unassigned_pct === 0);
-ok('빈 입력 쏠림 폭 0%p', rsEmpty.totals.spread_pct === 0);
-ok('빈 입력 초과 합계 0%p', rsEmpty.totals.overload_pct === 0);
-// 균등분담선은 물량과 무관하게 인원수로 정해진다 (4명 → 25%)
-ok('균등분담선 25% (4명)', rsEmpty.totals.baseline_pct === 25, String(rsEmpty.totals.baseline_pct));
-// 물량 0이면 쏠림 개념이 없다 — '25%p 여유'처럼 오해를 주지 않아야 한다
-ok('빈 입력 편차 0%p (여유로 오해 방지)', rsEmpty.rows.every((r) => r.delta_pct === 0), JSON.stringify(rsEmpty.rows.map((r) => r.delta_pct)));
+// 1주 가용은 물량과 무관하게 인원수 × 5로 정해진다 (4명 → 20 slot = 100%)
+ok('1주 가용 20 slot (4명 × 5일)', rsEmpty.totals.week_capacity === 20, String(rsEmpty.totals.week_capacity));
+ok('1일 가용 4 slot', rsEmpty.totals.daily_capacity === 4);
+ok('빈 입력 사용률 0% (NaN 아님)', rsEmpty.totals.usage_pct === 0, String(rsEmpty.totals.usage_pct));
+ok('빈 입력 여유 100%', rsEmpty.totals.free_pct === 100, String(rsEmpty.totals.free_pct));
+ok('빈 입력 초과 0%', rsEmpty.totals.over_pct === 0);
+ok('빈 입력 여유 slot = 가용 전량', rsEmpty.totals.free_slots === 20, String(rsEmpty.totals.free_slots));
+ok('빈 입력 소요 주수 0', rsEmpty.totals.weeks_needed === 0);
+ok('빈 입력 담당자 여유 = 5 slot', rsEmpty.rows.every((r) => r.free === 5 && r.over === 0), JSON.stringify(rsEmpty.rows.map((r) => r.free)));
+ok('빈 입력 담당자 사용률 0%', rsEmpty.rows.every((r) => r.usage_pct === 0));
+// 일별 현황: 물량이 없어도 가용 자체는 나와야 한다 (자동 할당이 어디에 넣을지 보는 화면)
+ok('빈 입력에도 일별 행 생성', rsEmpty.daily.days.length === 20, String(rsEmpty.daily.days.length));
+ok('빈 입력 일별 여유 = 가용 전량', rsEmpty.daily.days.every((d) => d.free === 4 && d.used === 0));
+ok('빈 입력 일별 여유 인원 4명', rsEmpty.daily.days.every((d) => d.idle.length === 4));
+ok('빈 입력 주 소계 생성', rsEmpty.daily.weeks.length >= 4, String(rsEmpty.daily.weeks.length));
+ok('빈 입력 구간 초과 물량 0', rsEmpty.daily.overflow === 0);
 
 // 픽스처: NTS 12(이은경) + xTS IR 3(조아라) + AVTS 4(미배정) + xTS MR 2(김지윤=기타) + 미정의 1건
 const OPEN = [
@@ -378,41 +383,105 @@ ok('이은경 예상 소진일 = 12번째 영업일', rowOf('이은경').eta ===
 ok('건 없는 담당자는 소진일 null', rowOf('이해찬').eta === null);
 ok('미배정은 소진일 산출하지 않음', rs.unassigned.eta === null);
 
-// 전체 미완 물량을 100%로 산정 (총 21 slot)
-ok('전체 리소스 100%', rs.totals.total_pct === 100, String(rs.totals.total_pct));
-ok('균등분담선 25% (4명)', rs.totals.baseline_pct === 25, String(rs.totals.baseline_pct));
-ok('이은경 점유율 57.1% (12/21)', rowOf('이은경').share === 57.1, String(rowOf('이은경').share));
-ok('조아라 점유율 14.3% (3/21)', rowOf('조아라').share === 14.3, String(rowOf('조아라').share));
-ok('이해찬 점유율 0%', rowOf('이해찬').share === 0);
-ok('미배정 점유율 19% (4/21)', rs.unassigned.share === 19, String(rs.unassigned.share));
-ok('기타 점유율 9.5% (2/21)', rs.others[0].share === 9.5, String(rs.others[0].share));
-// 4명 + 미배정 + 기타 점유율 합이 100%가 되어야 한다 (반올림 오차 0.2%p 이내)
-const shareSum = [...rs.rows, rs.unassigned, ...rs.others].reduce((a, r) => a + r.share, 0);
-ok('점유율 합계 ≈ 100%', Math.abs(shareSum - 100) < 0.3, String(shareSum));
-ok('배정 + 미배정 = 100%', Math.abs(rs.totals.assigned_pct + rs.totals.unassigned_pct - 100) < 0.3,
-  `${rs.totals.assigned_pct}+${rs.totals.unassigned_pct}`);
+// 1주 가용(4명 × 5일 = 20 slot)을 100%로 산정. 총 소요 21 slot → 105%
+ok('1주 가용 20 slot', rs.totals.week_capacity === 20, String(rs.totals.week_capacity));
+ok('사용률 105% (21/20)', rs.totals.usage_pct === 105, String(rs.totals.usage_pct));
+ok('초과 5% (1 slot)', rs.totals.over_pct === 5 && rs.totals.over_slots === 1,
+  `${rs.totals.over_pct}% / ${rs.totals.over_slots} slot`);
+ok('초과 시 여유는 0', rs.totals.free_pct === 0 && rs.totals.free_slots === 0);
+ok('소요 주수 1.1주', rs.totals.weeks_needed === 1.1, String(rs.totals.weeks_needed));
+ok('미배정 = 1주 가용의 20% (4/20)', rs.totals.unassigned_pct === 20, String(rs.totals.unassigned_pct));
 
-// 초과 / 여유 = 균등분담선(25%) 대비 %p
-ok('이은경 +32.1%p 초과', rowOf('이은경').delta_pct === 32.1, String(rowOf('이은경').delta_pct));
-ok('조아라 여유(음수)', rowOf('조아라').delta_pct < 0, String(rowOf('조아라').delta_pct));
-ok('이해찬 -25%p 여유(전부)', rowOf('이해찬').delta_pct === -25, String(rowOf('이해찬').delta_pct));
-ok('초과 합계 = 기준선 넘긴 분량만', rs.totals.overload_pct === 32.1, String(rs.totals.overload_pct));
-ok('쏠림 폭 = 최다 - 최소 점유율', rs.totals.spread_pct === 57.1, String(rs.totals.spread_pct));
-ok('미배정은 균등분담선 대비 없음(null)', rs.unassigned.delta_pct === null);
-ok('기타 테스터도 균등분담선 대비 없음', rs.others[0].delta_pct === null);
-
-// slot 환산값도 함께 남긴다 (재배정 시 "몇 slot 옮기면 되는가")
-ok('기준선 slot = 총 slot ÷ 4', rs.totals.baseline === 5.3, String(rs.totals.baseline));   // 21/4 = 5.25 → 5.3
-// 5.25 - 12 = -6.75. JS Math.round는 -0.5를 0 방향으로 올리므로 -6.7이다(표기용이라 무해).
-ok('이은경 초과 slot 표기', rowOf('이은경').delta === -6.7, String(rowOf('이은경').delta));
-ok('이해찬 여유 slot 표기', rowOf('이해찬').delta === 5.3, String(rowOf('이해찬').delta));
-ok('부하 편차 slot = 최다 - 최소', rs.totals.spread === 12, String(rs.totals.spread));
+// 담당자별 = 1인 주간 가용(5 slot) 대비
+ok('담당자 주간 가용 5 slot', rs.rows.every((r) => r.capacity === 5));
+ok('이은경 사용률 240% (12/5)', rowOf('이은경').usage_pct === 240, String(rowOf('이은경').usage_pct));
+ok('이은경 7 slot 초과', rowOf('이은경').over === 7 && rowOf('이은경').free === 0,
+  `over ${rowOf('이은경').over} / free ${rowOf('이은경').free}`);
+ok('조아라 사용률 60% (3/5)', rowOf('조아라').usage_pct === 60, String(rowOf('조아라').usage_pct));
+ok('조아라 2 slot 여유', rowOf('조아라').free === 2 && rowOf('조아라').over === 0);
+ok('이해찬 5 slot 전량 여유', rowOf('이해찬').free === 5);
+// 미배정·기타는 개인 가용 개념이 없다
+ok('미배정은 가용 없음(null)', rs.unassigned.capacity === null && rs.unassigned.usage_pct === null);
+ok('기타 테스터도 가용 없음(null)', rs.others[0].capacity === null && rs.others[0].free === null);
 
 // 전체 소진 예상: 4명이 하루 4 slot 소화 → ceil(21/4) = 6 영업일
 ok('1일 가용 = 담당 인원수', rs.totals.daily_capacity === 4);
 ok('전체 소진 6 영업일', rs.totals.days === 6, String(rs.totals.days));
 ok('전체 소진일 = 6번째 영업일', rs.totals.eta === holidays.nthBusinessDay(AS_OF, 6), String(rs.totals.eta));
 ok('건별 상세에 적용 규칙 표기', rowOf('이은경').items[0].rule === 'NTS (IR, LR, MR, 파생)');
+
+// ---------- Task 6. 일별 가용 리소스 현황 ----------
+head('Task 6-E. 일별 배치와 가용');
+const MEMBERS_LIST = resources.MEMBERS;
+// AS_OF = 2026-08-28(금). 영업일은 8/28 → 8/31 → 9/1 → 9/2 ...
+const dp = rs.daily;
+ok('기본 조회 구간 20 영업일', dp.horizon === 20, String(dp.horizon));
+ok('첫 영업일이 기준일', dp.days[0].date === AS_OF, dp.days[0].date);
+ok('주말을 건너뛴다', dp.days[1].date === '2026-08-31', dp.days[1].date);
+ok('요일 표기', dp.days[0].weekday === '금' && dp.days[1].weekday === '월',
+  `${dp.days[0].weekday}/${dp.days[1].weekday}`);
+ok('일별 가용 = 인원수', dp.days.every((d) => d.capacity === 4));
+ok('여유 = 가용 - 사용', dp.days.every((d) => d.free === Math.max(0, d.capacity - d.used)));
+ok('사용이 가용을 넘지 않는다 (1인 1일 1slot 직렬)', dp.days.every((d) => d.used <= d.capacity),
+  JSON.stringify(dp.days.filter((d) => d.used > d.capacity).map((d) => d.date)));
+ok('여유 인원 = 그날 배치 안 된 담당자', dp.days.every((d) => d.idle.length === 4 - d.used));
+
+// 이은경 12 slot(NTS, 계획 8/26 → 과거라 기준일부터) → 8/28부터 12영업일 연속 점유
+const eun = (date) => (dp.days.find((d) => d.date === date) || { lane: [] }).lane.some((x) => x.tester === '이은경');
+ok('이은경 첫날 점유', eun(AS_OF));
+ok('이은경 12영업일째 점유', eun(holidays.nthBusinessDay(AS_OF, 12)));
+ok('이은경 13영업일째는 해제', !eun(holidays.nthBusinessDay(AS_OF, 13)));
+
+// 미배정 AVTS 4 slot(계획 9/1) → 가장 빨리 비는 담당자에게 '배정 예정'으로 채워진다
+const pendingDays = dp.days.filter((d) => d.pending > 0);
+ok('미배정 건이 배정예정으로 채워짐', pendingDays.length === 4, String(pendingDays.length));
+ok('배정예정은 계획일(9/1) 이후부터', pendingDays[0].date >= '2026-09-01', pendingDays[0].date);
+ok('배정예정은 여유 있는 담당자에게', pendingDays.every((d) => d.lane.filter((x) => x.pending).length === 1));
+ok('배정예정 담당자는 이은경이 아니다 (가장 빨리 비는 쪽)',
+  pendingDays.every((d) => d.lane.filter((x) => x.pending).every((x) => x.tester !== '이은경')),
+  JSON.stringify(pendingDays.map((d) => d.lane.filter((x) => x.pending).map((x) => x.tester))));
+
+// 주 소계: 공휴일이 든 주는 영업일이 줄어 가용도 줄어야 한다
+ok('주 소계 가용 = 영업일 × 인원', dp.weeks.every((w) => w.capacity === w.business_days * 4));
+ok('주 소계 사용 = 일별 합', dp.weeks.reduce((a, w) => a + w.used, 0) === dp.days.reduce((a, d) => a + d.used, 0));
+ok('주 소계 사용률 NaN 아님', dp.weeks.every((w) => Number.isFinite(w.usage_pct)));
+const w1 = dp.weeks[0];
+ok('첫 주는 8/28 하루뿐 (금요일 기준일)', w1.business_days === 1 && w1.capacity === 4,
+  `${w1.business_days}일 / ${w1.capacity} slot`);
+
+// 4명 외 테스터 건은 4명의 가용을 쓰지 않으므로 배치에서 빠지되, 명시적으로 집계돼야 한다
+ok('기타 테스터 건은 배치 제외로 집계', dp.excluded.slots === 2 && dp.excluded.count === 1,
+  `${dp.excluded.count}건 / ${dp.excluded.slots} slot`);
+ok('제외된 테스터 이름 노출', dp.excluded.testers.join(',') === '김지윤', dp.excluded.testers.join(','));
+ok('배치 레인에 기타 테스터 없음', dp.days.every((d) => d.lane.every((x) => MEMBERS_LIST.includes(x.tester))));
+
+// 배치분 + 구간초과 + 제외분 = 전체 물량 (물량이 조용히 사라지지 않는다)
+const placed = dp.days.reduce((a, d) => a + d.used, 0);
+ok('배치분 + 구간초과 + 제외분 = 전체 물량',
+  placed + dp.overflow + dp.excluded.slots === rs.totals.slots,
+  `${placed} + ${dp.overflow} + ${dp.excluded.slots} vs ${rs.totals.slots}`);
+
+// 공휴일이 든 주는 가용이 줄어드는지 — 추석(9/24,9/25,9/28)이 낀 주로 확인
+head('Task 6-F. 공휴일이 든 주의 가용 감소');
+const chuseok = resources.summarize([], '2026-09-21', 10).daily;   // 9/21(월) 시작
+const wkChuseok = chuseok.weeks.find((w) => w.from === '2026-09-21');
+ok('추석 주 영업일 3일 (9/21~23)', wkChuseok.business_days === 3, String(wkChuseok.business_days));
+ok('추석 주 가용 12 slot (3일 × 4명)', wkChuseok.capacity === 12, String(wkChuseok.capacity));
+ok('추석 연휴(9/24·25) 행 없음', !chuseok.days.some((d) => d.date === '2026-09-24' || d.date === '2026-09-25'));
+ok('추석 대체공휴일(9/28) 행 없음', !chuseok.days.some((d) => d.date === '2026-09-28'));
+ok('9/29(화)는 영업일', chuseok.days.some((d) => d.date === '2026-09-29'));
+
+// 조회 구간 제한: 물량이 구간을 넘으면 overflow로 잡아야 한다 (조용히 버리지 않는다)
+// 4명 각각 NTS 12 slot = 48 slot 인데 구간은 5 영업일(가용 20 slot)뿐이다.
+const bigLoad = ['이은경', '조아라', '이해찬', '문유림'].map((n, i) => ({
+  id: 100 + i, cert_type: 'Netflix NTS', test_type: 'IR', model_name: `BIG-${i}`,
+  status: '진행중', tester: n, plan_date: '2026-08-28',
+}));
+const rsBig = resources.summarize(bigLoad, AS_OF, 5);
+ok('구간 5일로 좁히면 초과 물량 발생', rsBig.daily.overflow > 0, String(rsBig.daily.overflow));
+ok('좁은 구간에서도 배치분 + 초과 = 전체',
+  rsBig.daily.days.reduce((a, d) => a + d.used, 0) + rsBig.daily.overflow === rsBig.totals.slots,
+  `${rsBig.daily.days.reduce((a, d) => a + d.used, 0)} + ${rsBig.daily.overflow} vs ${rsBig.totals.slots}`);
 
 // ---------- Task 6. 리소스 산정 대상 조회 ----------
 head('Task 6-D. openRequests 대상 필터');
@@ -426,7 +495,8 @@ ok('대표 일정(plan_date) 포함', openRows.every((r) => 'plan_date' in r));
 const rsLive = resources.summarize(openRows, AS_OF);
 ok('실 픽스처 집계 시 담당 4명 행', rsLive.rows.length === 4);
 ok('실 픽스처 총 slot이 음수 아님', rsLive.totals.slots >= 0, String(rsLive.totals.slots));
-ok('실 픽스처 기준선 NaN 아님', Number.isFinite(rsLive.totals.baseline), String(rsLive.totals.baseline));
+ok('실 픽스처 사용률 NaN 아님', Number.isFinite(rsLive.totals.usage_pct), String(rsLive.totals.usage_pct));
+ok('실 픽스처 일별 현황 생성', rsLive.daily.days.length > 0 && rsLive.daily.days.every((d) => d.used <= d.capacity));
 
 // ---------- 스케줄러 자동발송이 실제로 넘기는 본문 ----------
 // report.js의 mailHtml만 검증하면 스케줄러가 r.html을 넘겨도 통과한다. 호출 인자를 직접 가로채 확인한다.

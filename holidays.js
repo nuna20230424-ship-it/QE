@@ -89,6 +89,30 @@ function nthBusinessDay(from, n) {
   return null;
 }
 
+// from(포함)부터 영업일 n개를 순서대로 돌려준다. 일별 가용 현황의 가로축이 된다.
+function businessDaysFrom(from, n) {
+  if (!YMD.test(String(from)) || !Number.isFinite(n) || n <= 0) return [];
+  const out = [];
+  const d = new Date(`${from}T00:00:00`);
+  for (let guard = 0; guard < 3660 && out.length < n; guard += 1) {
+    const ymd = toYmd(d);
+    if (isBusinessDay(ymd)) out.push(ymd);
+    d.setDate(d.getDate() + 1);
+  }
+  return out;
+}
+
+// 그 날이 속한 주의 월요일~금요일 (일별 현황을 주 단위로 묶는 데 쓴다)
+function weekOf(ymd) {
+  const d = new Date(`${ymd}T00:00:00`);
+  d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+  const mon = toYmd(d);
+  d.setDate(d.getDate() + 4);
+  const fri = toYmd(d);
+  const short = (s) => `${Number(s.slice(5, 7))}/${Number(s.slice(8, 10))}`;
+  return { from: mon, to: fri, label: `${short(mon)}~${short(fri)}` };
+}
+
 // 계산 결과가 공휴일 미등록 연도에 걸리는지. 걸리면 주말만 제외한 값이라 오차가 있다.
 function coverageWarning(ymd) {
   if (!ymd || !YMD.test(ymd)) return null;
@@ -102,6 +126,8 @@ module.exports = {
   holidayName,
   isBusinessDay,
   nthBusinessDay,
+  businessDaysFrom,
+  weekOf,
   coverageWarning,
   reload,
   knownYears: () => KNOWN_YEARS.slice(),

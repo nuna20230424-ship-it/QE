@@ -44,15 +44,17 @@ const round1 = (n) => Math.round(n * 10) / 10;
 // 분모가 0이면 0으로 돌려 0 나눗셈을 차단한다.
 const pct = (n, d) => (d > 0 ? round1((n / d) * 100) : 0);
 
+// 주간 가용 리소스의 기준 — 1명이 한 주에 소화하는 영업일 수.
+// 전체 가용 = 인원수 × 5 slot 이고, 이 값을 100%로 놓는다.
+const WEEK_BUSINESS_DAYS = 5;
+
 // 담당자 한 명의 집계 행을 만든다. slot 합계가 곧 소요 영업일수다(1 slot = 1명 1일).
-// share      — 전체 미완 물량(=100%) 중 이 담당자가 지고 있는 몫
-// delta_pct  — 균등분담선(100 ÷ 인원수) 대비 %p. 양수면 초과, 음수면 여유
-function rowOf(name, group, items, asOf, total, baselinePct) {
+// usage_pct — 1인 주간 가용(5 slot)을 100%로 본 사용률. 100%를 넘으면 그만큼 다음 주로 밀린다.
+// free      — 이번 주에 더 받을 수 있는 slot (자동 할당이 채워 넣을 여유)
+function rowOf(name, group, items, asOf) {
   const slots = items.reduce((a, r) => a + r.slots, 0);
   const eta = slots > 0 ? holidays.nthBusinessDay(asOf, slots) : null;
-  const share = pct(slots, total);
-  // 물량이 0이면 쏠림이라는 개념 자체가 없다. '25%p 여유'처럼 오해를 주지 않게 편차를 0으로 둔다.
-  const hasWork = total > 0 && baselinePct !== null;
+  const cap = group === 'member' ? WEEK_BUSINESS_DAYS : null;
   return {
     tester: name,
     group,                                  // member | other | unassigned
@@ -61,18 +63,115 @@ function rowOf(name, group, items, asOf, total, baselinePct) {
     days: slots,                            // 1 slot = 1일이므로 변환 계수 1
     eta,                                    // 예상 소진일 (오늘부터 slots번째 영업일)
     eta_warning: holidays.coverageWarning(eta),
-    share,                                  // 전체 100 중 점유율 (%)
-    // 균등분담선 대비 편차. 기간 개념이 없어 '가용 대비 사용률'을 낼 수 없으므로
-    // 전체 물량을 100으로 정규화하고 그 안에서의 쏠림을 정량화한다.
-    delta_pct: baselinePct === null ? null : (hasWork ? round1(share - baselinePct) : 0),
-    delta: baselinePct === null ? null : (hasWork ? round1((total * baselinePct) / 100 - slots) : 0),
+    capacity: cap,                          // 1인 주간 가용 (담당 4명만 해당)
+    usage_pct: cap === null ? null : pct(slots, cap),
+    free: cap === null ? null : Math.max(0, cap - slots),
+    over: cap === null ? null : Math.max(0, slots - cap),
     items,
   };
 }
 
-// 미완 의뢰 목록을 받아 전체·담당자별 리소스 현황을 낸다.
-// asOf는 'YYYY-MM-DD'. 기간 개념을 두지 않고 남은 물량 전체를 소요 영업일수로 환산한다.
-function summarize(openRows, asOf) {
+// 일별 가용 리소스 현황.
+// 배치 규칙 — 한 담당자는 하루에 1 slot만 쓴다(직렬). 그래서 담당자별로 큐를 만들어
+// 대표 일정(plan_date) 순으로 영업일에 이어 붙인다. 시작은 max(plan_date, 기준일)이다.
+// 미배정 건은 가장 빨리 비는 담당자 자리에 `배정 예정`으로 채워 넣는다 — 자동 할당의 미리보기다.
+// 일별 가용은 '인증 담당 4명'의 가용이므로, 4명 외 테스터에게 걸린 건은 이 가용을 쓰지 않는다.
+// 배치에서 빼되 excluded로 명시해 물량이 조용히 사라지지 않게 한다.
+function dailyPlanOf(items, asOf, horizon) {
+  const excludedItems = (items || []).filter((r) => r.tester && !MEMBERS.includes(r.tester));
+  const excluded = {
+    count: excludedItems.length,
+    slots: excludedItems.reduce((a, r) => a + r.slots, 0),
+    testers: [...new Set(excludedItems.map((r) => r.tester))].sort(),
+  };
+
+  const days = holidays.businessDaysFrom(asOf, horizon);
+  if (!days.length || !MEMBERS.length) return { days: [], weeks: [], horizon: 0, overflow: 0, excluded };
+
+  const idxOf = new Map(days.map((d, i) => [d, i]));
+  // plan_date가 과거이거나 비어 있으면 오늘부터, 조회 구간보다 늦으면 구간 밖으로 본다.
+  const startIndexOf = (planDate) => {
+    if (!planDate || planDate <= asOf) return 0;
+    if (idxOf.has(planDate)) return idxOf.get(planDate);
+    const after = days.findIndex((d) => d >= planDate);  // 계획일이 주말·공휴일이면 다음 영업일
+    return after === -1 ? days.length : after;
+  };
+
+  // days[i] 에 배치된 작업들. { tester, id, model_name, pending }
+  const lanes = days.map(() => []);
+  const cursor = new Map(MEMBERS.map((n) => [n, 0]));    // 담당자별 다음 빈 영업일 인덱스
+  let overflow = 0;                                      // 조회 구간을 넘어간 slot
+
+  const place = (tester, item, fromIdx, pending) => {
+    let at = Math.max(cursor.get(tester), fromIdx);
+    for (let k = 0; k < item.slots; k += 1, at += 1) {
+      if (at >= days.length) { overflow += item.slots - k; break; }
+      lanes[at].push({ tester, id: item.id, model_name: item.model_name, pending });
+    }
+    cursor.set(tester, Math.min(at, days.length));
+  };
+
+  const byPlan = (a, b) => String(a.plan_date || '').localeCompare(String(b.plan_date || '')) || a.id - b.id;
+
+  // 1단계 — 담당자가 정해진 건
+  for (const name of MEMBERS) {
+    for (const it of items.filter((r) => r.tester === name).sort(byPlan)) {
+      place(name, it, startIndexOf(it.plan_date), false);
+    }
+  }
+  // 2단계 — 미배정 건을 가장 빨리 비는 담당자에게 (자동 할당 미리보기)
+  for (const it of items.filter((r) => !r.tester).sort(byPlan)) {
+    const from = startIndexOf(it.plan_date);
+    const pickName = MEMBERS.reduce((best, n) => (
+      Math.max(cursor.get(n), from) < Math.max(cursor.get(best), from) ? n : best), MEMBERS[0]);
+    place(pickName, it, from, true);
+  }
+
+  const capacity = MEMBERS.length;
+  const dayRows = days.map((date, i) => {
+    const lane = lanes[i];
+    const assigned = lane.filter((x) => !x.pending).length;
+    const pending = lane.filter((x) => x.pending).length;
+    const used = assigned + pending;
+    return {
+      date,
+      weekday: '일월화수목금토'[new Date(`${date}T00:00:00`).getDay()],
+      capacity,
+      assigned,
+      pending,
+      used,
+      free: Math.max(0, capacity - used),
+      usage_pct: pct(used, capacity),
+      idle: MEMBERS.filter((n) => !lane.some((x) => x.tester === n)),   // 그날 비어 있는 담당자
+      lane,
+    };
+  });
+
+  // 주 단위 소계. 공휴일이 든 주는 영업일이 적어 가용도 줄어든다.
+  const weekMap = new Map();
+  for (const d of dayRows) {
+    const w = holidays.weekOf(d.date);
+    if (!weekMap.has(w.from)) weekMap.set(w.from, { ...w, business_days: 0, capacity: 0, assigned: 0, pending: 0, used: 0 });
+    const acc = weekMap.get(w.from);
+    acc.business_days += 1;
+    acc.capacity += d.capacity;
+    acc.assigned += d.assigned;
+    acc.pending += d.pending;
+    acc.used += d.used;
+  }
+  const weeks = [...weekMap.values()].map((w) => ({
+    ...w,
+    free: Math.max(0, w.capacity - w.used),
+    usage_pct: pct(w.used, w.capacity),
+  }));
+
+  return { days: dayRows, weeks, horizon: days.length, overflow, excluded };
+}
+
+// 미완 의뢰 목록을 받아 전체·담당자별·일별 리소스 현황을 낸다.
+// asOf는 'YYYY-MM-DD'. horizon은 일별 현황을 몇 영업일까지 볼지(기본 20일 = 4주).
+// 전체 가용 = 인원수 × 5 slot(1주)을 100%로 놓고 사용률·여유·초과를 %로 낸다.
+function summarize(openRows, asOf, horizon = 20) {
   const items = [];
   const undefinedRules = [];
 
@@ -96,58 +195,52 @@ function summarize(openRows, asOf) {
   }
 
   const totalSlots = items.reduce((a, r) => a + r.slots, 0);
-  // 전체 미완 물량을 100%로 산정한다. 기간 개념이 없어 '가용 대비 사용률'을 낼 수 없으므로,
-  // 전체를 100으로 정규화하고 균등분담선(100 ÷ 인원수) 대비 초과·여유를 %로 표기한다.
-  const baselinePct = MEMBERS.length > 0 ? round1(100 / MEMBERS.length) : null;
-  // 균등분담 기준선을 slot으로도 남긴다(재배정 시 "몇 slot을 옮기면 되는가"에 쓴다).
-  const baseline = MEMBERS.length > 0 ? round1(totalSlots / MEMBERS.length) : null;
 
   const pick = (fn) => items.filter(fn);
-  const memberRows = MEMBERS.map((n) => rowOf(n, 'member', pick((r) => r.tester === n), asOf, totalSlots, baselinePct));
-  const unassigned = rowOf('미배정', 'unassigned', pick((r) => !r.tester), asOf, totalSlots, null);
+  const memberRows = MEMBERS.map((n) => rowOf(n, 'member', pick((r) => r.tester === n), asOf));
+  const unassigned = rowOf('미배정', 'unassigned', pick((r) => !r.tester), asOf);
   unassigned.eta = null;                    // 담당자가 없으면 소진일을 낼 수 없다
   unassigned.eta_warning = null;
 
   const otherNames = [...new Set(pick((r) => r.tester && !MEMBERS.includes(r.tester)).map((r) => r.tester))].sort();
-  const otherRows = otherNames.map((n) => rowOf(n, 'other', pick((r) => r.tester === n), asOf, totalSlots, null));
+  const otherRows = otherNames.map((n) => rowOf(n, 'other', pick((r) => r.tester === n), asOf));
 
-  // 전체 소진 예상: 담당 4명이 하루 4 slot을 소화한다고 볼 때 필요한 영업일수.
+  // 전체 가용 = 인원수 × 5 slot(1주). 이 값을 100%로 놓는다.
   const dailyCapacity = MEMBERS.length;
+  const weekCapacity = dailyCapacity * WEEK_BUSINESS_DAYS;
+  const usagePct = pct(totalSlots, weekCapacity);
+
+  // 전체 소진 예상: 4명이 하루 4 slot을 소화한다고 볼 때 필요한 영업일수.
   const totalDays = dailyCapacity > 0 ? Math.ceil(totalSlots / dailyCapacity) : null;
   const totalEta = totalDays > 0 ? holidays.nthBusinessDay(asOf, totalDays) : null;
 
-  // 부하 편차 — 4명 중 최다와 최소의 차이. 재배정이 필요한지 한눈에 본다.
-  const memberSlots = memberRows.map((r) => r.slots);
-  const spread = memberSlots.length ? Math.max(...memberSlots) - Math.min(...memberSlots) : 0;
-  const memberShares = memberRows.map((r) => r.share);
-  const spreadPct = memberShares.length ? round1(Math.max(...memberShares) - Math.min(...memberShares)) : 0;
-  // 균등분담선을 넘긴 담당자들의 초과분 합계(%p). 재배정으로 옮겨야 하는 물량의 크기다.
-  const overloadPct = round1(memberRows.reduce((a, r) => a + Math.max(0, r.delta_pct || 0), 0));
+  const daily = dailyPlanOf(items, asOf, horizon);
 
   return {
     as_of: asOf,
     members: MEMBERS.slice(),
     slot_rules: SLOT_RULES,
+    week_business_days: WEEK_BUSINESS_DAYS,
     totals: {
       count: items.length,
       slots: totalSlots,
       assigned_slots: totalSlots - unassigned.slots,
       unassigned_slots: unassigned.slots,
-      daily_capacity: dailyCapacity,
+      daily_capacity: dailyCapacity,          // 1일 가용 slot (= 인원수)
+      week_capacity: weekCapacity,            // 1주 가용 slot = 100% 기준
+      // 1주 가용을 100%로 본 정량 지표
+      usage_pct: usagePct,
+      free_pct: Math.max(0, round1(100 - usagePct)),
+      over_pct: Math.max(0, round1(usagePct - 100)),
+      free_slots: Math.max(0, weekCapacity - totalSlots),
+      over_slots: Math.max(0, totalSlots - weekCapacity),
+      weeks_needed: weekCapacity > 0 ? round1(totalSlots / weekCapacity) : 0,
+      unassigned_pct: pct(unassigned.slots, weekCapacity),
       days: totalDays,
       eta: totalEta,
       eta_warning: holidays.coverageWarning(totalEta),
-      // 전체를 100%로 본 정량 지표
-      total_pct: totalSlots > 0 ? 100 : 0,
-      assigned_pct: pct(totalSlots - unassigned.slots, totalSlots),
-      unassigned_pct: pct(unassigned.slots, totalSlots),
-      others_pct: pct(otherRows.reduce((a, r) => a + r.slots, 0), totalSlots),
-      baseline_pct: baselinePct,
-      spread_pct: spreadPct,
-      overload_pct: overloadPct,
-      baseline,
-      spread,
     },
+    daily,
     rows: memberRows,
     unassigned,
     others: otherRows,
@@ -156,4 +249,4 @@ function summarize(openRows, asOf) {
   };
 }
 
-module.exports = { MEMBERS, SLOT_RULES, slotsOf, ruleLabelOf, summarize };
+module.exports = { MEMBERS, SLOT_RULES, WEEK_BUSINESS_DAYS, slotsOf, ruleLabelOf, summarize, dailyPlan: dailyPlanOf };

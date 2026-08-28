@@ -113,6 +113,26 @@ app.post('/api/report/:period/send', async (req, res) => {
   res.json({ sent });
 });
 
+// 의뢰자 제안 목록에서 숨긴 이름 조회/추가/복원 (의뢰 레코드는 보존)
+app.get('/api/requesters/hidden', (req, res) => {
+  res.json({ hidden: repo.hiddenRequesters() });
+});
+
+app.post('/api/requesters/hidden', (req, res) => {
+  const name = req.body && req.body.name;
+  if (!name || !String(name).trim()) {
+    return res.status(400).json({ error: '숨길 의뢰자 이름이 필요합니다.' });
+  }
+  repo.hideRequester(name, actorOf(req));
+  res.status(201).json({ hidden: repo.hiddenRequesters() });
+});
+
+app.delete('/api/requesters/hidden/:name', (req, res) => {
+  const ok = repo.unhideRequester(decodeURIComponent(req.params.name));
+  if (!ok) return res.status(404).json({ error: '숨김 목록에 없는 이름입니다.' });
+  res.json({ hidden: repo.hiddenRequesters() });
+});
+
 app.get('/api/requests/:id', (req, res) => {
   const r = repo.get(Number(req.params.id));
   if (!r) return res.status(404).json({ error: '해당 의뢰를 찾을 수 없습니다.' });

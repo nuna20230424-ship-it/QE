@@ -13,6 +13,7 @@ const state = {
   options: { models: [], testPurposes: [] }, // 입력 자동목록용 선택지 (필터와 무관한 전체 이력값)
   // 인증 통계 뷰: 주간(월~금) / 전체 누적 전환, weekOffset 0 = 이번 주
   certStats: { mode: 'week', weekOffset: 0, data: null, range: null },
+  hiddenRequesters: [], // 의뢰자 제안에서 숨긴 이름 (의뢰 레코드는 보존)
 };
 
 const BOARD_LIMIT = 5; // 보드 칼럼당 기본 노출 카드 수
@@ -676,9 +677,41 @@ const NEW_DEFAULTS = { cert_type: 'Netflix NTS', test_type: 'IR', test_purpose: 
 
 // ---- 콤보 박스(선택 + 직접입력) 헬퍼 ----
 // 의뢰자: 기존 이름을 datalist로 제공하되 자유롭게 수정·직접입력 가능한 입력 필드
+// 숨김 처리된 이름은 제안에서 제외 (의뢰 레코드 자체는 유지)
+function requesterSuggestions() {
+  const hidden = new Set(state.hiddenRequesters);
+  return [...new Set(state.items.map((i) => i.requester).filter(Boolean))]
+    .filter((n) => !hidden.has(n))
+    .sort();
+}
+
 function buildRequesterOptions() {
-  const names = [...new Set(state.items.map((i) => i.requester).filter(Boolean))].sort();
-  $('#requester-list').innerHTML = names.map((n) => `<option value="${esc(n)}"></option>`).join('');
+  $('#requester-list').innerHTML = requesterSuggestions().map((n) => `<option value="${esc(n)}"></option>`).join('');
+}
+
+// 서버에서 숨긴 의뢰자 목록 로드
+async function loadHiddenRequesters() {
+  try {
+    const r = await api('/api/requesters/hidden');
+    state.hiddenRequesters = r.hidden || [];
+  } catch { state.hiddenRequesters = []; }
+}
+
+// 의뢰자 관리 팝오버 렌더 (제안 목록: 삭제 / 숨긴 목록: 복원)
+function renderRequesterManager() {
+  const pop = $('#requester-manage');
+  if (!pop || pop.classList.contains('hidden')) return;
+  const visible = requesterSuggestions();
+  const hidden = [...state.hiddenRequesters].sort();
+  const visHtml = visible.length
+    ? visible.map((n) => `<li><span>${esc(n)}</span><button type="button" class="rm-del" data-name="${esc(n)}">삭제</button></li>`).join('')
+    : '<li class="rm-empty">표시할 의뢰자가 없습니다.</li>';
+  const hidHtml = hidden.length
+    ? `<div class="rm-hidden"><p class="rm-title">숨긴 의뢰자</p><ul>${
+        hidden.map((n) => `<li><span>${esc(n)}</span><button type="button" class="rm-restore" data-name="${esc(n)}">복원</button></li>`).join('')
+      }</ul></div>`
+    : '';
+  pop.innerHTML = `<p class="rm-title">의뢰자 목록</p><ul>${visHtml}</ul>${hidHtml}`;
 }
 
 // Test 목적: 이전에 직접 입력된 값을 기본 목록 뒤, '+ 직접 입력' 앞에 끼워 넣는다.
@@ -780,7 +813,10 @@ function openModal(item) {
   $('#modal').classList.remove('hidden');
 }
 
-function closeModal() { $('#modal').classList.add('hidden'); }
+function closeModal() {
+  $('#modal').classList.add('hidden');
+  $('#requester-manage').classList.add('hidden');
+}
 
 function readForm() {
   const out = { actor: actor() };
@@ -815,6 +851,38 @@ async function deleteItem() {
     closeModal();
     await load();
   } catch (err) { alert(err.message); }
+}
+
+// 의뢰자 제안 목록 관리 동작
+async function hideRequesterName(name) {
+  if (!name) return;
+  if (!confirm(`'${name}'을(를) 의뢰자 제안 목록에서 삭제할까요?\n(기존 의뢰 건은 그대로 유지됩니다)`)) return;
+  try {
+    const r = await api('/api/requesters/hidden', {
+      method: 'POST',
+      body: JSON.stringify({ name, actor: actor() }),
+    });
+    state.hiddenRequesters = r.hidden || [];
+    buildRequesterOptions();
+    renderRequesterManager();
+  } catch (err) { alert(err.message); }
+}
+
+async function restoreRequesterName(name) {
+  if (!name) return;
+  try {
+    const r = await api(`/api/requesters/hidden/${encodeURIComponent(name)}`, { method: 'DELETE' });
+    state.hiddenRequesters = r.hidden || [];
+    buildRequesterOptions();
+    renderRequesterManager();
+  } catch (err) { alert(err.message); }
+}
+
+function toggleRequesterManager(force) {
+  const pop = $('#requester-manage');
+  const show = force !== undefined ? force : pop.classList.contains('hidden');
+  pop.classList.toggle('hidden', !show);
+  if (show) renderRequesterManager();
 }
 
 // ---- 이벤트 ----
@@ -875,6 +943,27 @@ function bind() {
     if (!el) return;
     try { openModal(await api(`/api/requests/${el.dataset.id}`)); }
     catch (err) { alert(err.message); }
+  });
+
+  // 의뢰자 제안 목록 관리 (열기/닫기 + 삭제/복원)
+  $('#btn-requester-manage').addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    toggleRequesterManager();
+  });
+  $('#requester-manage').addEventListener('click', (e) => {
+    const del = e.target.closest('.rm-del');
+    const res = e.target.closest('.rm-restore');
+    if (del) { hideRequesterName(del.dataset.name); return; }
+    if (res) { restoreRequesterName(res.dataset.name); return; }
+  });
+  // 팝오버 바깥 클릭 시 닫기
+  document.addEventListener('click', (e) => {
+    const pop = $('#requester-manage');
+    if (pop && !pop.classList.contains('hidden')
+        && !e.target.closest('#requester-manage') && !e.target.closest('#btn-requester-manage')) {
+      pop.classList.add('hidden');
+    }
   });
 
   // 보드 칼럼 "더보기/접기" 토글
@@ -973,6 +1062,7 @@ function bind() {
 }
 
 bind();
+loadHiddenRequesters();
 load().catch((err) => alert(err.message));
 
 // 1분마다 자동 새로고침 (편집 중 모달이 열려 있으면 건너뜀)

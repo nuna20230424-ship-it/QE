@@ -331,6 +331,20 @@ module.exports = {
     db.close();
   },
 
+  // Task 6. 리소스 산정 대상 — 아직 끝나지 않은 의뢰(예약대기·예약확정·진행중).
+  // 완료·보류·중단은 담당자의 남은 업무량이 아니므로 제외한다.
+  // 정렬은 대표 일정 순(미정은 뒤로)이라 화면에서 임박한 건이 위에 온다.
+  openRequests() {
+    return db.prepare(`
+      SELECT id, cert_type, test_type, test_purpose, round, model_name, fw_version,
+             requester, tester, status, desired_date, scheduled_date, started_date,
+             ${ACT_START} AS plan_date
+      FROM requests
+      WHERE status IN ('예약대기', '예약확정', '진행중')
+      ORDER BY (plan_date IS NULL), plan_date, id
+    `).all();
+  },
+
   // 한 번이라도 입력된 모델명 목록. DISTINCT로 중복을 제거해 콤보박스에 그대로 쓴다.
   modelNames() {
     return db.prepare(

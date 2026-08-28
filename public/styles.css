@@ -296,6 +296,65 @@ fieldset:disabled legend::after { content: " · 읽기 전용"; color: var(--mut
 .bn-stale { background: #e8a317; }
 .bn-sub { color: var(--muted); font-size: 11.5px; font-weight: 600; }
 
+/* ---- Task 6. QE 전체 리소스 현황 ---- */
+/* 현황 보드 상단 한 줄 요약 (클릭 시 QE 리소스 탭으로 이동) */
+.resource-strip {
+  margin: 0 22px 14px; padding: 10px 16px; background: var(--panel);
+  border: 1px solid var(--line); border-left: 4px solid var(--primary);
+  border-radius: var(--radius); box-shadow: var(--shadow); cursor: pointer;
+  display: flex; align-items: center; gap: 16px; flex-wrap: wrap; font-size: 12.5px;
+}
+.resource-strip:hover { border-color: var(--primary); }
+.rs-strip-k { font-weight: 800; color: var(--primary); font-size: 12px; }
+.rs-strip-warn { color: var(--danger); font-weight: 700; }
+.rs-strip-go { margin-left: auto; color: var(--muted); font-weight: 600; }
+
+.rs-title { font-weight: 800; font-size: 14px; }
+.rs-title small { color: var(--muted); font-weight: 600; font-size: 12px; }
+.rs-warn { color: #a75b12; font-weight: 700; }
+
+/* 담당자 표: 그룹 구분행 + 부하 막대 + 기준선 대비 */
+.rs-table .rs-group td {
+  background: #eef2f8; color: var(--muted); font-weight: 800; font-size: 11.5px;
+  letter-spacing: .02em; padding: 6px 12px;
+}
+.rs-table .rs-unassigned td { background: #fff8f0; }
+.rs-tag {
+  margin-left: 6px; background: #e8a317; color: #fff; font-size: 10.5px;
+  font-weight: 800; border-radius: 4px; padding: 2px 6px;
+}
+.rs-slack { color: var(--s-done); font-weight: 700; }
+.rs-over { color: var(--danger); font-weight: 800; }
+.rs-even { color: var(--muted); font-weight: 700; }
+.rs-dim { color: var(--muted); }
+
+.load-bar {
+  position: relative; display: inline-block; width: 140px; height: 9px;
+  border-radius: 999px; background: #eef2f8; vertical-align: middle; overflow: hidden;
+}
+.load-bar .lb-fill { display: block; height: 100%; background: var(--primary); border-radius: 999px; }
+.load-bar .lb-fill.lb-over { background: var(--danger); }
+.load-bar .lb-mark {
+  position: absolute; top: -2px; width: 2px; height: 13px; background: var(--text);
+  opacity: .55; border-radius: 1px;
+}
+
+/* 건별 상세: 기본은 접어 두고 필요할 때만 펼친다 */
+.rs-detail-row td { padding: 0 12px 8px; border-top: 0; }
+.rs-detail-row summary {
+  cursor: pointer; color: var(--muted); font-size: 11.5px; font-weight: 600; padding: 4px 0;
+}
+.rs-detail-row summary:hover { color: var(--primary); }
+.rs-items { font-size: 12px; }
+
+.rs-rules {
+  margin-top: 14px; padding: 12px 16px; background: var(--panel);
+  border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow);
+}
+.rs-rules h4 { margin: 0 0 6px; font-size: 12px; color: var(--muted); }
+.rs-rules ul { margin: 0 0 8px; padding-left: 18px; font-size: 12.5px; line-height: 1.8; }
+.rs-rules code { background: #eef2f8; border-radius: 4px; padding: 1px 5px; font-size: 11.5px; }
+
 /* 의뢰자 입력 + 목록 관리 버튼/팝오버 */
 .requester-field { position: relative; display: flex; gap: 6px; align-items: center; }
 .requester-field > input { flex: 1; }

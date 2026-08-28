@@ -9,5 +9,11 @@
   },
   "notifyTo": ["tester1@kaongroup.com", "pl1@kaongroup.com"],
   "reportTo": ["keonhee.cho@kaongroup.com"],
-  "baseUrl": "http://172.16.3.136:3001"
+  "baseUrl": "http://172.16.3.136:3001",
+
+  "_holidays 설명": "QE 리소스 현황의 영업일 계산용. 기본 공휴일 목록은 holidays.js 상수이고 여기서 덮어씁니다. add=사내 지정 휴일 추가, remove=공휴일이지만 정상 근무하는 날 제외. 이 항목이 없어도 앱은 정상 동작합니다(상수만 사용).",
+  "holidays": {
+    "add": [],
+    "remove": []
+  }
 }

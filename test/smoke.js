@@ -273,6 +273,129 @@ ok('일일 복사본에 모델명 포함', dRep.html.includes('KM-100'));
 ok('통계 복사본에 모델명 포함', copyAll.html.includes('KM-100'));
 ok('복사본은 발송용 본문과 다름', dRep.html !== dRep.mailHtml && copyWk.html !== cRep.mailHtml);
 
+// ---------- Task 6. 영업일 계산 (주말·공휴일 제외) ----------
+head('Task 6-A. 영업일 계산');
+const holidays = require('../holidays');
+
+ok('2026-08-28(금)은 영업일', holidays.isBusinessDay('2026-08-28'));
+ok('2026-08-29(토)은 영업일 아님', !holidays.isBusinessDay('2026-08-29'));
+ok('2026-08-30(일)은 영업일 아님', !holidays.isBusinessDay('2026-08-30'));
+ok('2026-01-01(신정)은 영업일 아님', !holidays.isBusinessDay('2026-01-01'));
+ok('신정 이름 조회', holidays.holidayName('2026-01-01') === '신정', String(holidays.holidayName('2026-01-01')));
+ok('평일 공휴일 아님', holidays.holidayName('2026-08-28') === null);
+
+// 8/28(금) 기준 1번째 영업일은 당일, 2번째는 주말을 건너뛴 8/31(월)
+ok('1번째 영업일 = 당일', holidays.nthBusinessDay('2026-08-28', 1) === '2026-08-28', String(holidays.nthBusinessDay('2026-08-28', 1)));
+ok('2번째 영업일 = 주말 건너뛴 월요일', holidays.nthBusinessDay('2026-08-28', 2) === '2026-08-31', String(holidays.nthBusinessDay('2026-08-28', 2)));
+// 토요일 기준이면 첫 영업일이 월요일로 밀린다
+ok('토요일 기준 1번째 영업일 = 월요일', holidays.nthBusinessDay('2026-08-29', 1) === '2026-08-31', String(holidays.nthBusinessDay('2026-08-29', 1)));
+// 공휴일을 건너뛰는지 — 12/24(목) 기준 2번째 영업일은 성탄절(12/25 금)을 지나 12/28(월)
+ok('공휴일을 건너뛴다', holidays.nthBusinessDay('2026-12-24', 2) === '2026-12-28', String(holidays.nthBusinessDay('2026-12-24', 2)));
+ok('slot 0이면 null', holidays.nthBusinessDay('2026-08-28', 0) === null);
+ok('음수 slot이면 null', holidays.nthBusinessDay('2026-08-28', -3) === null);
+ok('잘못된 날짜면 null', holidays.nthBusinessDay('2026/08/28', 3) === null);
+
+// 등록되지 않은 연도로 넘어가면 화면에 경고를 띄워야 한다 (지어낸 날짜를 확정값처럼 보이지 않게)
+ok('등록 연도는 경고 없음', holidays.coverageWarning('2026-12-25') === null);
+ok('미등록 연도는 경고 있음', typeof holidays.coverageWarning('2030-01-05') === 'string');
+ok('경고에 연도 명시', String(holidays.coverageWarning('2030-01-05')).includes('2030'));
+
+// ---------- Task 6. slot 규칙 ----------
+head('Task 6-B. Test Type별 소요 slot');
+const resources = require('../resources');
+const slots = (cert, type) => resources.slotsOf({ cert_type: cert, test_type: type });
+
+ok('xTS IR = 3 slot', slots('Google xTS', 'IR') === 3, String(slots('Google xTS', 'IR')));
+ok('xTS LR = 3 slot', slots('Google xTS', 'LR') === 3, String(slots('Google xTS', 'LR')));
+ok('xTS MR = 2 slot', slots('Google xTS', 'MR') === 2, String(slots('Google xTS', 'MR')));
+ok('xTS 파생 = 2 slot', slots('Google xTS', '파생') === 2, String(slots('Google xTS', '파생')));
+// 구 데이터의 빈 test_type을 2로 세면 물량이 과소평가된다 → 3으로 잡는다
+ok('xTS test_type 미입력 = 3 slot (과소평가 방지)', slots('Google xTS', '') === 3, String(slots('Google xTS', '')));
+['IR', 'LR', 'MR', '파생', ''].forEach((t) => {
+  ok(`NTS ${t || '(빈값)'} = 12 slot`, slots('Netflix NTS', t) === 12, String(slots('Netflix NTS', t)));
+});
+ok('Amazon AVTS(=지시서 ATVS) = 4 slot', slots('Amazon AVTS', 'IR') === 4, String(slots('Amazon AVTS', 'IR')));
+ok('AVTS는 test_type과 무관', slots('Amazon AVTS', '파생') === 4);
+// 규칙에 없는 인증종류는 0으로 세지 않고 null → 호출부가 '미정의'로 모은다
+ok('규칙 없는 인증종류는 null', slots('알 수 없는 인증', 'IR') === null);
+ok('적용 규칙 라벨 — xTS 경량', resources.ruleLabelOf({ cert_type: 'Google xTS', test_type: 'MR' }) === 'xTS (MR, 파생)');
+ok('적용 규칙 라벨 — 미정의', resources.ruleLabelOf({ cert_type: '없는 인증', test_type: 'IR' }) === '미정의');
+
+// ---------- Task 6. 담당자별 집계 ----------
+head('Task 6-C. 담당자별 리소스 집계');
+const AS_OF = '2026-08-28';   // 금요일, 공휴일 아님
+const RS = (rows) => resources.summarize(rows, AS_OF);
+
+// 빈 입력: 0 나눗셈·NaN이 새지 않아야 한다
+const rsEmpty = RS([]);
+ok('빈 입력 총 slot 0', rsEmpty.totals.slots === 0);
+ok('빈 입력 기준선 0', rsEmpty.totals.baseline === 0, String(rsEmpty.totals.baseline));
+ok('빈 입력 소진 예상 0', rsEmpty.totals.days === 0, String(rsEmpty.totals.days));
+ok('빈 입력 소진일 null (지어낸 날짜 아님)', rsEmpty.totals.eta === null);
+ok('빈 입력에도 담당 4명 행 유지', rsEmpty.rows.length === 4, String(rsEmpty.rows.length));
+ok('빈 입력 담당자 순서 고정', rsEmpty.rows.map((r) => r.tester).join(',') === '이은경,조아라,이해찬,문유림');
+ok('빈 입력 편차 0', rsEmpty.totals.spread === 0);
+ok('빈 입력 미정의 없음', rsEmpty.undefined_rules.length === 0);
+
+// 픽스처: NTS 12(이은경) + xTS IR 3(조아라) + AVTS 4(미배정) + xTS MR 2(김지윤=기타) + 미정의 1건
+const OPEN = [
+  { id: 1, cert_type: 'Netflix NTS', test_type: 'IR',  model_name: 'RS-100', status: '진행중',   tester: '이은경', plan_date: '2026-08-26' },
+  { id: 2, cert_type: 'Google xTS',  test_type: 'IR',  model_name: 'RS-200', status: '예약확정', tester: '조아라', plan_date: '2026-08-27' },
+  { id: 3, cert_type: 'Amazon AVTS', test_type: 'LR',  model_name: 'RS-300', status: '예약대기', tester: '',       plan_date: '2026-09-01' },
+  { id: 4, cert_type: 'Google xTS',  test_type: 'MR',  model_name: 'RS-400', status: '진행중',   tester: '김지윤', plan_date: '2026-08-28' },
+  { id: 5, cert_type: '없는 인증',    test_type: 'IR',  model_name: 'RS-500', status: '예약대기', tester: '이은경', plan_date: '2026-09-02' },
+];
+const rs = RS(OPEN);
+const rowOf = (n) => rs.rows.find((r) => r.tester === n);
+
+ok('미정의 1건 분리', rs.undefined_rules.length === 1, String(rs.undefined_rules.length));
+ok('미정의 건은 총 소요에서 제외', rs.totals.slots === 21, String(rs.totals.slots));   // 12+3+4+2
+ok('미정의 건은 건수에서도 제외', rs.totals.count === 4, String(rs.totals.count));
+ok('이은경 12 slot (미정의 건 제외)', rowOf('이은경').slots === 12, String(rowOf('이은경').slots));
+ok('조아라 3 slot', rowOf('조아라').slots === 3, String(rowOf('조아라').slots));
+ok('이해찬 0 slot (건 없어도 행 유지)', rowOf('이해찬').slots === 0);
+ok('문유림 0 slot', rowOf('문유림').slots === 0);
+ok('미배정 4 slot', rs.unassigned.slots === 4, String(rs.unassigned.slots));
+ok('미배정도 총 소요에 포함', rs.totals.unassigned_slots === 4);
+ok('배정분 = 총계 - 미배정', rs.totals.assigned_slots === 17, String(rs.totals.assigned_slots));
+ok('4명 외 테스터는 기타로', rs.others.length === 1 && rs.others[0].tester === '김지윤');
+ok('기타 2 slot', rs.others[0].slots === 2, String(rs.others[0].slots));
+
+// 1 slot = 1명 1일 → 할당 slot 합계가 그 담당자의 소요 영업일수 (변환 계수 1)
+ok('소요 영업일 = 할당 slot', rs.rows.every((r) => r.days === r.slots));
+// 이은경 12 slot → 8/28(금)부터 12번째 영업일 = 9/14(월)
+ok('이은경 예상 소진일 = 12번째 영업일', rowOf('이은경').eta === holidays.nthBusinessDay(AS_OF, 12), String(rowOf('이은경').eta));
+ok('건 없는 담당자는 소진일 null', rowOf('이해찬').eta === null);
+ok('미배정은 소진일 산출하지 않음', rs.unassigned.eta === null);
+
+// 여유/초과 = 4명 균등분담 기준선 대비 편차
+ok('기준선 = 총 slot ÷ 4', rs.totals.baseline === 5.3, String(rs.totals.baseline));   // 21/4 = 5.25 → 5.3
+ok('이은경은 초과(음수)', rowOf('이은경').delta < 0, String(rowOf('이은경').delta));
+ok('이해찬은 여유(양수)', rowOf('이해찬').delta > 0, String(rowOf('이해찬').delta));
+ok('미배정은 기준선 대비 없음(null)', rs.unassigned.delta === null);
+ok('기타 테스터도 기준선 대비 없음', rs.others[0].delta === null);
+ok('부하 편차 = 최다 - 최소', rs.totals.spread === 12, String(rs.totals.spread));
+
+// 전체 소진 예상: 4명이 하루 4 slot 소화 → ceil(21/4) = 6 영업일
+ok('1일 가용 = 담당 인원수', rs.totals.daily_capacity === 4);
+ok('전체 소진 6 영업일', rs.totals.days === 6, String(rs.totals.days));
+ok('전체 소진일 = 6번째 영업일', rs.totals.eta === holidays.nthBusinessDay(AS_OF, 6), String(rs.totals.eta));
+ok('건별 상세에 적용 규칙 표기', rowOf('이은경').items[0].rule === 'NTS (IR, LR, MR, 파생)');
+
+// ---------- Task 6. 리소스 산정 대상 조회 ----------
+head('Task 6-D. openRequests 대상 필터');
+const OPEN_STATUS = ['예약대기', '예약확정', '진행중'];
+const openRows = repo.openRequests();
+ok('미완 상태만 조회', openRows.every((r) => OPEN_STATUS.includes(r.status)), openRows.map((r) => r.status).join(','));
+ok('완료 건 미포함', openRows.every((r) => r.status !== '완료'));
+ok('중단·보류 미포함', openRows.every((r) => r.status !== '중단' && r.status !== '보류'));
+ok('대표 일정(plan_date) 포함', openRows.every((r) => 'plan_date' in r));
+// 실제 DB 픽스처로 돌려도 예외 없이 집계된다 (요약 계약 확인)
+const rsLive = resources.summarize(openRows, AS_OF);
+ok('실 픽스처 집계 시 담당 4명 행', rsLive.rows.length === 4);
+ok('실 픽스처 총 slot이 음수 아님', rsLive.totals.slots >= 0, String(rsLive.totals.slots));
+ok('실 픽스처 기준선 NaN 아님', Number.isFinite(rsLive.totals.baseline), String(rsLive.totals.baseline));
+
 // ---------- 스케줄러 자동발송이 실제로 넘기는 본문 ----------
 // report.js의 mailHtml만 검증하면 스케줄러가 r.html을 넘겨도 통과한다. 호출 인자를 직접 가로채 확인한다.
 head('스케줄러 자동발송 본문');

@@ -14,6 +14,7 @@ const state = {
   // 인증 통계 뷰: 주간(월~금) / 전체 누적 전환, weekOffset 0 = 이번 주
   certStats: { mode: 'week', weekOffset: 0, data: null, range: null },
   hiddenRequesters: [], // 의뢰자 제안에서 숨긴 이름 (의뢰 레코드는 보존)
+  resources: null,      // Task 6. QE 전체 리소스 현황 (/api/resources 응답)
 };
 
 const BOARD_LIMIT = 5; // 보드 칼럼당 기본 노출 카드 수
@@ -648,19 +649,193 @@ async function renderBottlenecks() {
   el.classList.remove('hidden');
 }
 
-const VIEWS = ['board', 'schedule', 'calendar', 'daily', 'weekly', 'certstats'];
+// ---- Task 6. QE 전체 리소스 현황 ----
+// 1 slot = 1명의 1일 업무량이라 담당자에게 쌓인 slot 합계가 곧 그 사람의 소요 영업일수다.
+// 기간을 자르지 않고 미완 물량 전체를 보되, 여유/초과는 4명 균등분담 기준선 대비로 표시한다.
+const etaText = (r) => (r.eta ? `${r.eta}${r.eta_warning ? ' ⚠' : ''}` : '—');
+
+// 기준선 대비 편차. 양수면 여유, 음수면 초과.
+function deltaCell(delta) {
+  if (delta === null || delta === undefined) return '<span class="rs-dim">—</span>';
+  if (delta === 0) return '<span class="rs-even">기준선</span>';
+  return delta > 0
+    ? `<span class="rs-slack">+${delta}일 여유</span>`
+    : `<span class="rs-over">${delta}일 초과</span>`;
+}
+
+// 부하 막대. 가장 무거운 담당자를 100%로 정규화하고 기준선 위치를 눈금으로 표시한다.
+function loadBar(slots, max, baseline) {
+  const w = max > 0 ? Math.round((slots / max) * 100) : 0;
+  const mark = (max > 0 && baseline !== null) ? Math.min(100, Math.round((baseline / max) * 100)) : null;
+  const over = (baseline !== null && slots > baseline);
+  return `<span class="load-bar" title="${slots} slot">
+    <i class="lb-fill ${over ? 'lb-over' : ''}" style="width:${w}%"></i>
+    ${mark === null ? '' : `<i class="lb-mark" style="left:${mark}%" title="균등분담 기준선 ${baseline} slot"></i>`}
+  </span>`;
+}
+
+// 담당자 한 명의 건별 상세 (접힌 상태로 두고 필요할 때만 펼친다)
+function resourceItems(items) {
+  if (!items.length) return '<p class="col-empty">배정된 미완 의뢰가 없습니다.</p>';
+  const body = items.map((it) => `
+    <tr>
+      <td>${esc(it.plan_date || '미정')}</td>
+      <td><span class="badge badge-${certClass(it.cert_type)}">${esc(it.cert_type)}</span></td>
+      <td>${esc(it.test_type || '—')}</td>
+      <td><strong>${esc(it.model_name)}</strong></td>
+      <td>${it.round ? `${esc(it.round)}차` : '—'}</td>
+      <td>${esc(it.status)}</td>
+      <td>${esc(it.rule)}</td>
+      <td class="num">${it.slots}</td>
+    </tr>`).join('');
+  return `
+    <div class="table-wrap">
+    <table class="stats-table rs-items">
+      <thead><tr>
+        <th>일정</th><th>인증종류</th><th>Test type</th><th>모델명</th>
+        <th>차수</th><th>상태</th><th>적용 규칙</th><th class="num">slot</th>
+      </tr></thead>
+      <tbody>${body}</tbody>
+    </table>
+    </div>`;
+}
+
+function resourceRow(r, max, baseline) {
+  const cls = r.group === 'unassigned' ? 'rs-unassigned' : '';
+  return `
+    <tr class="${cls}">
+      <td><b>${esc(r.tester)}</b>${r.group === 'unassigned' ? '<span class="rs-tag">배정 필요</span>' : ''}</td>
+      <td class="num">${r.count}</td>
+      <td class="num"><b>${r.slots}</b></td>
+      <td class="num">${r.days ? `${r.days}일` : '—'}</td>
+      <td>${r.group === 'unassigned' ? '<span class="rs-dim">담당자 미정</span>' : etaText(r)}</td>
+      <td>${deltaCell(r.delta)}</td>
+      <td>${loadBar(r.slots, max, r.group === 'member' ? baseline : null)}</td>
+    </tr>
+    <tr class="rs-detail-row">
+      <td colspan="7">
+        <details><summary>${esc(r.tester)} 건별 상세 ${r.count}건</summary>${resourceItems(r.items)}</details>
+      </td>
+    </tr>`;
+}
+
+async function renderResources() {
+  const root = $('#view-resources');
+  root.innerHTML = '<p class="col-empty">불러오는 중…</p>';
+
+  let s;
+  try { s = await api('/api/resources'); }
+  catch (err) { root.innerHTML = `<p class="col-empty">리소스 현황을 불러오지 못했습니다: ${esc(err.message)}</p>`; return; }
+  state.resources = s;
+
+  const t = s.totals;
+  const chips = [
+    { k: '미완 의뢰', v: `${t.count}건` },
+    { k: '총 소요', v: `${t.slots} slot` },
+    { k: '1일 가용', v: `${t.daily_capacity} slot` },
+    { k: '전체 소진 예상', v: t.days ? `${t.days} 영업일` : '—' },
+    { k: '소진 완료일', v: t.eta || '—', warn: !!t.eta_warning },
+    { k: '균등분담 기준선', v: t.baseline === null ? '—' : `${t.baseline} slot` },
+    { k: '부하 편차', v: `${t.spread} slot`, warn: t.spread > t.daily_capacity },
+    { k: '미배정', v: `${t.unassigned_slots} slot`, warn: t.unassigned_slots > 0 },
+  ].map((c) => `<div class="sumcard ${c.warn ? 'warn' : ''}"><div class="k">${c.k}</div><div class="v">${c.v}</div></div>`).join('');
+
+  // 막대 정규화 기준: 4명·미배정·기타를 통틀어 가장 무거운 쪽
+  const all = [...s.rows, s.unassigned, ...s.others];
+  const max = Math.max(0, ...all.map((r) => r.slots));
+
+  const head = `<thead><tr>
+      <th>담당자</th><th class="num">건수</th><th class="num">할당 slot</th>
+      <th class="num">소요 영업일</th><th>예상 소진일</th><th>기준선 대비</th><th>부하</th>
+    </tr></thead>`;
+
+  const rules = s.slot_rules.map((r) => `<li>${esc(r.label)} — <b>${r.slots} slot</b></li>`).join('');
+
+  const undef = s.undefined_rules.length ? `
+    <div class="bottlenecks">
+      <div class="bn-head">⚠ slot 규칙이 없는 의뢰 ${s.undefined_rules.length}건 — 총 소요에서 빠져 있습니다</div>
+      <ul>${s.undefined_rules.map((it) => `<li><b>${esc(it.model_name)}</b> · ${esc(it.cert_type)} · ${esc(it.status)}</li>`).join('')}</ul>
+    </div>` : '';
+
+  const warn = t.eta_warning ? `<p class="report-hint rs-warn">⚠ ${esc(t.eta_warning)}</p>` : '';
+
+  root.innerHTML = `
+    <div class="report-bar">
+      <span class="rs-title">QE 전체 리소스 현황 <small>(${esc(s.as_of)} 기준)</small></span>
+      <span class="bar-right"><button class="btn" data-rs-refresh="1">↻ 새로고침</button></span>
+    </div>
+    <p class="report-hint">대상 · 상태가 <b>예약대기 · 예약확정 · 진행중</b>인 의뢰 전체.
+      <b>1 slot = 1명의 1일 업무량</b>이라 할당 slot 합계가 그 담당자의 소요 영업일수입니다(주말·공휴일 제외).
+      여유/초과는 인증 담당 ${s.members.length}명 균등분담 기준선 대비 편차입니다.</p>
+    ${warn}
+    <div class="summary stats-summary">${chips}</div>
+    ${undef}
+    <div class="table-wrap">
+      <table class="stats-table rs-table">
+        ${head}
+        <tbody>
+          <tr class="rs-group"><td colspan="7">인증 담당 (${s.members.length}명)</td></tr>
+          ${s.rows.map((r) => resourceRow(r, max, t.baseline)).join('')}
+          <tr class="rs-group"><td colspan="7">미배정</td></tr>
+          ${resourceRow(s.unassigned, max, t.baseline)}
+          ${s.others.length ? `<tr class="rs-group"><td colspan="7">기타 테스터 (${s.others.length}명)</td></tr>
+          ${s.others.map((r) => resourceRow(r, max, t.baseline)).join('')}` : ''}
+        </tbody>
+      </table>
+    </div>
+    <div class="rs-rules">
+      <h4>Test Type별 소요 리소스 기준</h4>
+      <ul>${rules}</ul>
+      <p class="field-hint">공휴일은 <code>holidays.js</code> 상수 + <code>config.json</code> 의
+        <code>holidays.add</code> / <code>holidays.remove</code> 로 관리합니다.</p>
+    </div>`;
+}
+
+// 현황 보드 상단 한 줄 요약. 클릭하면 QE 리소스 탭으로 넘어간다.
+async function renderResourceStrip() {
+  const el = $('#resource-strip');
+  if (state.view !== 'board') { el.classList.add('hidden'); return; }
+  let s;
+  try { s = await api('/api/resources'); } catch { el.classList.add('hidden'); return; }
+
+  const t = s.totals;
+  if (!t.count) { el.classList.add('hidden'); return; }
+  // 4명 중 가장 무거운 담당자 (동률이면 앞선 사람)
+  const top = s.rows.reduce((a, r) => (r.slots > a.slots ? r : a), s.rows[0]);
+  el.innerHTML = `
+    <span class="rs-strip-k">QE 리소스</span>
+    <span>미완 <b>${t.slots} slot</b> (${t.count}건)</span>
+    <span>소진 예상 <b>${t.days || 0} 영업일</b>${t.eta ? ` · ${t.eta}` : ''}</span>
+    <span>최다 부하 <b>${esc(top.tester)} ${top.slots}일</b></span>
+    ${t.unassigned_slots ? `<span class="rs-strip-warn">미배정 ${t.unassigned_slots} slot</span>` : ''}
+    <span class="rs-strip-go">자세히 ▸</span>`;
+  el.classList.remove('hidden');
+}
+
+const VIEWS = ['board', 'schedule', 'calendar', 'daily', 'weekly', 'certstats', 'resources'];
+
+// 탭 버튼 클릭과 상단 요약 클릭이 같은 경로를 타도록 한 곳에 모았다.
+function switchView(view) {
+  if (!VIEWS.includes(view)) return;
+  state.view = view;
+  document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t.dataset.view === view));
+  render();
+}
+
 function render() {
   VIEWS.forEach((v) => $(`#view-${v}`).classList.toggle('hidden', state.view !== v));
   const isReport = state.view === 'daily' || state.view === 'weekly';
-  const isPanel = isReport || state.view === 'certstats';
+  const isPanel = isReport || state.view === 'certstats' || state.view === 'resources';
   $('#summary').classList.toggle('hidden', isPanel);
   $('#board-clock').classList.toggle('hidden', state.view !== 'board');
   document.querySelector('.filters').classList.toggle('hidden', isPanel);
   renderBottlenecks();
+  renderResourceStrip();
   if (state.view === 'board') renderBoard();
   else if (state.view === 'schedule') renderSchedule();
   else if (state.view === 'calendar') renderCalendar();
   else if (state.view === 'certstats') renderCertStats();
+  else if (state.view === 'resources') renderResources();
   else renderReport(state.view);
 }
 
@@ -898,12 +1073,7 @@ function bind() {
     localStorage.setItem('username', state.name);
   });
 
-  document.querySelectorAll('.tab').forEach((t) => t.addEventListener('click', () => {
-    document.querySelectorAll('.tab').forEach((x) => x.classList.remove('active'));
-    t.classList.add('active');
-    state.view = t.dataset.view;
-    render();
-  }));
+  document.querySelectorAll('.tab').forEach((t) => t.addEventListener('click', () => switchView(t.dataset.view)));
 
   ['#filter-cert', '#filter-status'].forEach((s) => $(s).addEventListener('change', load));
   let timer;
@@ -996,6 +1166,12 @@ function bind() {
       sendBtn.textContent = orig;
     });
   });
+
+  // Task 6. QE 리소스: 새로고침 · 상단 한 줄 요약 클릭 시 탭 이동
+  $('#view-resources').addEventListener('click', (e) => {
+    if (e.target.closest('[data-rs-refresh]')) renderResources();
+  });
+  $('#resource-strip').addEventListener('click', () => switchView('resources'));
 
   // 인증 통계: 주간/누적 전환 · 주 이동 · 엑셀 다운로드 · 새로고침
   $('#view-certstats').addEventListener('click', (e) => {

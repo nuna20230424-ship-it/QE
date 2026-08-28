@@ -3,5 +3,6 @@ data.db
 data.db-wal
 data.db-shm
 server.log
+server.err.log
 config.json
 backups/

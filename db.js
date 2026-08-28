@@ -1,6 +1,7 @@
 // 인증업무 의뢰 데이터를 보관하는 SQLite 데이터 계층 (이력·타임스탬프·통계 포함)
 const path = require('path');
 const Database = require('better-sqlite3');
+const holidays = require('./holidays');
 
 // 운영은 data.db 고정. DB_PATH는 스모크 테스트가 실 DB를 건드리지 않게 하는 용도.
 const db = new Database(process.env.DB_PATH || path.join(__dirname, 'data.db'));
@@ -26,6 +27,7 @@ db.exec(`
     verdict        TEXT,                     -- 판정 (Pass | Fail | Drop)
     started_date   TEXT,                     -- 시작일 (테스터 입력)
     completed_date TEXT,                     -- 완료일 (테스터 입력)
+    remaining_slots TEXT,                    -- 잔여 slot 수동 보정 (비우면 시작일 기준 자동 차감)
     confirmed_at   TEXT,                     -- 예약확정 시각
     started_at     TEXT,                     -- 진행시작 시각
     completed_at   TEXT,                     -- 완료 시각
@@ -56,7 +58,7 @@ db.exec(`
 
 // 기존 DB 호환: 신규 컬럼 누락 시 보강 (request_item 컬럼은 미사용 처리)
 const existingCols = db.prepare('PRAGMA table_info(requests)').all().map((c) => c.name);
-for (const name of ['test_type', 'test_purpose', 'round', 'verdict', 'started_date', 'completed_date', 'confirmed_at', 'started_at', 'completed_at']) {
+for (const name of ['test_type', 'test_purpose', 'round', 'verdict', 'started_date', 'completed_date', 'remaining_slots', 'confirmed_at', 'started_at', 'completed_at']) {
   if (!existingCols.includes(name)) db.exec(`ALTER TABLE requests ADD COLUMN ${name} TEXT`);
 }
 
@@ -69,6 +71,7 @@ const nowIso = () => new Date().toISOString();
 const ALLOWED = [
   'cert_type', 'test_type', 'test_purpose', 'round', 'model_name', 'fw_version', 'requester', 'note',
   'desired_date', 'scheduled_date', 'tester', 'status', 'progress', 'result', 'verdict', 'started_date', 'completed_date',
+  'remaining_slots',
 ];
 
 // 사람이 읽을 변경요약용 한글 라벨
@@ -77,6 +80,7 @@ const LABELS = {
   fw_version: 'FW', requester: '의뢰자', note: '비고', desired_date: '희망일정',
   scheduled_date: '예약일정', tester: '테스터', status: '상태', progress: '진행사항', result: '결과',
   verdict: '판정', started_date: '시작일', completed_date: '완료일',
+  remaining_slots: '잔여 slot',
 };
 
 // 의뢰가 "진행된" 것으로 볼 기간 판정용 대표 시작/종료일.
@@ -218,7 +222,8 @@ function bottlenecksOf({ roundThreshold = 5, staleDays = 14 } = {}) {
       round: r.round, fail: r.fail, last_date: r.last_date,
     }));
 
-  const limit = new Date(Date.now() - staleDays * 86400000).toISOString().slice(0, 10);
+  // 로컬 날짜 기준. UTC로 계산하면 KST 00:00~09:00에 하루 뒤처진다.
+  const limit = holidays.shiftDays(-staleDays);
   const stale = db.prepare(`
     SELECT id, model_name, cert_type, ${PURPOSE} AS test_purpose, round, status, tester,
            ${ACT_START} AS since,
@@ -269,15 +274,16 @@ module.exports = {
       verdict: d.verdict || '',
       started_date: d.started_date || '',
       completed_date: d.completed_date || '',
+      remaining_slots: d.remaining_slots || '',
       confirmed_at: '', started_at: '', completed_at: '',
       created_at: ts, updated_at: ts,
     };
     const info = db.prepare(`INSERT INTO requests
       (cert_type, test_type, test_purpose, round, model_name, fw_version, requester, note, desired_date,
-       scheduled_date, tester, status, progress, result, verdict, started_date, completed_date, confirmed_at, started_at, completed_at, created_at, updated_at)
+       scheduled_date, tester, status, progress, result, verdict, started_date, completed_date, remaining_slots, confirmed_at, started_at, completed_at, created_at, updated_at)
       VALUES
       (@cert_type, @test_type, @test_purpose, @round, @model_name, @fw_version, @requester, @note, @desired_date,
-       @scheduled_date, @tester, @status, @progress, @result, @verdict, @started_date, @completed_date, @confirmed_at, @started_at, @completed_at, @created_at, @updated_at)`)
+       @scheduled_date, @tester, @status, @progress, @result, @verdict, @started_date, @completed_date, @remaining_slots, @confirmed_at, @started_at, @completed_at, @created_at, @updated_at)`)
       .run(row);
     logHistory(info.lastInsertRowid, actor, '등록', `${d.cert_type} / ${d.model_name}`);
     return this.get(info.lastInsertRowid);
@@ -306,7 +312,7 @@ module.exports = {
       model_name=@model_name, fw_version=@fw_version,
       requester=@requester, note=@note, desired_date=@desired_date, scheduled_date=@scheduled_date,
       tester=@tester, status=@status, progress=@progress, result=@result,
-      verdict=@verdict, started_date=@started_date, completed_date=@completed_date,
+      verdict=@verdict, started_date=@started_date, completed_date=@completed_date, remaining_slots=@remaining_slots,
       confirmed_at=@confirmed_at, started_at=@started_at, completed_at=@completed_at, updated_at=@updated_at
       WHERE id=@id`).run(merged);
 
@@ -329,6 +335,20 @@ module.exports = {
   // 파일 핸들 해제. 테스트가 임시 DB를 지우려면 필요하다(Windows는 열린 파일 삭제를 막는다).
   close() {
     db.close();
+  },
+
+  // Task 6. 리소스 산정 대상 — 아직 끝나지 않은 의뢰(예약대기·예약확정·진행중).
+  // 완료·보류·중단은 담당자의 남은 업무량이 아니므로 제외한다.
+  // 정렬은 대표 일정 순(미정은 뒤로)이라 화면에서 임박한 건이 위에 온다.
+  openRequests() {
+    return db.prepare(`
+      SELECT id, cert_type, test_type, test_purpose, round, model_name, fw_version,
+             requester, tester, status, desired_date, scheduled_date, started_date, remaining_slots, created_at,
+             ${ACT_START} AS plan_date
+      FROM requests
+      WHERE status IN ('예약대기', '예약확정', '진행중')
+      ORDER BY (plan_date IS NULL), plan_date, id
+    `).all();
   },
 
   // 한 번이라도 입력된 모델명 목록. DISTINCT로 중복을 제거해 콤보박스에 그대로 쓴다.
@@ -382,7 +402,9 @@ module.exports = {
     const testerLoad = {}; // 미완료(완료/보류 제외) 기준 테스터 부하
     let overdue = 0;
     const leadDays = [];
-    const today = nowIso().slice(0, 10);
+    // 지연(overdue) 판정 기준일. 로컬 날짜여야 한다 — UTC면 KST 00:00~09:00에 하루 뒤처져
+    // 어제 지난 예약확정일이 아직 지연으로 잡히지 않는다.
+    const today = holidays.today();
 
     for (const r of all) {
       byStatus[r.status] = (byStatus[r.status] || 0) + 1;

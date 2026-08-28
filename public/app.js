@@ -14,6 +14,7 @@ const state = {
   // 인증 통계 뷰: 주간(월~금) / 전체 누적 전환, weekOffset 0 = 이번 주
   certStats: { mode: 'week', weekOffset: 0, data: null, range: null },
   hiddenRequesters: [], // 의뢰자 제안에서 숨긴 이름 (의뢰 레코드는 보존)
+  resources: null,      // Task 6. QE 전체 리소스 현황 (/api/resources 응답)
 };
 
 const BOARD_LIMIT = 5; // 보드 칼럼당 기본 노출 카드 수
@@ -648,19 +649,484 @@ async function renderBottlenecks() {
   el.classList.remove('hidden');
 }
 
-const VIEWS = ['board', 'schedule', 'calendar', 'daily', 'weekly', 'certstats'];
+// ---- Task 6. QE 전체 리소스 현황 ----
+// 1 slot = 1명의 1일 업무량이라 담당자에게 쌓인 slot 합계가 곧 그 사람의 소요 영업일수다.
+// 기간을 자르지 않고 미완 물량 전체를 보되, 여유/초과는 4명 균등분담 기준선 대비로 표시한다.
+const etaText = (r) => (r.eta ? `${r.eta}${r.eta_warning ? ' ⚠' : ''}` : '—');
+
+// 1인 주간 가용(5 slot) 대비 여유/초과. 자동 할당이 채워 넣을 여유가 얼마인지 보는 칼럼이다.
+function slackCell(r) {
+  if (r.capacity === null) return '<span class="rs-dim">—</span>';
+  if (r.over > 0) return `<span class="rs-over">${r.over} slot 초과</span><small class="rs-sub">다음 주로 밀림</small>`;
+  if (r.free > 0) return `<span class="rs-slack">${r.free} slot 여유</span><small class="rs-sub">배정 가능</small>`;
+  return '<span class="rs-even">가득</span>';
+}
+
+// 가용 100% 눈금이 찍힌 사용률 막대. 100%를 넘으면 넘친 만큼 빨강으로 이어 붙인다.
+function usageBar(usagePct, label) {
+  const inside = Math.min(100, Math.max(0, usagePct));
+  const over = Math.max(0, Math.min(100, usagePct - 100));   // 200%까지만 눈에 보이게
+  return `<span class="load-bar" title="${label || `가용의 ${usagePct}%`}">
+    <i class="lb-fill" style="width:${inside / 2}%"></i>
+    ${over > 0 ? `<i class="lb-fill lb-over" style="width:${over / 2}%"></i>` : ''}
+    <i class="lb-mark" style="left:50%" title="가용 100%"></i>
+  </span><small class="rs-sub">${usagePct}%</small>`;
+}
+
+// 일별 가용 리소스 현황. 주 단위로 묶어 소계를 얹는다.
+// pool = 'cert'(인증 담당, 미배정 흡수) | 'other'(기타, 별도 리소스)
+function dailyPlanTable(d, pool) {
+  if (!d || !d.days.length) return '<p class="col-empty">일별 현황을 만들 영업일이 없습니다.</p>';
+
+  const dayRow = (x) => {
+    const cells = x.lane.map((a) => `<span class="dp-chip ${a.pending ? 'dp-pending' : ''}"
+      title="${esc(a.tester)} · ${esc(a.model_name)}${a.pending ? ' (배정 예정)' : ''}">${esc(a.tester)}</span>`).join('');
+    const idle = x.idle.map((n) => `<span class="dp-chip dp-idle" title="${esc(n)} — 이 날 비어 있음">${esc(n)}</span>`).join('');
+    return `
+      <tr class="${x.free === x.capacity ? 'dp-empty-day' : ''}">
+        <td>${esc(x.date)} <small class="rs-dim">(${esc(x.weekday)})</small></td>
+        <td class="num">${x.capacity}</td>
+        <td class="num">${x.assigned}</td>
+        <td class="num ${x.pending ? 'dp-pend-num' : ''}">${x.pending || '—'}</td>
+        <td class="num"><b class="${x.free ? 'rs-slack' : ''}">${x.free}</b></td>
+        <td>${usageBar(x.usage_pct)}</td>
+        <td class="dp-lane">${cells}${idle}</td>
+      </tr>`;
+  };
+
+  const body = d.weeks.map((w) => {
+    const rows = d.days.filter((x) => x.date >= w.from && x.date <= w.to).map(dayRow).join('');
+    return `
+      <tr class="rs-group"><td colspan="7">${esc(w.label)} · 영업일 ${w.business_days}일 · 가용 ${w.capacity} slot
+        · 사용 ${w.used} (${w.usage_pct}%) · 여유 <b>${w.free} slot</b>${w.pending ? ` · 배정예정 ${w.pending}` : ''}</td></tr>
+      ${rows}`;
+  }).join('');
+
+  return `
+    <div class="table-wrap">
+      <table class="stats-table dp-table">
+        <thead><tr>
+          <th>날짜</th><th class="num">가용</th><th class="num">배정</th><th class="num">배정예정</th>
+          <th class="num">여유</th><th>사용률</th><th>담당 배치 / 여유 인원</th>
+        </tr></thead>
+        <tbody>${body}</tbody>
+      </table>
+    </div>
+    <p class="field-hint">한 담당자는 하루 <b>1 slot</b>만 쓰므로 의뢰를 담당자별로 줄 세워 영업일에 이어 붙였습니다.
+      시작은 <code>max(대표 일정, 기준일)</code>입니다. 흐린 이름은 그 날 <b>비어 있는 담당자</b>입니다.
+      ${pool === 'cert'
+        ? '<b class="dp-pend-num">배정예정</b>은 담당자 미정 건을 가장 빨리 비는 담당자 자리에 채워 본 <b>자동 할당 미리보기</b>입니다.'
+        : '기타 테스터는 <b>별도 리소스</b>라 자동 할당 대상이 아니므로 배정예정이 없습니다.'}
+      ${d.overflow ? `조회 구간(${d.horizon} 영업일)을 넘어간 물량이 <b>${d.overflow} slot</b> 있습니다.` : ''}
+      ${d.excluded.slots ? `<b class="rs-over">이 풀에 속하지 않은 테스터(${d.excluded.testers.map(esc).join(' · ')})의
+        ${d.excluded.slots} slot이 배치되지 않았습니다 — 집계 오류입니다.</b>` : ''}</p>`;
+}
+
+// 담당자 한 명의 건별 상세 (접힌 상태로 두고 필요할 때만 펼친다)
+function resourceItems(items) {
+  if (!items.length) return '<p class="col-empty">배정된 미완 의뢰가 없습니다.</p>';
+  const SRC_TAG = { manual: '수동', auto: '자동', none: '미착수' };
+  const body = items.map((it) => `
+    <tr>
+      <td>${esc(it.plan_date || '미정')}</td>
+      <td><span class="badge badge-${certClass(it.cert_type)}">${esc(it.cert_type)}</span></td>
+      <td>${esc(it.test_type || '—')}</td>
+      <td><strong>${esc(it.model_name)}</strong></td>
+      <td>${it.round ? `${esc(it.round)}차` : '—'}</td>
+      <td>${esc(it.status)}</td>
+      <td>${esc(it.rule)}</td>
+      <td class="num">${it.plan_slots}</td>
+      <td class="num">${it.consumed || '—'}</td>
+      <td class="num"><b>${it.slots}</b></td>
+      <td>
+        <span class="pg-bar" title="${it.progress_pct}% 진행"><i style="width:${Math.min(100, it.progress_pct)}%"></i></span>
+        <small class="rs-sub">${it.progress_pct}% · ${SRC_TAG[it.progress_source] || ''}${
+          it.overrun_days ? ` · <b class="rs-over">${it.overrun_days}일 초과</b>` : ''}</small>
+      </td>
+    </tr>`).join('');
+  return `
+    <div class="table-wrap">
+    <table class="stats-table rs-items">
+      <thead><tr>
+        <th>일정</th><th>인증종류</th><th>Test type</th><th>모델명</th>
+        <th>차수</th><th>상태</th><th>적용 규칙</th>
+        <th class="num">계획</th><th class="num">소화</th><th class="num">잔여</th><th>진행률</th>
+      </tr></thead>
+      <tbody>${body}</tbody>
+    </table>
+    </div>`;
+}
+
+function resourceRow(r) {
+  const cls = r.group === 'unassigned' ? 'rs-unassigned' : '';
+  return `
+    <tr class="${cls}">
+      <td><b>${esc(r.tester)}</b>${r.group === 'unassigned' ? '<span class="rs-tag">배정 필요</span>' : ''}</td>
+      <td class="num">${r.count}</td>
+      <td class="num"><b>${r.slots}</b>${(() => {
+        const plan = r.items.reduce((a, i) => a + i.plan_slots, 0);
+        return plan > r.slots ? `<small class="rs-sub">계획 ${plan}</small>` : '';
+      })()}</td>
+      <td class="num">${r.capacity === null ? '—' : r.capacity}</td>
+      <td class="num">${r.days ? `${r.days}일` : '—'}</td>
+      <td>${r.group === 'unassigned' ? '<span class="rs-dim">담당자 미정</span>' : etaText(r)}</td>
+      <td>${slackCell(r)}</td>
+      <td>${r.usage_pct === null ? '<span class="rs-dim">—</span>' : usageBar(r.usage_pct)}</td>
+    </tr>
+    <tr class="rs-detail-row">
+      <td colspan="8">
+        <details><summary>${esc(r.tester)} 건별 상세 ${r.count}건</summary>${resourceItems(r.items)}</details>
+      </td>
+    </tr>`;
+}
+
+// ---- 1. 실시간 리소스 가동률 ----
+// 팀 전체의 1일 총 가용 slot 대비, 오늘 담당자를 점유 중인 확정 업무(진행중·예약확정) 비율.
+// 예약대기는 아직 확정 전이라 가동률에서 빼고 별도로 알린다.
+function utilizationPanel(u, compact) {
+  // level은 서버가 정한다 — 계획 수요가 가용을 넘겼거나(과부하) 여유가 0이면 over(빨강).
+  const lvl = u.level;
+  // 막대는 100%를 절반 지점에 두고 그린다. 계획 수요가 100%를 넘으면 그만큼 빨강으로 이어 붙인다.
+  const scale = u.demand_pct > 100 ? Math.min(200, u.demand_pct) : 100;
+  const bar = (p) => Math.max(0, Math.min(100, (p / scale) * 100));
+  const over = u.demand_pct > 100;
+  return `
+    <div class="util ${compact ? 'util-compact' : ''} util-${lvl}">
+      <div class="util-main">
+        <div class="util-head">
+          <span class="util-title">실시간 리소스 가동률</span>
+          <small>${esc(u.date)} 기준 · 1일 총 가용 ${u.capacity} slot</small>
+          ${u.as_of_is_business_day ? '' : `<span class="util-note">오늘은 휴무${
+            u.as_of_holiday ? `(${esc(u.as_of_holiday)})` : ''} — 다음 영업일 기준</span>`}
+          ${over ? `<span class="util-tag">계획 과부하 ${u.demand_pct}%</span>` : ''}
+        </div>
+        ${u.no_plan_date.count ? `<div class="util-caveat">⚠ 계획 일정이 비어 있는 확정 업무
+          <b>${u.no_plan_date.count}건 (${u.no_plan_date.slots} slot)</b>이 기준일로 계상됐습니다 —
+          일정을 채우면 수요가 실제 날짜로 흩어집니다.</div>` : ''}
+        <div class="util-track">
+          <i class="ut-run" style="width:${bar(u.usage_pct)}%"></i>
+          ${over ? `<i class="ut-over" style="width:${bar(u.demand_pct) - bar(100)}%;left:${bar(100)}%"></i>` : ''}
+          ${scale > 100 ? `<i class="ut-mark" style="left:${bar(100)}%" title="가용 100%"></i>` : ''}
+        </div>
+        <div class="util-legend">
+          <b>${u.usage_pct}%</b> 가동 · <b>${u.used}</b>/${u.capacity} slot 사용 중
+          ${u.busy.length ? `<span class="util-names">${u.busy.map(esc).join(' · ')}</span>` : ''}
+          ${over ? `<span class="util-over-t">계획상 ${u.demand} slot 필요 — ${u.demand_over} slot 초과${
+            u.doubled.length ? ` (${u.doubled.map(esc).join(' · ')} 중복 배정)` : ''}</span>` : ''}
+          ${u.waiting ? `<span class="util-wait">예약대기 ${u.waiting}건 대기</span>` : ''}
+        </div>
+      </div>
+      <div class="util-free">
+        <div class="uf-k">잔여 가용</div>
+        <div class="uf-v">${u.free}<small>slot</small></div>
+        <div class="uf-sub">${u.idle.length ? `${u.idle.map(esc).join(' · ')} 여유` : '여유 인원 없음'}</div>
+      </div>
+      ${u.week ? `
+      <div class="util-week">
+        <div class="uf-k">이번 주 ${esc(u.week.label)}</div>
+        <div class="uf-v2">${u.week.usage_pct}<small>%</small></div>
+        <div class="uf-sub">가용 ${u.week.capacity} · 여유 <b>${u.week.free} slot</b> (영업일 ${u.week.business_days}일)</div>
+      </div>` : ''}
+      ${compact ? '<div class="util-go">QE 리소스 탭 ▸</div>' : ''}
+    </div>`;
+}
+
+// ---- 2. 팀원별 업무 부하도 (신호등) ----
+const LEVEL_LABEL = { safe: '안정', warn: '주의', over: '초과' };
+
+function workloadPanel(s) {
+  const max = Math.max(s.week_business_days, ...s.rows.map((r) => r.slots));
+  const bars = s.rows.map((r) => {
+    const w = max > 0 ? Math.round((r.slots / max) * 100) : 0;
+    const capMark = max > 0 ? Math.round((r.capacity / max) * 100) : 0;
+    return `
+      <div class="wl-row">
+        <div class="wl-name"><i class="wl-dot wl-${r.level}"></i>${esc(r.tester)}</div>
+        <div class="wl-bar"><i class="wl-fill wl-${r.level}" style="width:${w}%"></i>
+          <i class="wl-cap" style="left:${capMark}%" title="주간 가용 ${r.capacity} slot"></i></div>
+        <div class="wl-num"><b>${r.slots}</b><small>/${r.capacity} slot</small></div>
+        <div class="wl-pct wl-t-${r.level}">${r.usage_pct}% · ${LEVEL_LABEL[r.level]}</div>
+        <div class="wl-note">${r.over ? `${r.over} slot 초과` : `${r.free} slot 여유`}</div>
+      </div>`;
+  }).join('');
+  return `
+    <div class="wl">${bars}</div>
+    <p class="field-hint">신호등 — <b class="wl-t-safe">안정</b> 가용의 ${s.load_levels.safe}% 이하 ·
+      <b class="wl-t-warn">주의</b> ${s.load_levels.warn}% 이하(가용 한도 임박) ·
+      <b class="wl-t-over">초과</b> ${s.load_levels.warn}% 초과(초과 할당).
+      기준은 1인 주간 가용 <b>${s.week_business_days} slot</b>이고, 눈금이 그 위치입니다.</p>`;
+}
+
+// ---- 3. 진행 상태별 파이프라인 ----
+const STAGE_CLASS = { 예약대기: 'st-wait', 예약확정: 'st-fixed', 진행중: 'st-prog' };
+
+function pipelinePanel(p) {
+  const cards = p.stages.map((st) => `
+    <div class="pl-card ${STAGE_CLASS[st.status] || ''}">
+      <div class="pl-k">${esc(st.status)}</div>
+      <div class="pl-v">${st.count}<small>건</small></div>
+      <div class="pl-slots">${st.slots} slot</div>
+      ${st.unassigned ? `<div class="pl-sub">담당 미정 ${st.unassigned}건</div>` : '<div class="pl-sub">담당 배정 완료</div>'}
+    </div>`).join('');
+
+  const waiting = p.longest_waiting.length ? p.longest_waiting.map((w) => `
+    <li>
+      <span class="lw-days ${w.waiting_days >= 14 ? 'lw-hot' : ''}">${w.waiting_days ?? '?'}일 대기</span>
+      <b>${esc(w.model_name)}</b> · ${esc(w.cert_type)} · ${w.slots} slot
+      <span class="bn-sub">등록 ${esc(w.created_date || '—')}
+        ${w.desired_date ? ` · 희망 ${esc(w.desired_date)}${w.desired_overdue ? ' (경과)' : ''}` : ''}
+        ${w.tester ? ` · ${esc(w.tester)}` : ' · 담당 미정'}</span>
+    </li>`).join('') : '<li class="rs-dim">예약대기 건이 없습니다.</li>';
+
+  return `
+    <div class="pl">${cards}</div>
+    <div class="lw">
+      <h5>가장 오래 대기 중 — 최우선 배정 필요</h5>
+      <ul>${waiting}</ul>
+    </div>`;
+}
+
+// ---- 4. 인증 타입별 점유 현황 (도넛) ----
+const DONUT_COLORS = ['#2f6df6', '#e8a317', '#2faa61', '#6b46c1', '#8a93a3'];
+
+function typeDonut(dist) {
+  if (!dist.length) return '<p class="col-empty">점유 중인 인증이 없습니다.</p>';
+  const R = 60, C = 2 * Math.PI * R;
+  let acc = 0;
+  const arcs = dist.map((t, i) => {
+    const len = (t.share / 100) * C;
+    const seg = `<circle class="dn-seg" r="${R}" cx="90" cy="90" fill="none"
+      stroke="${DONUT_COLORS[i % DONUT_COLORS.length]}" stroke-width="26"
+      stroke-dasharray="${len} ${C - len}" stroke-dashoffset="${-acc}"
+      transform="rotate(-90 90 90)"><title>${esc(t.label)} ${t.share}%</title></circle>`;
+    acc += len;
+    return seg;
+  }).join('');
+  const total = dist.reduce((a, t) => a + t.slots, 0);
+  const rows = dist.map((t, i) => `
+    <tr>
+      <td><i class="dn-key" style="background:${DONUT_COLORS[i % DONUT_COLORS.length]}"></i>${esc(t.label)}</td>
+      <td class="num">${t.unit_slots}</td>
+      <td class="num">${t.count}</td>
+      <td class="num"><b>${t.slots}</b></td>
+      <td class="num">${t.share}%</td>
+    </tr>`).join('');
+  return `
+    <div class="dn-wrap">
+      <svg class="dn" viewBox="0 0 180 180" role="img" aria-label="인증 타입별 리소스 점유 비율">
+        <circle r="${R}" cx="90" cy="90" fill="none" stroke="#eef2f8" stroke-width="26"></circle>
+        ${arcs}
+        <text x="90" y="86" class="dn-t1">${total}</text>
+        <text x="90" y="104" class="dn-t2">slot</text>
+      </svg>
+      <div class="table-wrap dn-table">
+        <table class="stats-table">
+          <thead><tr><th>Test Type</th><th class="num">건당</th><th class="num">건수</th>
+            <th class="num">slot</th><th class="num">비중</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    </div>`;
+}
+
+// ---- 5. 스마트 알림 위젯 ----
+function alertsPanel(a) {
+  if (!a.count) return '<p class="col-empty">지금 개입이 필요한 리스크가 없습니다.</p>';
+  const group = (title, cls, body) => (body ? `<div class="sa-group ${cls}"><h5>${title}</h5><ul>${body}</ul></div>` : '');
+
+  const over = a.overloaded.map((o) => `
+    <li><span class="sa-badge sa-red">초과</span>
+      <b>${esc(o.tester)}</b> ${o.slots}/${o.capacity} slot · <b>${o.usage_pct}%</b>
+      <span class="bn-sub">주간 가용을 넘겨 다음 주로 밀립니다</span></li>`).join('');
+
+  const conf = a.conflicts.map((c) => `
+    <li><span class="sa-badge sa-red">충돌</span>
+      <b>${esc(c.tester)}</b> · ${esc(c.from)} ~ ${esc(c.to)} <b>${c.overlap_days}일 중복</b>
+      <span class="bn-sub">${c.items.map((i) => `${esc(i.model_name)}(${esc(i.cert_type)} ${i.slots}slot)`).join(' ↔ ')}</span></li>`).join('');
+
+  const del = a.delays.map((d) => `
+    <li><span class="sa-badge sa-amber">밀림</span>
+      <b>${esc(d.model_name)}</b> · ${esc(d.tester)} · <b>${d.delay_days}일</b> 지연
+      <span class="bn-sub">계획 ${esc(d.declared_date)} → 실제 착수 ${esc(d.actual_date)}${d.pending ? ' (배정예정)' : ''}</span></li>`).join('');
+
+  const orun = a.overrun.map((o) => `
+    <li><span class="sa-badge sa-amber">초과진행</span>
+      <b>${esc(o.model_name)}</b> · ${esc(o.tester || '담당 미정')} · 예정 ${o.plan_slots}일을 <b>${o.overrun_days}일</b> 넘김
+      <span class="bn-sub">${esc(o.started_date)} 착수 · ${o.consumed}일 소화 — 잔여를 1 slot으로 붙잡아 두고 있습니다</span></li>`).join('');
+
+  const rel = a.releases.map((r) => `
+    <li><span class="sa-badge sa-green">D-${r.d_day}</span>
+      <b>${esc(r.tester)}</b> 리소스 확보 예정 · ${esc(r.date)}
+      <span class="bn-sub">${esc(r.model_name)}(${esc(r.rule)} ${r.slots} slot) 종료</span></li>`).join('');
+
+  return `
+    <div class="sa">
+      ${group('리소스 초과 할당', 'sa-c-red', over)}
+      ${group('리소스 충돌 — 같은 담당자 일정 중복', 'sa-c-red', conf)}
+      ${group('예정 초과 진행 — 계획 소요를 넘겨 진행 중', 'sa-c-amber', orun)}
+      ${group('일정 밀림 — 계획일보다 늦게 착수', 'sa-c-amber', del)}
+      ${group('일정 여유 — 곧 리소스가 확보됩니다', 'sa-c-green', rel)}
+    </div>`;
+}
+
+async function renderResources() {
+  const root = $('#view-resources');
+  root.innerHTML = '<p class="col-empty">불러오는 중…</p>';
+
+  let s;
+  try { s = await api('/api/resources'); }
+  catch (err) { root.innerHTML = `<p class="col-empty">리소스 현황을 불러오지 못했습니다: ${esc(err.message)}</p>`; return; }
+  state.resources = s;
+
+  const t = s.totals;
+  const ot = s.others_totals;
+  const hasOthers = s.other_members.length > 0;
+
+  // 풀 하나의 요약 카드. 인증 담당과 기타는 별도 리소스라 가용·사용률을 섞지 않는다.
+  const poolChips = (p, label, withUnassigned) => {
+    const over = p.over_slots > 0;
+    return [
+      { k: `1주 가용 (100%)`, v: `${p.week_capacity} slot`, sub: `${label} ${p.headcount}명 × ${s.week_business_days}일` },
+      { k: '잔여 소요', v: `${p.slots} slot`, sub: `${p.count}건 · 계획 ${p.plan_slots} 중 ${p.consumed_slots} 소화` },
+      { k: '진행률', v: `${p.progress_pct}%`, sub: '계획 소요 대비 소화분' },
+      { k: '사용률', v: `${p.usage_pct}%`, sub: '1주 가용 대비', warn: over },
+      over
+        ? { k: '초과', v: `${p.over_pct}%`, sub: `${p.over_slots} slot 넘침`, warn: true }
+        : { k: '여유', v: `${p.free_pct}%`, sub: `${p.free_slots} slot 배정 가능` },
+      { k: '소요 주수', v: `${p.weeks_needed}주`, sub: `1일 가용 ${p.daily_capacity} slot` },
+      ...(withUnassigned
+        ? [{ k: '미배정', v: `${p.unassigned_slots} slot`, sub: `1주 가용의 ${p.unassigned_pct}%`, warn: p.unassigned_slots > 0 }]
+        : []),
+      { k: '소진 예상', v: p.days ? `${p.days} 영업일` : '—', sub: '주말·공휴일 제외' },
+      { k: '소진 완료일', v: p.eta || '—', sub: '전 인원 투입 기준', warn: !!p.eta_warning },
+    ].map((c) => `<div class="sumcard ${c.warn ? 'warn' : ''}">
+        <div class="k">${c.k}</div><div class="v">${c.v}</div><div class="sub">${c.sub}</div></div>`).join('');
+  };
+
+  const head = `<thead><tr>
+      <th>담당자</th><th class="num">건수</th><th class="num">할당 slot</th><th class="num">주간 가용</th>
+      <th class="num">소요 영업일</th><th>예상 소진일</th><th>여유 / 초과</th><th>가용 대비 사용률</th>
+    </tr></thead>`;
+
+  const rules = s.slot_rules.map((r) => `<li>${esc(r.label)} — <b>${r.slots} slot</b></li>`).join('');
+
+  const undef = s.undefined_rules.length ? `
+    <div class="bottlenecks">
+      <div class="bn-head">⚠ slot 규칙이 없는 의뢰 ${s.undefined_rules.length}건 — 총 소요에서 빠져 있습니다</div>
+      <ul>${s.undefined_rules.map((it) => `<li><b>${esc(it.model_name)}</b> · ${esc(it.cert_type)} · ${esc(it.status)}</li>`).join('')}</ul>
+    </div>` : '';
+
+  const warn = t.eta_warning ? `<p class="report-hint rs-warn">⚠ ${esc(t.eta_warning)}</p>` : '';
+
+  root.innerHTML = `
+    <div class="report-bar">
+      <span class="rs-title">QE 전체 리소스 현황 <small>(${esc(s.as_of)} 기준)</small></span>
+      <span class="bar-right"><button class="btn" data-rs-refresh="1">↻ 새로고침</button></span>
+    </div>
+    <p class="report-hint">대상 · 상태가 <b>예약대기 · 예약확정 · 진행중</b>인 의뢰 전체 (미완 ${s.overall.count}건 · ${s.overall.slots} slot).
+      <b>인증 담당</b>과 <b>기타 테스터</b>는 <b>별도 리소스</b>로 관리하므로 가용·사용률을 섞지 않습니다.
+      <b>1 slot = 1명의 1일 업무량</b>이라 할당 slot 합계가 그 담당자의 소요 영업일수입니다(주말·공휴일 제외).</p>
+    ${warn}
+
+    <h3 class="rs-section">1 · 실시간 리소스 가동률</h3>
+    ${utilizationPanel(s.utilization, false)}
+    <p class="field-hint">가동률은 <b>확정된 업무(진행중 · 예약확정)</b>만 셉니다. 예약대기는 아직 확정 전이라 제외하고
+      아래 파이프라인에서 별도로 봅니다. 잔여 가용은 <b>신규 의뢰를 즉시 수용할 수 있는 slot</b>입니다.</p>
+
+    <h3 class="rs-section">2 · 팀원별 업무 부하도 <small>${esc(s.members.join(' · '))}</small></h3>
+    ${workloadPanel(s)}
+
+    <h3 class="rs-section">3 · 진행 상태별 파이프라인</h3>
+    ${pipelinePanel(s.pipeline)}
+
+    <h3 class="rs-section">4 · 인증 타입별 점유 현황</h3>
+    ${typeDonut(s.type_distribution)}
+
+    <h3 class="rs-section">5 · 스마트 알림 ${s.alerts.count ? `<small>${s.alerts.count}건</small>` : ''}</h3>
+    ${alertsPanel(s.alerts)}
+
+    <h3 class="rs-section">인증 담당 리소스 상세 <small>주간 가용 기준</small></h3>
+    <div class="summary stats-summary">${poolChips(t, '인증 담당', true)}</div>
+    ${undef}
+
+    <h4 class="rs-sub-section">일별 가용 현황 <small>향후 ${s.daily.horizon} 영업일</small></h4>
+    ${dailyPlanTable(s.daily, 'cert')}
+
+    <h4 class="rs-sub-section">담당자별 리소스 할당</h4>
+    <div class="table-wrap">
+      <table class="stats-table rs-table">
+        ${head}
+        <tbody>
+          <tr class="rs-group"><td colspan="8">인증 담당 (${s.members.length}명)</td></tr>
+          ${s.rows.map((r) => resourceRow(r)).join('')}
+          <tr class="rs-group"><td colspan="8">미배정 — 자동 할당 대상</td></tr>
+          ${resourceRow(s.unassigned)}
+        </tbody>
+      </table>
+    </div>
+
+    ${hasOthers ? `
+    <h3 class="rs-section">기타 테스터 리소스 <small>${esc(s.other_members.join(' · '))} — 별도 관리</small></h3>
+    <div class="summary stats-summary">${poolChips(ot, '기타', false)}</div>
+
+    <h4 class="rs-sub-section">일별 가용 현황 <small>향후 ${s.others_daily.horizon} 영업일</small></h4>
+    ${dailyPlanTable(s.others_daily, 'other')}
+
+    <h4 class="rs-sub-section">세부내용 · 담당자별 리소스 할당</h4>
+    <div class="table-wrap">
+      <table class="stats-table rs-table">
+        ${head}
+        <tbody>
+          <tr class="rs-group"><td colspan="8">기타 테스터 (${s.other_members.length}명)</td></tr>
+          ${s.others.map((r) => resourceRow(r)).join('')}
+        </tbody>
+      </table>
+    </div>` : ''}
+
+    <div class="rs-rules">
+      <h4>Test Type별 소요 리소스 기준</h4>
+      <ul>${rules}</ul>
+      <p class="field-hint">공휴일은 <code>holidays.js</code> 상수 + <code>config.json</code> 의
+        <code>holidays.add</code> / <code>holidays.remove</code> 로 관리합니다.</p>
+    </div>`;
+}
+
+// 메인(현황 보드) 상단에는 실시간 리소스 가동률만 둔다.
+// 팀원별 부하·파이프라인·타입 점유·알림은 QE 리소스 탭에서 본다.
+async function renderResourceStrip() {
+  const el = $('#resource-strip');
+  if (state.view !== 'board') { el.classList.add('hidden'); return; }
+  let s;
+  try { s = await api('/api/resources?days=5'); } catch { el.classList.add('hidden'); return; }
+
+  el.innerHTML = utilizationPanel(s.utilization, true);
+  el.classList.remove('hidden');
+}
+
+const VIEWS = ['board', 'schedule', 'calendar', 'daily', 'weekly', 'certstats', 'resources'];
+
+// 탭 버튼 클릭과 상단 요약 클릭이 같은 경로를 타도록 한 곳에 모았다.
+function switchView(view) {
+  if (!VIEWS.includes(view)) return;
+  state.view = view;
+  document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t.dataset.view === view));
+  render();
+}
+
 function render() {
   VIEWS.forEach((v) => $(`#view-${v}`).classList.toggle('hidden', state.view !== v));
   const isReport = state.view === 'daily' || state.view === 'weekly';
-  const isPanel = isReport || state.view === 'certstats';
+  const isPanel = isReport || state.view === 'certstats' || state.view === 'resources';
   $('#summary').classList.toggle('hidden', isPanel);
   $('#board-clock').classList.toggle('hidden', state.view !== 'board');
   document.querySelector('.filters').classList.toggle('hidden', isPanel);
   renderBottlenecks();
+  renderResourceStrip();
   if (state.view === 'board') renderBoard();
   else if (state.view === 'schedule') renderSchedule();
   else if (state.view === 'calendar') renderCalendar();
   else if (state.view === 'certstats') renderCertStats();
+  else if (state.view === 'resources') renderResources();
   else renderReport(state.view);
 }
 
@@ -671,6 +1137,7 @@ const F = {
   model_name: '#f-model_name', fw_version: '#f-fw_version',
   desired_date: '#f-desired_date', note: '#f-note',
   scheduled_date: '#f-scheduled_date', started_date: '#f-started_date', completed_date: '#f-completed_date',
+  remaining_slots: '#f-remaining_slots',
   status: '#f-status', verdict: '#f-verdict', progress: '#f-progress', result: '#f-result',
 };
 const NEW_DEFAULTS = { cert_type: 'Netflix NTS', test_type: 'IR', test_purpose: '3PL', status: '예약대기' };
@@ -898,12 +1365,7 @@ function bind() {
     localStorage.setItem('username', state.name);
   });
 
-  document.querySelectorAll('.tab').forEach((t) => t.addEventListener('click', () => {
-    document.querySelectorAll('.tab').forEach((x) => x.classList.remove('active'));
-    t.classList.add('active');
-    state.view = t.dataset.view;
-    render();
-  }));
+  document.querySelectorAll('.tab').forEach((t) => t.addEventListener('click', () => switchView(t.dataset.view)));
 
   ['#filter-cert', '#filter-status'].forEach((s) => $(s).addEventListener('change', load));
   let timer;
@@ -996,6 +1458,12 @@ function bind() {
       sendBtn.textContent = orig;
     });
   });
+
+  // Task 6. QE 리소스: 새로고침 · 상단 한 줄 요약 클릭 시 탭 이동
+  $('#view-resources').addEventListener('click', (e) => {
+    if (e.target.closest('[data-rs-refresh]')) renderResources();
+  });
+  $('#resource-strip').addEventListener('click', () => switchView('resources'));
 
   // 인증 통계: 주간/누적 전환 · 주 이동 · 엑셀 다운로드 · 새로고침
   $('#view-certstats').addEventListener('click', (e) => {

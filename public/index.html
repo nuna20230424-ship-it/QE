@@ -33,6 +33,7 @@
       <button class="tab" data-view="daily">일일보고</button>
       <button class="tab" data-view="weekly">주간보고</button>
       <button class="tab" data-view="certstats">인증 통계</button>
+      <button class="tab" data-view="resources">QE 리소스</button>
     </div>
     <div class="filters">
       <select id="filter-cert">
@@ -55,6 +56,9 @@
 
   <div id="summary" class="summary"></div>
 
+  <!-- QE 리소스 한 줄 요약 (현황 보드 상단, 클릭 시 QE 리소스 탭으로 이동) -->
+  <div id="resource-strip" class="resource-strip hidden"></div>
+
   <!-- 반복 Fail · 장기 미판정 병목 경고 (현황 보드에서만 노출) -->
   <div id="bottlenecks" class="bottlenecks hidden"></div>
 
@@ -67,6 +71,7 @@
     <div id="view-daily" class="view hidden"></div>
     <div id="view-weekly" class="view hidden"></div>
     <div id="view-certstats" class="view hidden"></div>
+    <div id="view-resources" class="view hidden"></div>
   </main>
 
   <!-- 등록 / 상세 모달 -->
@@ -152,6 +157,10 @@
             </label>
             <label>완료일
               <input id="f-completed_date" type="date" />
+            </label>
+            <label>잔여 slot
+              <input id="f-remaining_slots" type="number" min="0" step="1" placeholder="자동 산출" autocomplete="off" />
+              <small class="field-hint">비우면 시작일 기준으로 경과 영업일을 자동 차감합니다. 실제와 다를 때만 입력하세요.</small>
             </label>
             <label>담당 테스터
               <select id="f-tester-select">

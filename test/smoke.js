@@ -44,7 +44,7 @@ ok('testPurposes 빈 배열', repo.testPurposes().length === 0);
 // KM-300 / Amazon AVTS / 양산  : 1건 (미판정, Round 미입력)            — 이번 주 (집계에서 통째로 빠져야 함)
 const mk = (d) => {
   const r = repo.create({
-    cert_type: d.cert_type, model_name: d.model_name, test_purpose: d.purpose,
+    cert_type: d.cert_type, test_type: d.test_type || '', model_name: d.model_name, test_purpose: d.purpose,
     round: d.round, requester: 'PL', desired_date: d.start,
   }, '테스트');
   return repo.update(r.id, {
@@ -114,21 +114,56 @@ ok('이번주 판정 건수 = 4', wkStats.totals.judged === 4, String(wkStats.to
 
 // ---------- Task 5. 진행차수 자동 산출 ----------
 head('Task 5. 진행차수 자동 산출');
-const n1 = repo.nextRound('KM-100', '3PL');
-ok('직전 3차 Fail → 4차', n1.round === 4, String(n1.round));
-ok('근거 basis = fail', n1.basis === 'fail', n1.basis);
-ok('근거 문구에 차수 포함', n1.reason.includes('3차 Fail'), n1.reason);
-const n2 = repo.nextRound('KM-100', 'MR');
+// 직전(최신) 건이 4차 진행중(미판정)이므로 Pass가 아니라서 이어진다 — 미판정도 "Pass가 아닌 경우"에 포함.
+const n1 = repo.nextRound('KM-100', '3PL', 'Google xTS', '');
+ok('직전 4차 미판정 → 5차', n1.round === 5, String(n1.round));
+ok('근거 basis = pending', n1.basis === 'pending', n1.basis);
+ok('근거 문구에 차수 포함', n1.reason.includes('4차'), n1.reason);
+const n2 = repo.nextRound('KM-100', 'MR', 'Google xTS', '');
 ok('직전 Pass → 1차 리셋', n2.round === 1 && n2.basis === 'pass', `${n2.round}/${n2.basis}`);
-const n3 = repo.nextRound('KM-999', '3PL');
+const n3 = repo.nextRound('KM-999', '3PL', 'Google xTS', '');
 ok('이력 없음 → 1차', n3.round === 1 && n3.basis === 'new', `${n3.round}/${n3.basis}`);
 ok('이력 없음 → history 빈 배열', n3.history.length === 0);
-ok('미판정만 있는 조합 → 1차', repo.nextRound('KM-300', '양산').round === 1);
-ok('직전 2차 Fail → 3차', repo.nextRound('KM-200', '3PL').round === 3);
-ok('모델명 공백 → 1차 (조회 안 함)', repo.nextRound('  ', '3PL').round === 1);
-ok('history는 최신순', n1.history[0].round === '3' && n1.history[0].verdict === 'Fail', JSON.stringify(n1.history[0]));
-ok('history에 미판정 건 미포함', !n1.history.some((h) => !h.verdict));
-ok('history는 (모델 × 목적) 기준 — 인증종류 무관', n1.history.length === 3, String(n1.history.length));
+ok('미판정만 있어도 이력으로 잡혀 2차로 이어짐', repo.nextRound('KM-300', '양산', 'Amazon AVTS', '').round === 2);
+ok('직전 2차 Fail → 3차', repo.nextRound('KM-200', '3PL', 'Google xTS', '').round === 3);
+ok('모델명 공백 → 1차 (조회 안 함)', repo.nextRound('  ', '3PL', 'Google xTS', '').round === 1);
+ok('history는 최신순', n1.history[0].round === '4' && n1.history[0].verdict === '', JSON.stringify(n1.history[0]));
+ok('history에 미판정 건도 포함', n1.history.some((h) => !h.verdict));
+// Task 0: 인증종류가 다르면(Netflix NTS 2차 Pass) 이력에 섞이면 안 된다.
+ok('history는 인증종류까지 일치해야 함 (1·3·4차 3건)', n1.history.length === 3, String(n1.history.length));
+ok('history에 다른 인증종류 없음', n1.history.every((h) => h.cert_type === 'Google xTS'));
+// cert_type 없이 조회하면(구버전 호출) 매칭되는 이력이 없어 1차로 나와야 한다 — 서버에서 필수값으로 막지만 db 계층도 안전해야 함.
+ok('cert_type 없이 조회 → 매칭 실패로 1차', repo.nextRound('KM-100', '3PL', '', '').round === 1);
+
+// ---------- Task 0. 진행차수 산출 원인 분석·수정 회귀 테스트 ----------
+head('Task 0. 진행차수 4가지 조건 동시 매칭 · Pass가 아닌 경우 판정');
+// 인증종류가 다르면 이력이 섞이면 안 된다 (기존 버그: 모델명·Test 목적 2개만 비교).
+const t700a = mk({ cert_type: 'Netflix NTS', model_name: 'KM-700', purpose: '3PL', test_type: 'IR', round: '1', start: thisWeek(0), end: thisWeek(0), status: '완료', verdict: 'Fail' });
+const t700b = mk({ cert_type: 'Google xTS', model_name: 'KM-700', purpose: '3PL', test_type: 'IR', round: '9', start: thisWeek(3), end: thisWeek(3), status: '완료', verdict: 'Fail' });
+const r700 = repo.nextRound('KM-700', '3PL', 'Netflix NTS', 'IR');
+ok('인증종류가 다른 9차 Fail에 안 딸려감 → 2차', r700.round === 2, String(r700.round));
+ok('history에 다른 인증종류 없음', r700.history.every((h) => h.cert_type === 'Netflix NTS'));
+
+// Test type이 다르면 이력이 섞이면 안 된다.
+const t800a = mk({ cert_type: 'Google xTS', model_name: 'KM-800', purpose: '3PL', test_type: 'IR', round: '2', start: thisWeek(0), end: thisWeek(0), status: '완료', verdict: 'Fail' });
+const t800b = mk({ cert_type: 'Google xTS', model_name: 'KM-800', purpose: '3PL', test_type: 'LR', round: '7', start: thisWeek(3), end: thisWeek(3), status: '완료', verdict: 'Fail' });
+const r800 = repo.nextRound('KM-800', '3PL', 'Google xTS', 'IR');
+ok('Test type이 다른 7차 Fail에 안 딸려감 → 3차', r800.round === 3, String(r800.round));
+
+// 직전 판정이 Drop(Pass 아님)이어도 차수가 이어져야 한다 (기존 버그: Fail만 검사해 Drop을 Pass처럼 취급).
+const t900 = mk({ cert_type: 'Google xTS', model_name: 'KM-900', purpose: 'Official', test_type: 'IR', round: '2', start: thisWeek(0), end: thisWeek(0), status: '완료', verdict: 'Drop' });
+const r900 = repo.nextRound('KM-900', 'Official', 'Google xTS', 'IR');
+ok('직전 Drop → 1차로 리셋되지 않고 3차로 이어짐', r900.round === 3 && r900.basis === 'drop', `${r900.round}/${r900.basis}`);
+ok('Drop 건도 history에 포함(통계용 JUDGED와 달리)', r900.history.some((h) => h.verdict === 'Drop'));
+
+// 직전 건이 아직 판정 전(미판정)이어도 Pass가 아니므로 차수가 이어져야 한다.
+const t950 = mk({ cert_type: 'Google xTS', model_name: 'KM-950', purpose: 'Official', test_type: 'IR', round: '4', start: thisWeek(0), status: '진행중' });
+const r950 = repo.nextRound('KM-950', 'Official', 'Google xTS', 'IR');
+ok('직전 미판정 → 1차로 리셋되지 않고 5차로 이어짐', r950.round === 5 && r950.basis === 'pending', `${r950.round}/${r950.basis}`);
+ok('미판정 건도 history에 포함', r950.history.some((h) => !h.verdict));
+
+// 이후 통계·리포트 총계(정확한 건수 비교)에 영향 없도록 회귀용 픽스처는 정리한다.
+for (const t of [t700a, t700b, t800a, t800b, t900, t950]) repo.remove(t.id, '테스트');
 
 // ---------- Task 6. 병목 경고 ----------
 head('Task 6. 병목 경고');

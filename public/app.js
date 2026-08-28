@@ -558,7 +558,8 @@ const roundAuto = { seq: 0, key: null, info: null, touched: false };
 const setRoundHint = (text) => { $('#round-hint').textContent = text; };
 // Test 목적은 콤보(드롭다운 + 직접입력)라 select 값이 아니라 실제 입력값을 읽어야 한다.
 const purposeValue = () => readCombo('test_purpose');
-const roundKeyOf = () => `${$(F.model_name).value.trim()}\u0000${purposeValue()}`;
+// Task 0: 진행차수는 인증종류·Test type·Test 목적·모델명 4가지가 모두 같을 때만 이어져야 한다.
+const roundKeyOf = () => `${$(F.model_name).value.trim()}\u0000${$(F.cert_type).value}\u0000${$(F.test_type).value}\u0000${purposeValue()}`;
 
 async function autoFillRound() {
   if ($(F.id).value) return;                    // 기존 의뢰 상세에서는 저장된 차수를 건드리지 않는다
@@ -570,7 +571,7 @@ async function autoFillRound() {
   if (!model) {
     roundAuto.info = null;
     $('#btn-round-info').classList.add('hidden');
-    setRoundHint('모델명과 Test 목적을 고르면 자동으로 채워집니다.');
+    setRoundHint('인증종류·Test type·Test 목적·모델명을 고르면 자동으로 채워집니다.');
     return;
   }
 
@@ -579,7 +580,9 @@ async function autoFillRound() {
   $('#round-spin').classList.remove('hidden');
   input.readOnly = true;                        // 조회 중 중복 입력 차단
   try {
-    const q = `model_name=${encodeURIComponent(model)}&test_purpose=${encodeURIComponent(purposeValue())}`;
+    // Task 0: 인증종류·Test type도 함께 넘겨 4가지 조건이 모두 일치하는 이력만 매칭한다.
+    const q = `model_name=${encodeURIComponent(model)}&test_purpose=${encodeURIComponent(purposeValue())}`
+      + `&cert_type=${encodeURIComponent($(F.cert_type).value)}&test_type=${encodeURIComponent($(F.test_type).value)}`;
     const info = await api(`/api/next-round?${q}`);
     if (seq !== roundAuto.seq) return;
     roundAuto.info = info;
@@ -609,7 +612,7 @@ function openRoundModal() {
       </div>
     </li>`).join('');
   $('#round-modal-body').innerHTML = `
-    <p class="round-why"><b>${esc($(F.model_name).value.trim())}</b> · ${esc(purpose)}
+    <p class="round-why"><b>${esc($(F.model_name).value.trim())}</b> · ${esc($(F.cert_type).value)} · ${esc($(F.test_type).value)} · ${esc(purpose)}
       → 산출 <b>${info.round}차</b><br><span class="field-hint">${esc(info.reason)}</span></p>
     ${info.history.length
       ? `<ol class="timeline">${items}</ol>`
@@ -768,7 +771,7 @@ function openModal(item) {
   $('#btn-round-info').classList.add('hidden');
   $('#round-spin').classList.add('hidden');
   setRoundHint(isNew
-    ? '모델명과 Test 목적을 고르면 자동으로 채워집니다.'
+    ? '인증종류·Test type·Test 목적·모델명을 고르면 자동으로 채워집니다.'
     : '저장된 진행차수입니다. 필요하면 직접 수정할 수 있습니다.');
   if (isNew) autoFillRound();
 
@@ -847,12 +850,14 @@ function bind() {
   bindCombo('test_purpose');
   bindCombo('tester');
 
-  // Task 5. 모델명·Test 목적이 바뀌면 진행차수를 다시 산출 (타이핑은 250ms 디바운스)
+  // Task 5. 인증종류·Test type·Test 목적·모델명이 바뀌면 진행차수를 다시 산출 (타이핑은 250ms 디바운스)
   let roundTimer;
   $(F.model_name).addEventListener('input', () => {
     clearTimeout(roundTimer);
     roundTimer = setTimeout(autoFillRound, 250);
   });
+  $(F.cert_type).addEventListener('change', autoFillRound);
+  $(F.test_type).addEventListener('change', autoFillRound);
   $('#f-test_purpose-select').addEventListener('change', autoFillRound);
   $('#f-test_purpose-custom').addEventListener('input', () => {
     clearTimeout(roundTimer);

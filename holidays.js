@@ -114,6 +114,22 @@ function businessDaysFrom(from, n) {
   return out;
 }
 
+// from(포함) ~ to(제외) 사이의 영업일 수.
+// 진행률 산출에 쓴다 — 기준일 당일은 아직 진행 중이라 소모로 세지 않으므로 to를 제외한다.
+// 최대 10년(3660일)까지만 세고 그 이상은 잘라낸다(잘못된 입력에 매달리지 않게).
+function businessDaysBetween(from, to) {
+  if (!YMD.test(String(from)) || !YMD.test(String(to)) || from >= to) return 0;
+  let n = 0;
+  const d = new Date(`${from}T00:00:00`);
+  for (let guard = 0; guard < 3660; guard += 1) {
+    const ymd = toYmd(d);
+    if (ymd >= to) break;
+    if (isBusinessDay(ymd)) n += 1;
+    d.setDate(d.getDate() + 1);
+  }
+  return n;
+}
+
 // 그 날이 속한 주의 월요일~금요일 (일별 현황을 주 단위로 묶는 데 쓴다)
 function weekOf(ymd) {
   const d = new Date(`${ymd}T00:00:00`);
@@ -139,6 +155,7 @@ module.exports = {
   isBusinessDay,
   nthBusinessDay,
   businessDaysFrom,
+  businessDaysBetween,
   weekOf,
   today,
   shiftDays,

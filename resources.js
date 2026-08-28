@@ -41,6 +41,45 @@ function ruleLabelOf(row) {
 }
 
 const round1 = (n) => Math.round(n * 10) / 10;
+
+// 진행률 반영 — 이미 소화한 만큼을 빼고 '남은 업무량'으로 계상한다.
+// 시작일이 있으면 시작일 ~ 기준일 직전의 경과 영업일수를 소모로 본다. 기준일 당일은
+// 아직 진행 중이라 소모로 세지 않는다(시작일 == 기준일이면 소모 0, 잔여는 전량).
+// `remaining_slots`가 입력돼 있으면 그 값이 자동 계산을 이긴다(테스터 수동 보정).
+//
+// 소모가 계획을 넘으면(예정보다 오래 끌고 있는 건) 잔여를 0으로 만들지 않고 최소 1로 남긴다.
+// 아직 진행중인 건이 리소스에서 조용히 사라지면 안 되고, 초과분은 overrun_days로 따로 알린다.
+function progressOf(row, planSlots, asOf) {
+  const manualRaw = String(row.remaining_slots ?? '').trim();
+  const manual = manualRaw === '' ? null : Number(manualRaw);
+  if (manual !== null && Number.isFinite(manual)) {
+    const remaining = Math.max(0, Math.min(planSlots, Math.round(manual)));
+    return {
+      plan_slots: planSlots,
+      remaining,
+      consumed: planSlots - remaining,
+      overrun_days: 0,
+      progress_pct: pct(planSlots - remaining, planSlots),
+      source: 'manual',
+    };
+  }
+
+  const started = String(row.started_date || '').trim();
+  if (!started || started > asOf) {
+    return { plan_slots: planSlots, remaining: planSlots, consumed: 0, overrun_days: 0, progress_pct: 0, source: 'none' };
+  }
+  const consumed = holidays.businessDaysBetween(started, asOf);
+  const overrun = Math.max(0, consumed - planSlots);         // 예정 소요를 넘겨 진행한 영업일수
+  const remaining = Math.max(1, planSlots - consumed);       // 진행중인 건이 사라지지 않게 최소 1
+  return {
+    plan_slots: planSlots,
+    remaining,
+    consumed: Math.min(consumed, planSlots),
+    overrun_days: overrun,
+    progress_pct: pct(Math.min(consumed, planSlots), planSlots),
+    source: 'auto',
+  };
+}
 // 분모가 0이면 0으로 돌려 0 나눗셈을 차단한다.
 const pct = (n, d) => (d > 0 ? round1((n / d) * 100) : 0);
 
@@ -298,6 +337,9 @@ function summarize(openRows, asOf, horizon = 20) {
 
   for (const r of openRows || []) {
     const slots = slotsOf(r);
+    // 진행률을 반영해 `slots`는 '남은 업무량'이 된다. 계획 소요는 plan_slots로 보존한다.
+    // 모든 집계(총계·담당자별·일별 배치·타입 분포)가 잔여 기준이어야 화면 정의와 맞는다.
+    const prog = progressOf(r, slots === null ? 0 : slots, asOf);
     const item = {
       id: r.id,
       cert_type: r.cert_type,
@@ -309,9 +351,15 @@ function summarize(openRows, asOf, horizon = 20) {
       tester: String(r.tester || '').trim(),
       plan_date: r.plan_date || '',
       desired_date: r.desired_date || '',
+      started_date: r.started_date || '',
       created_at: r.created_at || '',
       rule: ruleLabelOf(r),
-      slots: slots === null ? 0 : slots,
+      slots: slots === null ? 0 : prog.remaining,     // 잔여 = 리소스로 계상하는 값
+      plan_slots: prog.plan_slots,                    // 계획 소요 (규칙표 값)
+      consumed: prog.consumed,
+      progress_pct: prog.progress_pct,
+      overrun_days: prog.overrun_days,
+      progress_source: prog.source,                   // manual | auto | none
     };
     if (slots === null) undefinedRules.push(item);
     else items.push(item);
@@ -336,6 +384,9 @@ function summarize(openRows, asOf, horizon = 20) {
   // 풀 하나의 총계. 1주 가용(인원수 × 5 slot)을 100%로 놓는다.
   const totalsOf = (poolItems, poolMembers, unassignedSlots) => {
     const slots = poolItems.reduce((a, r) => a + r.slots, 0);
+    // 진행률 반영 전 계획 소요와 이미 소화한 분량. "18 slot 중 5 소화, 잔여 13"을 보여준다.
+    const planSlots = poolItems.reduce((a, r) => a + r.plan_slots, 0);
+    const consumedSlots = poolItems.reduce((a, r) => a + r.consumed, 0);
     const dailyCapacity = poolMembers.length;
     const weekCapacity = dailyCapacity * WEEK_BUSINESS_DAYS;
     const usagePct = pct(slots, weekCapacity);
@@ -344,7 +395,10 @@ function summarize(openRows, asOf, horizon = 20) {
     return {
       headcount: dailyCapacity,
       count: poolItems.length,
-      slots,
+      slots,                                  // 잔여 = 리소스로 계상하는 값
+      plan_slots: planSlots,                  // 계획 소요 합계
+      consumed_slots: consumedSlots,          // 이미 소화한 분량
+      progress_pct: pct(consumedSlots, planSlots),
       assigned_slots: slots - unassignedSlots,
       unassigned_slots: unassignedSlots,
       daily_capacity: dailyCapacity,          // 1일 가용 slot (= 인원수)
@@ -460,14 +514,25 @@ function summarize(openRows, asOf, horizon = 20) {
   }).filter((t) => t.count > 0).sort((a, b) => b.slots - a.slots);
 
   // ---- 5. 스마트 알림 ----
+  // 예정 소요를 넘겨 진행 중인 건. 진행률 자동 차감이 잔여를 1로 붙잡고 있다는 신호이기도 하다.
+  const overrun = certItems
+    .filter((r) => r.overrun_days > 0)
+    .map((r) => ({
+      id: r.id, model_name: r.model_name, cert_type: r.cert_type, tester: r.tester,
+      plan_slots: r.plan_slots, consumed: r.consumed, overrun_days: r.overrun_days,
+      started_date: r.started_date,
+    }))
+    .sort((a, b) => b.overrun_days - a.overrun_days);
+
   const alerts = {
     conflicts: daily.conflicts,
     delays: daily.delays.slice(0, 5),
     releases: daily.releases,
+    overrun,
     overloaded: memberRows.filter((r) => r.level === 'over')
       .map((r) => ({ tester: r.tester, slots: r.slots, capacity: r.capacity, usage_pct: r.usage_pct })),
     count: daily.conflicts.length + Math.min(daily.delays.length, 5) + daily.releases.length
-      + memberRows.filter((r) => r.level === 'over').length,
+      + overrun.length + memberRows.filter((r) => r.level === 'over').length,
   };
 
   return {

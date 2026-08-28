@@ -500,6 +500,13 @@ fieldset:disabled legend::after { content: " · 읽기 전용"; color: var(--mut
 .rs-detail-row summary:hover { color: var(--primary); }
 .rs-items { font-size: 12px; }
 
+/* 건별 진행률 바 (계획 소요 대비 소화분) */
+.pg-bar {
+  display: inline-block; width: 70px; height: 7px; border-radius: 999px;
+  background: #eef2f8; overflow: hidden; vertical-align: middle;
+}
+.pg-bar i { display: block; height: 100%; background: var(--s-done); border-radius: 999px; }
+
 .rs-rules {
   margin-top: 14px; padding: 12px 16px; background: var(--panel);
   border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow);

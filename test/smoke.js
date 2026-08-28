@@ -712,6 +712,94 @@ ok('밀림 없으면 경고 없음', clean.alerts.delays.length === 0);
 ok('초과 없으면 경고 없음', clean.alerts.overloaded.length === 0);
 ok('빈 입력이면 알림 0건', resources.summarize([], AS_OF, 10).alerts.count === 0);
 
+// ---------- Task 6. 진행률 반영 (잔여 slot) ----------
+head('Task 6-I. 진행률 반영 — 소화분을 뺀 잔여로 계상');
+// 영업일 차이 계산: from 포함, to 제외
+ok('영업일 차 — 같은 날은 0', holidays.businessDaysBetween('2026-08-28', '2026-08-28') === 0);
+ok('영업일 차 — 금→월은 1 (금 하루)', holidays.businessDaysBetween('2026-08-28', '2026-08-31') === 1,
+  String(holidays.businessDaysBetween('2026-08-28', '2026-08-31')));
+ok('영업일 차 — 8/31→9/14은 10', holidays.businessDaysBetween('2026-08-31', '2026-09-14') === 10,
+  String(holidays.businessDaysBetween('2026-08-31', '2026-09-14')));
+ok('영업일 차 — 공휴일 제외 (12/24→12/28은 1)', holidays.businessDaysBetween('2026-12-24', '2026-12-28') === 1,
+  String(holidays.businessDaysBetween('2026-12-24', '2026-12-28')));
+ok('영업일 차 — 역순이면 0', holidays.businessDaysBetween('2026-09-14', '2026-08-31') === 0);
+ok('영업일 차 — 잘못된 날짜면 0', holidays.businessDaysBetween('2026/08/31', '2026-09-14') === 0);
+
+const PG_AS = '2026-09-14';   // 월요일
+const pgRows = [
+  // NTS 12 slot · 8/31(월) 착수 → 8/31~9/11 = 10 영업일 소화 → 잔여 2
+  { id: 1, cert_type: 'Netflix NTS', test_type: 'IR', model_name: 'P-1', status: '진행중', tester: '이은경', plan_date: '2026-08-31', started_date: '2026-08-31' },
+  // 오늘 착수 → 소화 0, 잔여 전량
+  { id: 2, cert_type: 'Google xTS', test_type: 'IR', model_name: 'P-2', status: '진행중', tester: '조아라', plan_date: PG_AS, started_date: PG_AS },
+  // xTS MR 2 slot · 8/24 착수 → 15 영업일 경과 = 예정 13일 초과, 잔여는 1로 유지
+  { id: 3, cert_type: 'Google xTS', test_type: 'MR', model_name: 'P-3', status: '진행중', tester: '이해찬', plan_date: '2026-08-24', started_date: '2026-08-24' },
+  // 수동 보정 3 → 자동 계산을 이긴다
+  { id: 4, cert_type: 'Netflix NTS', test_type: 'LR', model_name: 'P-4', status: '진행중', tester: '문유림', plan_date: '2026-09-01', started_date: '2026-09-01', remaining_slots: '3' },
+  // 미착수(예약확정, started_date 없음) → 전량 잔여
+  { id: 5, cert_type: 'Amazon AVTS', test_type: 'LR', model_name: 'P-5', status: '예약확정', tester: '이은경', plan_date: '2026-09-21' },
+];
+const pg = resources.summarize(pgRows, PG_AS, 20);
+const pgItem = (m) => [...pg.rows.flatMap((r) => r.items), ...pg.unassigned.items].find((i) => i.model_name === m);
+
+ok('자동 차감 — NTS 12 중 10 소화 → 잔여 2', pgItem('P-1').slots === 2 && pgItem('P-1').consumed === 10,
+  `잔여 ${pgItem('P-1').slots} / 소화 ${pgItem('P-1').consumed}`);
+ok('계획 소요는 보존 (plan_slots 12)', pgItem('P-1').plan_slots === 12);
+ok('진행률 83.3%', pgItem('P-1').progress_pct === 83.3, String(pgItem('P-1').progress_pct));
+ok('산출 근거 auto', pgItem('P-1').progress_source === 'auto');
+
+ok('오늘 착수는 소화 0 (당일은 진행 중)', pgItem('P-2').consumed === 0 && pgItem('P-2').slots === 3,
+  `소화 ${pgItem('P-2').consumed} / 잔여 ${pgItem('P-2').slots}`);
+
+// 예정 초과 — 잔여를 0으로 만들면 진행중인 건이 리소스에서 조용히 사라진다
+ok('예정 초과 시 잔여 최소 1 유지', pgItem('P-3').slots === 1, String(pgItem('P-3').slots));
+ok('초과 일수 13일', pgItem('P-3').overrun_days === 13, String(pgItem('P-3').overrun_days));
+ok('진행률은 100%로 상한', pgItem('P-3').progress_pct === 100, String(pgItem('P-3').progress_pct));
+ok('초과 진행 알림에 포함', pg.alerts.overrun.length === 1 && pg.alerts.overrun[0].model_name === 'P-3',
+  JSON.stringify(pg.alerts.overrun.map((o) => o.model_name)));
+ok('알림 건수에 초과 진행 반영', pg.alerts.count >= 1);
+
+ok('수동 보정이 자동을 이긴다 (잔여 3)', pgItem('P-4').slots === 3 && pgItem('P-4').progress_source === 'manual',
+  `잔여 ${pgItem('P-4').slots} [${pgItem('P-4').progress_source}]`);
+ok('수동 보정 시 소화 = 계획 - 잔여', pgItem('P-4').consumed === 9, String(pgItem('P-4').consumed));
+ok('수동 보정은 초과 일수 없음', pgItem('P-4').overrun_days === 0);
+
+ok('미착수 건은 전량 잔여', pgItem('P-5').slots === 4 && pgItem('P-5').consumed === 0,
+  `잔여 ${pgItem('P-5').slots} / 소화 ${pgItem('P-5').consumed}`);
+ok('미착수 산출 근거 none', pgItem('P-5').progress_source === 'none');
+
+// 총계는 잔여 기준이어야 한다 — 그게 '남은 업무량'의 정의다
+ok('총계 계획 33 slot (12+3+2+12+4)', pg.totals.plan_slots === 33, String(pg.totals.plan_slots));
+ok('총계 잔여 13 slot (2+3+1+3+4)', pg.totals.slots === 13, String(pg.totals.slots));
+ok('총계 소화 21 slot (10+0+2+9+0)', pg.totals.consumed_slots === 21, String(pg.totals.consumed_slots));
+ok('잔여 + 소화 ≤ 계획 (초과분은 상한 처리)', pg.totals.slots + pg.totals.consumed_slots <= pg.totals.plan_slots + 1,
+  `${pg.totals.slots} + ${pg.totals.consumed_slots} vs ${pg.totals.plan_slots}`);
+ok('총 진행률 63.6% (21/33)', pg.totals.progress_pct === 63.6, String(pg.totals.progress_pct));
+ok('담당자별도 잔여 기준', pg.rows.find((r) => r.tester === '이은경').slots === 6,
+  String(pg.rows.find((r) => r.tester === '이은경').slots));   // P-1 잔여 2 + P-5 4
+
+// 일별 배치도 잔여만 점유해야 한다 — 예전에는 과거 착수 건이 오늘부터 전량 재점유했다
+const pgDaily = pg.daily;
+ok('일별 배치 총합 = 잔여 물량', pgDaily.days.reduce((a, d) => a + d.used, 0) + pgDaily.overflow === pg.totals.slots,
+  `${pgDaily.days.reduce((a, d) => a + d.used, 0)} + ${pgDaily.overflow} vs ${pg.totals.slots}`);
+// 이은경 P-1은 잔여 2일만 점유하고 3번째 영업일에는 풀린다
+const eunBusy = pgDaily.days.map((d) => d.lane.some((x) => x.tester === '이은경'));
+ok('과거 착수 건은 잔여 2일만 점유', eunBusy[0] && eunBusy[1], JSON.stringify(eunBusy.slice(0, 4)));
+
+// 진행률 반영 전후 비교 — 같은 데이터에서 착수일을 지우면 물량이 계획 전량으로 돌아간다
+const noStart = pgRows.map((r) => ({ ...r, started_date: '', remaining_slots: '' }));
+ok('착수일이 없으면 계획 전량이 잔여 (33)',
+  resources.summarize(noStart, PG_AS, 20).totals.slots === 33,
+  String(resources.summarize(noStart, PG_AS, 20).totals.slots));
+
+// 수동 보정 경계 — 계획보다 크거나 음수면 범위로 잘라낸다
+const clamp = (v) => resources.summarize([{ id: 1, cert_type: 'Google xTS', test_type: 'MR',
+  model_name: 'C-1', status: '진행중', tester: '이은경', plan_date: PG_AS, remaining_slots: v }], PG_AS, 5)
+  .rows.find((r) => r.tester === '이은경').items[0].slots;
+ok('수동 보정 상한 = 계획 소요(2)', clamp('9') === 2, String(clamp('9')));
+ok('수동 보정 하한 0', clamp('-5') === 0, String(clamp('-5')));
+ok('수동 보정 0은 허용 (완료 처리 전 단계)', clamp('0') === 0, String(clamp('0')));
+ok('수동 보정 비수치는 무시하고 자동', clamp('abc') === 2, String(clamp('abc')));
+
 // ---------- Task 6. 리소스 산정 대상 조회 ----------
 head('Task 6-D. openRequests 대상 필터');
 const OPEN_STATUS = ['예약대기', '예약확정', '진행중'];

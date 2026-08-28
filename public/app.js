@@ -725,6 +725,7 @@ function dailyPlanTable(d, pool) {
 // 담당자 한 명의 건별 상세 (접힌 상태로 두고 필요할 때만 펼친다)
 function resourceItems(items) {
   if (!items.length) return '<p class="col-empty">배정된 미완 의뢰가 없습니다.</p>';
+  const SRC_TAG = { manual: '수동', auto: '자동', none: '미착수' };
   const body = items.map((it) => `
     <tr>
       <td>${esc(it.plan_date || '미정')}</td>
@@ -734,14 +735,22 @@ function resourceItems(items) {
       <td>${it.round ? `${esc(it.round)}차` : '—'}</td>
       <td>${esc(it.status)}</td>
       <td>${esc(it.rule)}</td>
-      <td class="num">${it.slots}</td>
+      <td class="num">${it.plan_slots}</td>
+      <td class="num">${it.consumed || '—'}</td>
+      <td class="num"><b>${it.slots}</b></td>
+      <td>
+        <span class="pg-bar" title="${it.progress_pct}% 진행"><i style="width:${Math.min(100, it.progress_pct)}%"></i></span>
+        <small class="rs-sub">${it.progress_pct}% · ${SRC_TAG[it.progress_source] || ''}${
+          it.overrun_days ? ` · <b class="rs-over">${it.overrun_days}일 초과</b>` : ''}</small>
+      </td>
     </tr>`).join('');
   return `
     <div class="table-wrap">
     <table class="stats-table rs-items">
       <thead><tr>
         <th>일정</th><th>인증종류</th><th>Test type</th><th>모델명</th>
-        <th>차수</th><th>상태</th><th>적용 규칙</th><th class="num">slot</th>
+        <th>차수</th><th>상태</th><th>적용 규칙</th>
+        <th class="num">계획</th><th class="num">소화</th><th class="num">잔여</th><th>진행률</th>
       </tr></thead>
       <tbody>${body}</tbody>
     </table>
@@ -754,7 +763,10 @@ function resourceRow(r) {
     <tr class="${cls}">
       <td><b>${esc(r.tester)}</b>${r.group === 'unassigned' ? '<span class="rs-tag">배정 필요</span>' : ''}</td>
       <td class="num">${r.count}</td>
-      <td class="num">${r.slots}</td>
+      <td class="num"><b>${r.slots}</b>${(() => {
+        const plan = r.items.reduce((a, i) => a + i.plan_slots, 0);
+        return plan > r.slots ? `<small class="rs-sub">계획 ${plan}</small>` : '';
+      })()}</td>
       <td class="num">${r.capacity === null ? '—' : r.capacity}</td>
       <td class="num">${r.days ? `${r.days}일` : '—'}</td>
       <td>${r.group === 'unassigned' ? '<span class="rs-dim">담당자 미정</span>' : etaText(r)}</td>
@@ -937,6 +949,11 @@ function alertsPanel(a) {
       <b>${esc(d.model_name)}</b> · ${esc(d.tester)} · <b>${d.delay_days}일</b> 지연
       <span class="bn-sub">계획 ${esc(d.declared_date)} → 실제 착수 ${esc(d.actual_date)}${d.pending ? ' (배정예정)' : ''}</span></li>`).join('');
 
+  const orun = a.overrun.map((o) => `
+    <li><span class="sa-badge sa-amber">초과진행</span>
+      <b>${esc(o.model_name)}</b> · ${esc(o.tester || '담당 미정')} · 예정 ${o.plan_slots}일을 <b>${o.overrun_days}일</b> 넘김
+      <span class="bn-sub">${esc(o.started_date)} 착수 · ${o.consumed}일 소화 — 잔여를 1 slot으로 붙잡아 두고 있습니다</span></li>`).join('');
+
   const rel = a.releases.map((r) => `
     <li><span class="sa-badge sa-green">D-${r.d_day}</span>
       <b>${esc(r.tester)}</b> 리소스 확보 예정 · ${esc(r.date)}
@@ -946,6 +963,7 @@ function alertsPanel(a) {
     <div class="sa">
       ${group('리소스 초과 할당', 'sa-c-red', over)}
       ${group('리소스 충돌 — 같은 담당자 일정 중복', 'sa-c-red', conf)}
+      ${group('예정 초과 진행 — 계획 소요를 넘겨 진행 중', 'sa-c-amber', orun)}
       ${group('일정 밀림 — 계획일보다 늦게 착수', 'sa-c-amber', del)}
       ${group('일정 여유 — 곧 리소스가 확보됩니다', 'sa-c-green', rel)}
     </div>`;
@@ -969,7 +987,8 @@ async function renderResources() {
     const over = p.over_slots > 0;
     return [
       { k: `1주 가용 (100%)`, v: `${p.week_capacity} slot`, sub: `${label} ${p.headcount}명 × ${s.week_business_days}일` },
-      { k: '미완 소요', v: `${p.slots} slot`, sub: `${p.count}건` },
+      { k: '잔여 소요', v: `${p.slots} slot`, sub: `${p.count}건 · 계획 ${p.plan_slots} 중 ${p.consumed_slots} 소화` },
+      { k: '진행률', v: `${p.progress_pct}%`, sub: '계획 소요 대비 소화분' },
       { k: '사용률', v: `${p.usage_pct}%`, sub: '1주 가용 대비', warn: over },
       over
         ? { k: '초과', v: `${p.over_pct}%`, sub: `${p.over_slots} slot 넘침`, warn: true }
@@ -1118,6 +1137,7 @@ const F = {
   model_name: '#f-model_name', fw_version: '#f-fw_version',
   desired_date: '#f-desired_date', note: '#f-note',
   scheduled_date: '#f-scheduled_date', started_date: '#f-started_date', completed_date: '#f-completed_date',
+  remaining_slots: '#f-remaining_slots',
   status: '#f-status', verdict: '#f-verdict', progress: '#f-progress', result: '#f-result',
 };
 const NEW_DEFAULTS = { cert_type: 'Netflix NTS', test_type: 'IR', test_purpose: '3PL', status: '예약대기' };

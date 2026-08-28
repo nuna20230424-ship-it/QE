@@ -158,6 +158,10 @@
             <label>완료일
               <input id="f-completed_date" type="date" />
             </label>
+            <label>잔여 slot
+              <input id="f-remaining_slots" type="number" min="0" step="1" placeholder="자동 산출" autocomplete="off" />
+              <small class="field-hint">비우면 시작일 기준으로 경과 영업일을 자동 차감합니다. 실제와 다를 때만 입력하세요.</small>
+            </label>
             <label>담당 테스터
               <select id="f-tester-select">
                 <option value="">(미지정)</option>

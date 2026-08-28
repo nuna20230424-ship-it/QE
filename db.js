@@ -27,6 +27,7 @@ db.exec(`
     verdict        TEXT,                     -- 판정 (Pass | Fail | Drop)
     started_date   TEXT,                     -- 시작일 (테스터 입력)
     completed_date TEXT,                     -- 완료일 (테스터 입력)
+    remaining_slots TEXT,                    -- 잔여 slot 수동 보정 (비우면 시작일 기준 자동 차감)
     confirmed_at   TEXT,                     -- 예약확정 시각
     started_at     TEXT,                     -- 진행시작 시각
     completed_at   TEXT,                     -- 완료 시각
@@ -57,7 +58,7 @@ db.exec(`
 
 // 기존 DB 호환: 신규 컬럼 누락 시 보강 (request_item 컬럼은 미사용 처리)
 const existingCols = db.prepare('PRAGMA table_info(requests)').all().map((c) => c.name);
-for (const name of ['test_type', 'test_purpose', 'round', 'verdict', 'started_date', 'completed_date', 'confirmed_at', 'started_at', 'completed_at']) {
+for (const name of ['test_type', 'test_purpose', 'round', 'verdict', 'started_date', 'completed_date', 'remaining_slots', 'confirmed_at', 'started_at', 'completed_at']) {
   if (!existingCols.includes(name)) db.exec(`ALTER TABLE requests ADD COLUMN ${name} TEXT`);
 }
 
@@ -70,6 +71,7 @@ const nowIso = () => new Date().toISOString();
 const ALLOWED = [
   'cert_type', 'test_type', 'test_purpose', 'round', 'model_name', 'fw_version', 'requester', 'note',
   'desired_date', 'scheduled_date', 'tester', 'status', 'progress', 'result', 'verdict', 'started_date', 'completed_date',
+  'remaining_slots',
 ];
 
 // 사람이 읽을 변경요약용 한글 라벨
@@ -78,6 +80,7 @@ const LABELS = {
   fw_version: 'FW', requester: '의뢰자', note: '비고', desired_date: '희망일정',
   scheduled_date: '예약일정', tester: '테스터', status: '상태', progress: '진행사항', result: '결과',
   verdict: '판정', started_date: '시작일', completed_date: '완료일',
+  remaining_slots: '잔여 slot',
 };
 
 // 의뢰가 "진행된" 것으로 볼 기간 판정용 대표 시작/종료일.
@@ -271,15 +274,16 @@ module.exports = {
       verdict: d.verdict || '',
       started_date: d.started_date || '',
       completed_date: d.completed_date || '',
+      remaining_slots: d.remaining_slots || '',
       confirmed_at: '', started_at: '', completed_at: '',
       created_at: ts, updated_at: ts,
     };
     const info = db.prepare(`INSERT INTO requests
       (cert_type, test_type, test_purpose, round, model_name, fw_version, requester, note, desired_date,
-       scheduled_date, tester, status, progress, result, verdict, started_date, completed_date, confirmed_at, started_at, completed_at, created_at, updated_at)
+       scheduled_date, tester, status, progress, result, verdict, started_date, completed_date, remaining_slots, confirmed_at, started_at, completed_at, created_at, updated_at)
       VALUES
       (@cert_type, @test_type, @test_purpose, @round, @model_name, @fw_version, @requester, @note, @desired_date,
-       @scheduled_date, @tester, @status, @progress, @result, @verdict, @started_date, @completed_date, @confirmed_at, @started_at, @completed_at, @created_at, @updated_at)`)
+       @scheduled_date, @tester, @status, @progress, @result, @verdict, @started_date, @completed_date, @remaining_slots, @confirmed_at, @started_at, @completed_at, @created_at, @updated_at)`)
       .run(row);
     logHistory(info.lastInsertRowid, actor, '등록', `${d.cert_type} / ${d.model_name}`);
     return this.get(info.lastInsertRowid);
@@ -308,7 +312,7 @@ module.exports = {
       model_name=@model_name, fw_version=@fw_version,
       requester=@requester, note=@note, desired_date=@desired_date, scheduled_date=@scheduled_date,
       tester=@tester, status=@status, progress=@progress, result=@result,
-      verdict=@verdict, started_date=@started_date, completed_date=@completed_date,
+      verdict=@verdict, started_date=@started_date, completed_date=@completed_date, remaining_slots=@remaining_slots,
       confirmed_at=@confirmed_at, started_at=@started_at, completed_at=@completed_at, updated_at=@updated_at
       WHERE id=@id`).run(merged);
 
@@ -339,7 +343,7 @@ module.exports = {
   openRequests() {
     return db.prepare(`
       SELECT id, cert_type, test_type, test_purpose, round, model_name, fw_version,
-             requester, tester, status, desired_date, scheduled_date, started_date, created_at,
+             requester, tester, status, desired_date, scheduled_date, started_date, remaining_slots, created_at,
              ${ACT_START} AS plan_date
       FROM requests
       WHERE status IN ('예약대기', '예약확정', '진행중')

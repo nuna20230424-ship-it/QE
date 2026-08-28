@@ -92,7 +92,6 @@ const SORT_KEY = `(${ACT_DATE} || '#' || printf('%010d', id))`;
 const PURPOSE = `COALESCE(NULLIF(TRIM(test_purpose),''), '(미지정)')`;
 // 통계 대상: 판정이 끝난 건(Pass/Fail)만. '미판정'과 Drop은 지시서 4-1에 따라 산출에서 제외한다.
 const JUDGED = `verdict IN ('Pass','Fail')`;
-
 // 비율(%) 계산. 분모가 0이면 0으로 반환해 0 나눗셈을 차단한다.
 const pct = (n, d) => (d > 0 ? Math.round((n / d) * 1000) / 10 : 0);
 
@@ -153,34 +152,48 @@ function certStatsOf(range) {
   };
 }
 
-// (모델명 × Test 목적) 조합의 판정 이력을 최신순으로. 진행차수 산출과 ⓘ 히스토리가 함께 쓴다.
-// 지시서 Task 5가 키를 "모델명과 Test 목적"으로 명시해 인증종류는 조건에 넣지 않는다.
-function roundHistoryOf(modelName, testPurpose) {
+// (인증종류 × Test type × Test 목적 × 모델명) 조합의 의뢰 이력을 최신순으로.
+// 진행차수 산출과 ⓘ 히스토리가 함께 쓴다.
+// Task 0 원인 분석: 기존 코드는 모델명·Test 목적 2개만 비교해 인증종류·Test type이 달라도
+// 같은 이력으로 묶었다. 지시서가 "4가지 조건 동시 매칭"을 명시해 두 조건을 WHERE에 추가한다.
+// 판정이 아직 없는(미판정, verdict='') 건도 포함한다 — "Pass만 아니면 차수를 잇는다"는
+// 조건에서 미판정도 Pass가 아니므로, 직전 건이 미판정이면 그 이력이 통째로 사라져선 안 된다.
+function roundHistoryOf(modelName, testPurpose, certType, testType) {
   const model = String(modelName || '').trim();
   if (!model) return [];
   return db.prepare(`
     SELECT id, cert_type, ${PURPOSE} AS test_purpose, round, verdict, status,
            ${ACT_DATE} AS on_date, progress, result
     FROM requests
-    WHERE TRIM(model_name) = @model AND ${PURPOSE} = @purpose AND ${JUDGED}
+    WHERE TRIM(model_name) = @model AND ${PURPOSE} = @purpose
+      AND TRIM(cert_type) = @cert_type AND TRIM(COALESCE(test_type,'')) = @test_type
     ORDER BY ${SORT_KEY} DESC
-  `).all({ model, purpose: String(testPurpose || '').trim() || '(미지정)' });
+  `).all({
+    model,
+    purpose: String(testPurpose || '').trim() || '(미지정)',
+    cert_type: String(certType || '').trim(),
+    test_type: String(testType || '').trim(),
+  });
 }
 
 // Task 5. 신규 의뢰의 진행차수 자동 산출.
-//   직전 판정이 Fail → 직전 차수 + 1 / 직전 판정이 Pass 이거나 이력이 없으면 → 1차
-function nextRoundOf(modelName, testPurpose) {
-  const history = roundHistoryOf(modelName, testPurpose);
+//   직전 판정이 Pass가 아니면(Fail·Drop 등) → 직전 차수 + 1 / Pass 이거나 이력이 없으면 → 1차
+// Task 0 원인 분석: 기존 코드는 `prev.verdict === 'Fail'`만 검사해 Drop을 Pass와 같이 취급(1차로
+// 리셋)했다. 지시서 문면("Pass가 아닌 경우")대로 부정 조건(`!== 'Pass'`)으로 바꾼다.
+function nextRoundOf(modelName, testPurpose, certType, testType) {
+  const history = roundHistoryOf(modelName, testPurpose, certType, testType);
   const prev = history[0] || null;
   if (!prev) {
     return { round: 1, basis: 'new', reason: '이전 의뢰 이력이 없어 1차로 시작합니다.', prev: null, history };
   }
-  if (prev.verdict === 'Fail') {
+  if (prev.verdict !== 'Pass') {
     const prevRound = Number(prev.round) || history.length;
+    const verdictLabel = prev.verdict || '미판정';
+    const basis = prev.verdict === 'Fail' ? 'fail' : (prev.verdict === 'Drop' ? 'drop' : 'pending');
     return {
       round: prevRound + 1,
-      basis: 'fail',
-      reason: `직전 의뢰(${prev.on_date})가 ${prevRound}차 Fail이라 ${prevRound + 1}차로 이어집니다.`,
+      basis,
+      reason: `직전 의뢰(${prev.on_date}, ${prevRound}차)의 판정이 ${verdictLabel}이므로 ${prevRound + 1}차로 이어집니다.`,
       prev,
       history,
     };

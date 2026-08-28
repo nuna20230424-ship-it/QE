@@ -47,11 +47,14 @@ app.get('/api/cert-stats', (req, res) => {
   res.json(repo.certStats(from && to ? { from, to } : null));
 });
 
-// Task 5. 모델명 + Test 목적으로 신규 의뢰의 진행차수를 산출. 근거 이력도 함께 돌려준다.
+// Task 5. 인증종류 + Test type + Test 목적 + 모델명 4가지로 신규 의뢰의 진행차수를 산출.
+// Task 0: 4가지 조건이 동시에 일치해야 한다는 지시서 문면대로 cert_type도 필수로 받는다.
 app.get('/api/next-round', (req, res) => {
   const model = String(req.query.model_name || '').trim();
   if (!model) return res.status(400).json({ error: 'model_name은 필수입니다.' });
-  res.json(repo.nextRound(model, req.query.test_purpose));
+  const certType = String(req.query.cert_type || '').trim();
+  if (!certType) return res.status(400).json({ error: 'cert_type은 필수입니다.' });
+  res.json(repo.nextRound(model, req.query.test_purpose, certType, req.query.test_type));
 });
 
 // Task 6-2. 반복 Fail·장기 미판정 병목 경고

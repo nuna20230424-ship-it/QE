@@ -364,17 +364,35 @@ const rs = RS(OPEN);
 const rowOf = (n) => rs.rows.find((r) => r.tester === n);
 
 ok('미정의 1건 분리', rs.undefined_rules.length === 1, String(rs.undefined_rules.length));
-ok('미정의 건은 총 소요에서 제외', rs.totals.slots === 21, String(rs.totals.slots));   // 12+3+4+2
-ok('미정의 건은 건수에서도 제외', rs.totals.count === 4, String(rs.totals.count));
+// overall = 두 풀 합. 미정의 건(0 slot 규칙 없음)은 여기서도 빠진다.
+ok('전체 물량 21 slot (인증 19 + 기타 2)', rs.overall.slots === 21, String(rs.overall.slots));
+ok('전체 건수 4건 (미정의 제외)', rs.overall.count === 4, String(rs.overall.count));
 ok('이은경 12 slot (미정의 건 제외)', rowOf('이은경').slots === 12, String(rowOf('이은경').slots));
 ok('조아라 3 slot', rowOf('조아라').slots === 3, String(rowOf('조아라').slots));
 ok('이해찬 0 slot (건 없어도 행 유지)', rowOf('이해찬').slots === 0);
 ok('문유림 0 slot', rowOf('문유림').slots === 0);
 ok('미배정 4 slot', rs.unassigned.slots === 4, String(rs.unassigned.slots));
-ok('미배정도 총 소요에 포함', rs.totals.unassigned_slots === 4);
-ok('배정분 = 총계 - 미배정', rs.totals.assigned_slots === 17, String(rs.totals.assigned_slots));
+
+// ---- 두 풀 분리: 기타 물량이 인증 담당 풀의 100%에 섞이면 사용률이 왜곡된다 ----
+ok('인증 담당 풀 = 12+3+4 = 19 slot (기타 제외)', rs.totals.slots === 19, String(rs.totals.slots));
+ok('인증 담당 풀 3건', rs.totals.count === 3, String(rs.totals.count));
+ok('인증 담당 배정분 = 19 - 미배정 4 = 15', rs.totals.assigned_slots === 15, String(rs.totals.assigned_slots));
+ok('인증 담당 미배정 4 slot', rs.totals.unassigned_slots === 4);
+ok('인증 담당 인원 4명', rs.totals.headcount === 4);
+
 ok('4명 외 테스터는 기타로', rs.others.length === 1 && rs.others[0].tester === '김지윤');
 ok('기타 2 slot', rs.others[0].slots === 2, String(rs.others[0].slots));
+ok('기타 명단 노출', rs.other_members.join(',') === '김지윤', rs.other_members.join(','));
+ok('기타 풀 2 slot · 1건', rs.others_totals.slots === 2 && rs.others_totals.count === 1,
+  `${rs.others_totals.slots} slot / ${rs.others_totals.count}건`);
+ok('기타 풀 인원 1명 → 1주 가용 5 slot', rs.others_totals.headcount === 1 && rs.others_totals.week_capacity === 5,
+  `${rs.others_totals.headcount}명 / ${rs.others_totals.week_capacity} slot`);
+ok('기타 풀 사용률 40% (2/5)', rs.others_totals.usage_pct === 40, String(rs.others_totals.usage_pct));
+ok('기타 풀 여유 3 slot', rs.others_totals.free_slots === 3, String(rs.others_totals.free_slots));
+ok('기타 풀은 미배정 개념 없음', rs.others_totals.unassigned_slots === 0);
+// 두 풀 합 = 전체 물량 (어느 쪽에서도 사라지지 않는다)
+ok('인증 풀 + 기타 풀 = 전체 물량', rs.totals.slots + rs.others_totals.slots === rs.overall.slots,
+  `${rs.totals.slots} + ${rs.others_totals.slots} vs ${rs.overall.slots}`);
 
 // 1 slot = 1명 1일 → 할당 slot 합계가 그 담당자의 소요 영업일수 (변환 계수 1)
 ok('소요 영업일 = 할당 slot', rs.rows.every((r) => r.days === r.slots));
@@ -383,13 +401,12 @@ ok('이은경 예상 소진일 = 12번째 영업일', rowOf('이은경').eta ===
 ok('건 없는 담당자는 소진일 null', rowOf('이해찬').eta === null);
 ok('미배정은 소진일 산출하지 않음', rs.unassigned.eta === null);
 
-// 1주 가용(4명 × 5일 = 20 slot)을 100%로 산정. 총 소요 21 slot → 105%
+// 인증 담당 1주 가용(4명 × 5일 = 20 slot)을 100%로 산정. 풀 소요 19 slot → 95%
 ok('1주 가용 20 slot', rs.totals.week_capacity === 20, String(rs.totals.week_capacity));
-ok('사용률 105% (21/20)', rs.totals.usage_pct === 105, String(rs.totals.usage_pct));
-ok('초과 5% (1 slot)', rs.totals.over_pct === 5 && rs.totals.over_slots === 1,
-  `${rs.totals.over_pct}% / ${rs.totals.over_slots} slot`);
-ok('초과 시 여유는 0', rs.totals.free_pct === 0 && rs.totals.free_slots === 0);
-ok('소요 주수 1.1주', rs.totals.weeks_needed === 1.1, String(rs.totals.weeks_needed));
+ok('사용률 95% (19/20)', rs.totals.usage_pct === 95, String(rs.totals.usage_pct));
+ok('여유 5% (1 slot)', rs.totals.free_pct === 5 && rs.totals.free_slots === 1,
+  `${rs.totals.free_pct}% / ${rs.totals.free_slots} slot`);
+ok('100% 미만이면 초과는 0', rs.totals.over_pct === 0 && rs.totals.over_slots === 0);
 ok('미배정 = 1주 가용의 20% (4/20)', rs.totals.unassigned_pct === 20, String(rs.totals.unassigned_pct));
 
 // 담당자별 = 1인 주간 가용(5 slot) 대비
@@ -400,14 +417,18 @@ ok('이은경 7 slot 초과', rowOf('이은경').over === 7 && rowOf('이은경'
 ok('조아라 사용률 60% (3/5)', rowOf('조아라').usage_pct === 60, String(rowOf('조아라').usage_pct));
 ok('조아라 2 slot 여유', rowOf('조아라').free === 2 && rowOf('조아라').over === 0);
 ok('이해찬 5 slot 전량 여유', rowOf('이해찬').free === 5);
-// 미배정·기타는 개인 가용 개념이 없다
+// 미배정만 사람이 없어 개인 가용 개념이 없다. 기타 테스터는 사람이 있으니 가용을 갖는다.
 ok('미배정은 가용 없음(null)', rs.unassigned.capacity === null && rs.unassigned.usage_pct === null);
-ok('기타 테스터도 가용 없음(null)', rs.others[0].capacity === null && rs.others[0].free === null);
+ok('기타 테스터도 주간 가용 5 slot', rs.others[0].capacity === 5, String(rs.others[0].capacity));
+ok('기타 테스터 사용률 40% (2/5)', rs.others[0].usage_pct === 40, String(rs.others[0].usage_pct));
+ok('기타 테스터 3 slot 여유', rs.others[0].free === 3 && rs.others[0].over === 0);
 
-// 전체 소진 예상: 4명이 하루 4 slot 소화 → ceil(21/4) = 6 영업일
+// 인증 담당 풀 소진 예상: 4명이 하루 4 slot 소화 → ceil(19/4) = 5 영업일
 ok('1일 가용 = 담당 인원수', rs.totals.daily_capacity === 4);
-ok('전체 소진 6 영업일', rs.totals.days === 6, String(rs.totals.days));
-ok('전체 소진일 = 6번째 영업일', rs.totals.eta === holidays.nthBusinessDay(AS_OF, 6), String(rs.totals.eta));
+ok('인증 담당 풀 소진 5 영업일', rs.totals.days === 5, String(rs.totals.days));
+ok('인증 담당 풀 소진일 = 5번째 영업일', rs.totals.eta === holidays.nthBusinessDay(AS_OF, 5), String(rs.totals.eta));
+// 기타 풀은 1명이 하루 1 slot → ceil(2/1) = 2 영업일
+ok('기타 풀 소진 2 영업일', rs.others_totals.days === 2, String(rs.others_totals.days));
 ok('건별 상세에 적용 규칙 표기', rowOf('이은경').items[0].rule === 'NTS (IR, LR, MR, 파생)');
 
 // ---------- Task 6. 일별 가용 리소스 현황 ----------
@@ -449,17 +470,31 @@ const w1 = dp.weeks[0];
 ok('첫 주는 8/28 하루뿐 (금요일 기준일)', w1.business_days === 1 && w1.capacity === 4,
   `${w1.business_days}일 / ${w1.capacity} slot`);
 
-// 4명 외 테스터 건은 4명의 가용을 쓰지 않으므로 배치에서 빠지되, 명시적으로 집계돼야 한다
-ok('기타 테스터 건은 배치 제외로 집계', dp.excluded.slots === 2 && dp.excluded.count === 1,
+// 기타 테스터는 별도 풀이므로 인증 담당 일별에 섞이지 않고, 제외분도 남지 않아야 한다
+ok('인증 담당 일별에 기타 테스터 없음', dp.days.every((d) => d.lane.every((x) => MEMBERS_LIST.includes(x.tester))));
+ok('인증 담당 풀에 제외분 없음 (풀 분리로 해소)', dp.excluded.slots === 0 && dp.excluded.count === 0,
   `${dp.excluded.count}건 / ${dp.excluded.slots} slot`);
-ok('제외된 테스터 이름 노출', dp.excluded.testers.join(',') === '김지윤', dp.excluded.testers.join(','));
-ok('배치 레인에 기타 테스터 없음', dp.days.every((d) => d.lane.every((x) => MEMBERS_LIST.includes(x.tester))));
 
-// 배치분 + 구간초과 + 제외분 = 전체 물량 (물량이 조용히 사라지지 않는다)
+// 배치분 + 구간초과 = 풀 물량 (물량이 조용히 사라지지 않는다)
 const placed = dp.days.reduce((a, d) => a + d.used, 0);
-ok('배치분 + 구간초과 + 제외분 = 전체 물량',
-  placed + dp.overflow + dp.excluded.slots === rs.totals.slots,
-  `${placed} + ${dp.overflow} + ${dp.excluded.slots} vs ${rs.totals.slots}`);
+ok('배치분 + 구간초과 = 인증 담당 풀 물량', placed + dp.overflow === rs.totals.slots,
+  `${placed} + ${dp.overflow} vs ${rs.totals.slots}`);
+
+// 기타 풀 일별 — 별도 가용(인원 1명 = 1 slot/day)이고 자동 할당 대상이 아니다
+const odp = rs.others_daily;
+ok('기타 풀 일별 생성', odp && odp.days.length === 20, String(odp && odp.days.length));
+ok('기타 풀 일별 가용 = 기타 인원 1', odp.days.every((d) => d.capacity === 1));
+ok('기타 풀에 배정예정 없음 (자동 할당 대상 아님)', odp.days.every((d) => d.pending === 0));
+ok('기타 풀 레인은 기타 테스터만', odp.days.every((d) => d.lane.every((x) => x.tester === '김지윤')));
+ok('기타 풀 제외분 없음', odp.excluded.slots === 0);
+const oPlaced = odp.days.reduce((a, d) => a + d.used, 0);
+ok('기타 배치분 + 구간초과 = 기타 풀 물량', oPlaced + odp.overflow === rs.others_totals.slots,
+  `${oPlaced} + ${odp.overflow} vs ${rs.others_totals.slots}`);
+ok('두 풀 배치분 합 = 전체 물량',
+  placed + dp.overflow + oPlaced + odp.overflow === rs.overall.slots,
+  `${placed + dp.overflow} + ${oPlaced + odp.overflow} vs ${rs.overall.slots}`);
+// 기타 풀은 인원이 없으면 만들지 않는다
+ok('기타 인원 0명이면 기타 일별 null', resources.summarize([], AS_OF, 10).others_daily === null);
 
 // 공휴일이 든 주는 가용이 줄어드는지 — 추석(9/24,9/25,9/28)이 낀 주로 확인
 head('Task 6-F. 공휴일이 든 주의 가용 감소');

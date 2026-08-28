@@ -674,8 +674,8 @@ function usageBar(usagePct, label) {
 }
 
 // 일별 가용 리소스 현황. 주 단위로 묶어 소계를 얹는다.
-function dailyPlanTable(s) {
-  const d = s.daily;
+// pool = 'cert'(인증 담당, 미배정 흡수) | 'other'(기타, 별도 리소스)
+function dailyPlanTable(d, pool) {
   if (!d || !d.days.length) return '<p class="col-empty">일별 현황을 만들 영업일이 없습니다.</p>';
 
   const dayRow = (x) => {
@@ -713,11 +713,13 @@ function dailyPlanTable(s) {
       </table>
     </div>
     <p class="field-hint">한 담당자는 하루 <b>1 slot</b>만 쓰므로 의뢰를 담당자별로 줄 세워 영업일에 이어 붙였습니다.
-      시작은 <code>max(대표 일정, 기준일)</code>입니다. <b class="dp-pend-num">배정예정</b>은 담당자 미정 건을 가장 빨리 비는
-      담당자 자리에 채워 본 <b>자동 할당 미리보기</b>이고, 흐린 이름은 그 날 <b>비어 있는 담당자</b>입니다.
+      시작은 <code>max(대표 일정, 기준일)</code>입니다. 흐린 이름은 그 날 <b>비어 있는 담당자</b>입니다.
+      ${pool === 'cert'
+        ? '<b class="dp-pend-num">배정예정</b>은 담당자 미정 건을 가장 빨리 비는 담당자 자리에 채워 본 <b>자동 할당 미리보기</b>입니다.'
+        : '기타 테스터는 <b>별도 리소스</b>라 자동 할당 대상이 아니므로 배정예정이 없습니다.'}
       ${d.overflow ? `조회 구간(${d.horizon} 영업일)을 넘어간 물량이 <b>${d.overflow} slot</b> 있습니다.` : ''}
-      ${d.excluded.slots ? `4명 외 테스터(${d.excluded.testers.map(esc).join(' · ')})의 <b>${d.excluded.slots} slot</b>은
-        이 가용을 쓰지 않아 배치에서 제외했습니다.` : ''}</p>`;
+      ${d.excluded.slots ? `<b class="rs-over">이 풀에 속하지 않은 테스터(${d.excluded.testers.map(esc).join(' · ')})의
+        ${d.excluded.slots} slot이 배치되지 않았습니다 — 집계 오류입니다.</b>` : ''}</p>`;
 }
 
 // 담당자 한 명의 건별 상세 (접힌 상태로 두고 필요할 때만 펼친다)
@@ -776,21 +778,28 @@ async function renderResources() {
   state.resources = s;
 
   const t = s.totals;
-  // 상단은 '1주 가용 = 100%' 기준 정량 지표만 둔다. 담당자 이름은 아래 세부내용에서 본다.
-  const overloaded = t.over_slots > 0;
-  const chips = [
-    { k: '1주 가용 (100%)', v: `${t.week_capacity} slot`, sub: `${s.members.length}명 × ${s.week_business_days}일` },
-    { k: '미완 총 소요', v: `${t.slots} slot`, sub: `${t.count}건` },
-    { k: '사용률', v: `${t.usage_pct}%`, sub: `1주 가용 대비`, warn: overloaded },
-    overloaded
-      ? { k: '초과', v: `${t.over_pct}%`, sub: `${t.over_slots} slot 넘침`, warn: true }
-      : { k: '여유', v: `${t.free_pct}%`, sub: `${t.free_slots} slot 배정 가능` },
-    { k: '소요 주수', v: `${t.weeks_needed}주`, sub: `1일 가용 ${t.daily_capacity} slot` },
-    { k: '미배정', v: `${t.unassigned_slots} slot`, sub: `1주 가용의 ${t.unassigned_pct}%`, warn: t.unassigned_slots > 0 },
-    { k: '전체 소진 예상', v: t.days ? `${t.days} 영업일` : '—', sub: '주말·공휴일 제외' },
-    { k: '소진 완료일', v: t.eta || '—', sub: '전 인원 투입 기준', warn: !!t.eta_warning },
-  ].map((c) => `<div class="sumcard ${c.warn ? 'warn' : ''}">
-      <div class="k">${c.k}</div><div class="v">${c.v}</div><div class="sub">${c.sub}</div></div>`).join('');
+  const ot = s.others_totals;
+  const hasOthers = s.other_members.length > 0;
+
+  // 풀 하나의 요약 카드. 인증 담당과 기타는 별도 리소스라 가용·사용률을 섞지 않는다.
+  const poolChips = (p, label, withUnassigned) => {
+    const over = p.over_slots > 0;
+    return [
+      { k: `1주 가용 (100%)`, v: `${p.week_capacity} slot`, sub: `${label} ${p.headcount}명 × ${s.week_business_days}일` },
+      { k: '미완 소요', v: `${p.slots} slot`, sub: `${p.count}건` },
+      { k: '사용률', v: `${p.usage_pct}%`, sub: '1주 가용 대비', warn: over },
+      over
+        ? { k: '초과', v: `${p.over_pct}%`, sub: `${p.over_slots} slot 넘침`, warn: true }
+        : { k: '여유', v: `${p.free_pct}%`, sub: `${p.free_slots} slot 배정 가능` },
+      { k: '소요 주수', v: `${p.weeks_needed}주`, sub: `1일 가용 ${p.daily_capacity} slot` },
+      ...(withUnassigned
+        ? [{ k: '미배정', v: `${p.unassigned_slots} slot`, sub: `1주 가용의 ${p.unassigned_pct}%`, warn: p.unassigned_slots > 0 }]
+        : []),
+      { k: '소진 예상', v: p.days ? `${p.days} 영업일` : '—', sub: '주말·공휴일 제외' },
+      { k: '소진 완료일', v: p.eta || '—', sub: '전 인원 투입 기준', warn: !!p.eta_warning },
+    ].map((c) => `<div class="sumcard ${c.warn ? 'warn' : ''}">
+        <div class="k">${c.k}</div><div class="v">${c.v}</div><div class="sub">${c.sub}</div></div>`).join('');
+  };
 
   const head = `<thead><tr>
       <th>담당자</th><th class="num">건수</th><th class="num">할당 slot</th><th class="num">주간 가용</th>
@@ -812,31 +821,50 @@ async function renderResources() {
       <span class="rs-title">QE 전체 리소스 현황 <small>(${esc(s.as_of)} 기준)</small></span>
       <span class="bar-right"><button class="btn" data-rs-refresh="1">↻ 새로고침</button></span>
     </div>
-    <p class="report-hint">대상 · 상태가 <b>예약대기 · 예약확정 · 진행중</b>인 의뢰 전체.
-      <b>1주 가용(${s.members.length}명 × ${s.week_business_days}영업일 = ${t.week_capacity} slot)을 100%</b>로 놓고
-      사용률·여유·초과를 %로 표기합니다. <b>1 slot = 1명의 1일 업무량</b>이라 할당 slot 합계가 그 담당자의
-      소요 영업일수입니다(주말·공휴일 제외).</p>
+    <p class="report-hint">대상 · 상태가 <b>예약대기 · 예약확정 · 진행중</b>인 의뢰 전체 (미완 ${s.overall.count}건 · ${s.overall.slots} slot).
+      <b>인증 담당</b>과 <b>기타 테스터</b>는 <b>별도 리소스</b>로 관리하므로 가용·사용률을 섞지 않습니다.
+      각 풀의 <b>1주 가용(인원수 × ${s.week_business_days}영업일)을 100%</b>로 놓고 사용률·여유·초과를 %로 표기합니다.
+      <b>1 slot = 1명의 1일 업무량</b>이라 할당 slot 합계가 그 담당자의 소요 영업일수입니다(주말·공휴일 제외).</p>
     ${warn}
-    <div class="summary stats-summary">${chips}</div>
+
+    <h3 class="rs-section">인증 담당 리소스 <small>${esc(s.members.join(' · '))}</small></h3>
+    <div class="summary stats-summary">${poolChips(t, '인증 담당', true)}</div>
     ${undef}
 
-    <h3 class="rs-section">일별 가용 리소스 현황 <small>향후 ${s.daily.horizon} 영업일</small></h3>
-    ${dailyPlanTable(s)}
+    <h4 class="rs-sub-section">일별 가용 현황 <small>향후 ${s.daily.horizon} 영업일</small></h4>
+    ${dailyPlanTable(s.daily, 'cert')}
 
-    <h3 class="rs-section">세부내용 · 담당자별 리소스 할당</h3>
+    <h4 class="rs-sub-section">세부내용 · 담당자별 리소스 할당</h4>
     <div class="table-wrap">
       <table class="stats-table rs-table">
         ${head}
         <tbody>
           <tr class="rs-group"><td colspan="8">인증 담당 (${s.members.length}명)</td></tr>
           ${s.rows.map((r) => resourceRow(r)).join('')}
-          <tr class="rs-group"><td colspan="8">미배정</td></tr>
+          <tr class="rs-group"><td colspan="8">미배정 — 자동 할당 대상</td></tr>
           ${resourceRow(s.unassigned)}
-          ${s.others.length ? `<tr class="rs-group"><td colspan="8">기타 테스터 (${s.others.length}명)</td></tr>
-          ${s.others.map((r) => resourceRow(r)).join('')}` : ''}
         </tbody>
       </table>
     </div>
+
+    ${hasOthers ? `
+    <h3 class="rs-section">기타 테스터 리소스 <small>${esc(s.other_members.join(' · '))} — 별도 관리</small></h3>
+    <div class="summary stats-summary">${poolChips(ot, '기타', false)}</div>
+
+    <h4 class="rs-sub-section">일별 가용 현황 <small>향후 ${s.others_daily.horizon} 영업일</small></h4>
+    ${dailyPlanTable(s.others_daily, 'other')}
+
+    <h4 class="rs-sub-section">세부내용 · 담당자별 리소스 할당</h4>
+    <div class="table-wrap">
+      <table class="stats-table rs-table">
+        ${head}
+        <tbody>
+          <tr class="rs-group"><td colspan="8">기타 테스터 (${s.other_members.length}명)</td></tr>
+          ${s.others.map((r) => resourceRow(r)).join('')}
+        </tbody>
+      </table>
+    </div>` : ''}
+
     <div class="rs-rules">
       <h4>Test Type별 소요 리소스 기준</h4>
       <ul>${rules}</ul>
@@ -856,9 +884,10 @@ async function renderResourceStrip() {
   if (!t.count) { el.classList.add('hidden'); return; }
   // 담당자 이름은 싣지 않는다 — 요약은 전체 정량 지표만 보여주고 개인별은 탭에서 본다.
   const today = s.daily.days[0];
+  const ot = s.others_totals;
   el.innerHTML = `
     <span class="rs-strip-k">QE 리소스</span>
-    <span>1주 가용 <b>${t.week_capacity} slot</b> = 100%</span>
+    <span>인증 담당 1주 가용 <b>${t.week_capacity} slot</b> = 100%</span>
     <span>미완 <b>${t.slots} slot</b> (${t.count}건)</span>
     <span>사용률 <b class="${t.over_slots ? 'rs-over' : ''}">${t.usage_pct}%</b></span>
     <span>${t.over_slots
@@ -866,6 +895,7 @@ async function renderResourceStrip() {
       : `<span class="rs-slack">여유 ${t.free_pct}% (${t.free_slots} slot)</span>`}</span>
     ${today ? `<span>오늘 여유 <b>${today.free}/${today.capacity} slot</b></span>` : ''}
     ${t.unassigned_slots ? `<span class="rs-strip-warn">미배정 ${t.unassigned_slots} slot</span>` : ''}
+    ${ot.slots ? `<span class="rs-dim">기타 별도 ${ot.slots} slot (${ot.usage_pct}%)</span>` : ''}
     <span class="rs-strip-go">자세히 ▸</span>`;
   el.classList.remove('hidden');
 }

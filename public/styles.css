@@ -337,6 +337,12 @@ fieldset:disabled legend::after { content: " · 읽기 전용"; color: var(--mut
 
 .rs-section small { font-weight: 600; font-size: 11.5px; color: var(--muted); margin-left: 6px; }
 
+/* 풀 안의 하위 섹션 (일별 현황 / 담당자별 할당) */
+.rs-sub-section {
+  margin: 16px 0 8px; font-size: 12px; font-weight: 800; color: var(--muted);
+}
+.rs-sub-section small { font-weight: 600; font-size: 11px; margin-left: 6px; }
+
 /* 일별 가용 리소스 현황 */
 .dp-table { font-size: 12.5px; }
 .dp-table .dp-empty-day td { background: #f6fbf7; }   /* 하루 종일 비는 날 */

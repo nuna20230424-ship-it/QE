@@ -54,7 +54,8 @@ const WEEK_BUSINESS_DAYS = 5;
 function rowOf(name, group, items, asOf) {
   const slots = items.reduce((a, r) => a + r.slots, 0);
   const eta = slots > 0 ? holidays.nthBusinessDay(asOf, slots) : null;
-  const cap = group === 'member' ? WEEK_BUSINESS_DAYS : null;
+  // 담당자 한 사람이면 인증 담당이든 기타든 주간 가용은 같다. 미배정만 사람이 없어 가용이 없다.
+  const cap = group === 'unassigned' ? null : WEEK_BUSINESS_DAYS;
   return {
     tester: name,
     group,                                  // member | other | unassigned
@@ -75,10 +76,13 @@ function rowOf(name, group, items, asOf) {
 // 배치 규칙 — 한 담당자는 하루에 1 slot만 쓴다(직렬). 그래서 담당자별로 큐를 만들어
 // 대표 일정(plan_date) 순으로 영업일에 이어 붙인다. 시작은 max(plan_date, 기준일)이다.
 // 미배정 건은 가장 빨리 비는 담당자 자리에 `배정 예정`으로 채워 넣는다 — 자동 할당의 미리보기다.
-// 일별 가용은 '인증 담당 4명'의 가용이므로, 4명 외 테스터에게 걸린 건은 이 가용을 쓰지 않는다.
-// 배치에서 빼되 excluded로 명시해 물량이 조용히 사라지지 않게 한다.
-function dailyPlanOf(items, asOf, horizon) {
-  const excludedItems = (items || []).filter((r) => r.tester && !MEMBERS.includes(r.tester));
+// 리소스 풀 하나(인증 담당 4명 또는 기타 테스터)의 일별 가용 현황.
+// members 밖의 테스터에게 걸린 건은 이 풀의 가용을 쓰지 않으므로 excluded로 빼서 명시한다
+// (호출부가 이미 걸러 넘기므로 정상이면 0이고, 0이 아니면 그게 신호다).
+// absorbUnassigned가 true인 풀만 담당자 미정 건을 '배정 예정'으로 흡수한다.
+function dailyPlanOf(items, asOf, horizon, members = MEMBERS, absorbUnassigned = true) {
+  const own = (items || []).filter((r) => !r.tester || members.includes(r.tester));
+  const excludedItems = (items || []).filter((r) => r.tester && !members.includes(r.tester));
   const excluded = {
     count: excludedItems.length,
     slots: excludedItems.reduce((a, r) => a + r.slots, 0),
@@ -86,7 +90,7 @@ function dailyPlanOf(items, asOf, horizon) {
   };
 
   const days = holidays.businessDaysFrom(asOf, horizon);
-  if (!days.length || !MEMBERS.length) return { days: [], weeks: [], horizon: 0, overflow: 0, excluded };
+  if (!days.length || !members.length) return { days: [], weeks: [], horizon: 0, overflow: 0, excluded };
 
   const idxOf = new Map(days.map((d, i) => [d, i]));
   // plan_date가 과거이거나 비어 있으면 오늘부터, 조회 구간보다 늦으면 구간 밖으로 본다.
@@ -99,7 +103,7 @@ function dailyPlanOf(items, asOf, horizon) {
 
   // days[i] 에 배치된 작업들. { tester, id, model_name, pending }
   const lanes = days.map(() => []);
-  const cursor = new Map(MEMBERS.map((n) => [n, 0]));    // 담당자별 다음 빈 영업일 인덱스
+  const cursor = new Map(members.map((n) => [n, 0]));    // 담당자별 다음 빈 영업일 인덱스
   let overflow = 0;                                      // 조회 구간을 넘어간 slot
 
   const place = (tester, item, fromIdx, pending) => {
@@ -114,20 +118,23 @@ function dailyPlanOf(items, asOf, horizon) {
   const byPlan = (a, b) => String(a.plan_date || '').localeCompare(String(b.plan_date || '')) || a.id - b.id;
 
   // 1단계 — 담당자가 정해진 건
-  for (const name of MEMBERS) {
-    for (const it of items.filter((r) => r.tester === name).sort(byPlan)) {
+  for (const name of members) {
+    for (const it of own.filter((r) => r.tester === name).sort(byPlan)) {
       place(name, it, startIndexOf(it.plan_date), false);
     }
   }
-  // 2단계 — 미배정 건을 가장 빨리 비는 담당자에게 (자동 할당 미리보기)
-  for (const it of items.filter((r) => !r.tester).sort(byPlan)) {
-    const from = startIndexOf(it.plan_date);
-    const pickName = MEMBERS.reduce((best, n) => (
-      Math.max(cursor.get(n), from) < Math.max(cursor.get(best), from) ? n : best), MEMBERS[0]);
-    place(pickName, it, from, true);
+  // 2단계 — 미배정 건을 가장 빨리 비는 담당자에게 (자동 할당 미리보기).
+  // 기타 풀은 자동 할당 대상이 아니므로 흡수하지 않는다.
+  if (absorbUnassigned) {
+    for (const it of own.filter((r) => !r.tester).sort(byPlan)) {
+      const from = startIndexOf(it.plan_date);
+      const pickName = members.reduce((best, n) => (
+        Math.max(cursor.get(n), from) < Math.max(cursor.get(best), from) ? n : best), members[0]);
+      place(pickName, it, from, true);
+    }
   }
 
-  const capacity = MEMBERS.length;
+  const capacity = members.length;
   const dayRows = days.map((date, i) => {
     const lane = lanes[i];
     const assigned = lane.filter((x) => !x.pending).length;
@@ -142,7 +149,7 @@ function dailyPlanOf(items, asOf, horizon) {
       used,
       free: Math.max(0, capacity - used),
       usage_pct: pct(used, capacity),
-      idle: MEMBERS.filter((n) => !lane.some((x) => x.tester === n)),   // 그날 비어 있는 담당자
+      idle: members.filter((n) => !lane.some((x) => x.tester === n)),   // 그날 비어 있는 담당자
       lane,
     };
   });
@@ -194,53 +201,73 @@ function summarize(openRows, asOf, horizon = 20) {
     else items.push(item);
   }
 
-  const totalSlots = items.reduce((a, r) => a + r.slots, 0);
-
   const pick = (fn) => items.filter(fn);
+
+  // ---- 리소스 풀을 둘로 나눈다 ----
+  // 인증 담당(4명)과 기타 테스터는 별도 리소스로 관리하므로 가용·사용률을 섞지 않는다.
+  // 기타 물량이 인증 담당 풀의 100%에 섞이면 사용률이 왜곡된다.
+  const otherNames = [...new Set(pick((r) => r.tester && !MEMBERS.includes(r.tester)).map((r) => r.tester))].sort();
+  const certItems = pick((r) => !r.tester || MEMBERS.includes(r.tester));
+  const otherItems = pick((r) => r.tester && !MEMBERS.includes(r.tester));
+
   const memberRows = MEMBERS.map((n) => rowOf(n, 'member', pick((r) => r.tester === n), asOf));
   const unassigned = rowOf('미배정', 'unassigned', pick((r) => !r.tester), asOf);
   unassigned.eta = null;                    // 담당자가 없으면 소진일을 낼 수 없다
   unassigned.eta_warning = null;
 
-  const otherNames = [...new Set(pick((r) => r.tester && !MEMBERS.includes(r.tester)).map((r) => r.tester))].sort();
   const otherRows = otherNames.map((n) => rowOf(n, 'other', pick((r) => r.tester === n), asOf));
 
-  // 전체 가용 = 인원수 × 5 slot(1주). 이 값을 100%로 놓는다.
-  const dailyCapacity = MEMBERS.length;
-  const weekCapacity = dailyCapacity * WEEK_BUSINESS_DAYS;
-  const usagePct = pct(totalSlots, weekCapacity);
-
-  // 전체 소진 예상: 4명이 하루 4 slot을 소화한다고 볼 때 필요한 영업일수.
-  const totalDays = dailyCapacity > 0 ? Math.ceil(totalSlots / dailyCapacity) : null;
-  const totalEta = totalDays > 0 ? holidays.nthBusinessDay(asOf, totalDays) : null;
-
-  const daily = dailyPlanOf(items, asOf, horizon);
-
-  return {
-    as_of: asOf,
-    members: MEMBERS.slice(),
-    slot_rules: SLOT_RULES,
-    week_business_days: WEEK_BUSINESS_DAYS,
-    totals: {
-      count: items.length,
-      slots: totalSlots,
-      assigned_slots: totalSlots - unassigned.slots,
-      unassigned_slots: unassigned.slots,
+  // 풀 하나의 총계. 1주 가용(인원수 × 5 slot)을 100%로 놓는다.
+  const totalsOf = (poolItems, poolMembers, unassignedSlots) => {
+    const slots = poolItems.reduce((a, r) => a + r.slots, 0);
+    const dailyCapacity = poolMembers.length;
+    const weekCapacity = dailyCapacity * WEEK_BUSINESS_DAYS;
+    const usagePct = pct(slots, weekCapacity);
+    const days = dailyCapacity > 0 ? Math.ceil(slots / dailyCapacity) : null;
+    const eta = days > 0 ? holidays.nthBusinessDay(asOf, days) : null;
+    return {
+      headcount: dailyCapacity,
+      count: poolItems.length,
+      slots,
+      assigned_slots: slots - unassignedSlots,
+      unassigned_slots: unassignedSlots,
       daily_capacity: dailyCapacity,          // 1일 가용 slot (= 인원수)
       week_capacity: weekCapacity,            // 1주 가용 slot = 100% 기준
       // 1주 가용을 100%로 본 정량 지표
       usage_pct: usagePct,
       free_pct: Math.max(0, round1(100 - usagePct)),
       over_pct: Math.max(0, round1(usagePct - 100)),
-      free_slots: Math.max(0, weekCapacity - totalSlots),
-      over_slots: Math.max(0, totalSlots - weekCapacity),
-      weeks_needed: weekCapacity > 0 ? round1(totalSlots / weekCapacity) : 0,
-      unassigned_pct: pct(unassigned.slots, weekCapacity),
-      days: totalDays,
-      eta: totalEta,
-      eta_warning: holidays.coverageWarning(totalEta),
+      free_slots: Math.max(0, weekCapacity - slots),
+      over_slots: Math.max(0, slots - weekCapacity),
+      weeks_needed: weekCapacity > 0 ? round1(slots / weekCapacity) : 0,
+      unassigned_pct: pct(unassignedSlots, weekCapacity),
+      days,
+      eta,
+      eta_warning: holidays.coverageWarning(eta),
+    };
+  };
+
+  // 인증 담당 풀은 미배정 건을 자동 할당 대상으로 흡수한다. 기타 풀은 흡수하지 않는다.
+  const daily = dailyPlanOf(certItems, asOf, horizon, MEMBERS, true);
+  const othersDaily = otherNames.length
+    ? dailyPlanOf(otherItems, asOf, horizon, otherNames, false)
+    : null;
+
+  return {
+    as_of: asOf,
+    members: MEMBERS.slice(),
+    other_members: otherNames,
+    slot_rules: SLOT_RULES,
+    week_business_days: WEEK_BUSINESS_DAYS,
+    // 두 풀을 합친 전체 물량. 풀별 사용률과 섞이지 않게 건수·slot만 둔다.
+    overall: {
+      count: items.length,
+      slots: items.reduce((a, r) => a + r.slots, 0),
     },
+    totals: totalsOf(certItems, MEMBERS, unassigned.slots),
+    others_totals: totalsOf(otherItems, otherNames, 0),
     daily,
+    others_daily: othersDaily,
     rows: memberRows,
     unassigned,
     others: otherRows,

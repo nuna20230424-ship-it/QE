@@ -7,6 +7,7 @@ const backup = require('./backup');
 const report = require('./report');
 const scheduler = require('./scheduler');
 const resources = require('./resources');
+const holidays = require('./holidays');
 
 const app = express();
 app.use(express.json());
@@ -61,7 +62,8 @@ app.get('/api/next-round', (req, res) => {
 // Task 6. QE 전체 리소스 현황. 미완 의뢰(예약대기·예약확정·진행중)의 소요 slot을
 // 담당자별로 모아 영업일수로 환산한다. as_of는 테스트·소급조회용(기본값 오늘).
 app.get('/api/resources', (req, res) => {
-  const asOf = String(req.query.as_of || '').trim() || new Date().toISOString().slice(0, 10);
+  // 기준일은 서버 로컬 날짜다. UTC로 계산하면 KST 00:00~09:00에 하루 뒤처진다.
+  const asOf = String(req.query.as_of || '').trim() || holidays.today();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(asOf)) {
     return res.status(400).json({ error: 'as_of는 YYYY-MM-DD 형식이어야 합니다.' });
   }

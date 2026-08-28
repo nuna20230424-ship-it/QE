@@ -71,6 +71,18 @@ function isBusinessDay(ymd) {
 
 const toYmd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
+// 오늘 날짜(서버 로컬 기준).
+// `toISOString().slice(0,10)`은 UTC 날짜라 KST(UTC+9)에서는 00:00~09:00 사이에 하루 뒤처진다.
+// 아침 출근 시간대가 정확히 그 구간이므로 날짜 기준은 반드시 로컬로 계산한다.
+const today = () => toYmd(new Date());
+
+// 오늘로부터 n일 전/후(로컬 기준) 날짜
+function shiftDays(n) {
+  const d = new Date();
+  d.setDate(d.getDate() + n);
+  return toYmd(d);
+}
+
 // from(포함)부터 영업일을 세어 n번째 영업일의 날짜. n<=0이면 null.
 // n=1이면 from 이 영업일일 때 from 자신, 아니면 그 다음 영업일이다.
 // 무한 루프 방지를 위해 최대 10년(3660일)까지만 전진한다.
@@ -128,6 +140,8 @@ module.exports = {
   nthBusinessDay,
   businessDaysFrom,
   weekOf,
+  today,
+  shiftDays,
   coverageWarning,
   reload,
   knownYears: () => KNOWN_YEARS.slice(),

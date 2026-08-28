@@ -771,22 +771,31 @@ function resourceRow(r) {
 // ---- 1. 실시간 리소스 가동률 ----
 // 팀 전체의 1일 총 가용 slot 대비, 오늘 담당자를 점유 중인 확정 업무(진행중·예약확정) 비율.
 // 예약대기는 아직 확정 전이라 가동률에서 빼고 별도로 알린다.
-const UTIL_LEVEL = (p) => (p >= 100 ? 'over' : (p >= 80 ? 'warn' : 'safe'));
-
 function utilizationPanel(u, compact) {
-  const lvl = UTIL_LEVEL(u.usage_pct);
-  const w = Math.min(100, Math.max(0, u.usage_pct));
+  // level은 서버가 정한다 — 계획 수요가 가용을 넘겼거나(과부하) 여유가 0이면 over(빨강).
+  const lvl = u.level;
+  // 막대는 100%를 절반 지점에 두고 그린다. 계획 수요가 100%를 넘으면 그만큼 빨강으로 이어 붙인다.
+  const scale = u.demand_pct > 100 ? Math.min(200, u.demand_pct) : 100;
+  const bar = (p) => Math.max(0, Math.min(100, (p / scale) * 100));
+  const over = u.demand_pct > 100;
   return `
     <div class="util ${compact ? 'util-compact' : ''} util-${lvl}">
       <div class="util-main">
         <div class="util-head">
           <span class="util-title">실시간 리소스 가동률</span>
           <small>${esc(u.date)} 기준 · 1일 총 가용 ${u.capacity} slot</small>
+          ${over ? `<span class="util-tag">계획 과부하 ${u.demand_pct}%</span>` : ''}
         </div>
-        <div class="util-track"><i style="width:${w}%"></i></div>
+        <div class="util-track">
+          <i class="ut-run" style="width:${bar(u.usage_pct)}%"></i>
+          ${over ? `<i class="ut-over" style="width:${bar(u.demand_pct) - bar(100)}%;left:${bar(100)}%"></i>` : ''}
+          ${scale > 100 ? `<i class="ut-mark" style="left:${bar(100)}%" title="가용 100%"></i>` : ''}
+        </div>
         <div class="util-legend">
           <b>${u.usage_pct}%</b> 가동 · <b>${u.used}</b>/${u.capacity} slot 사용 중
           ${u.busy.length ? `<span class="util-names">${u.busy.map(esc).join(' · ')}</span>` : ''}
+          ${over ? `<span class="util-over-t">계획상 ${u.demand} slot 필요 — ${u.demand_over} slot 초과${
+            u.doubled.length ? ` (${u.doubled.map(esc).join(' · ')} 중복 배정)` : ''}</span>` : ''}
           ${u.waiting ? `<span class="util-wait">예약대기 ${u.waiting}건 대기</span>` : ''}
         </div>
       </div>

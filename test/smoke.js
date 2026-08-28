@@ -296,6 +296,22 @@ ok('음수 slot이면 null', holidays.nthBusinessDay('2026-08-28', -3) === null)
 ok('잘못된 날짜면 null', holidays.nthBusinessDay('2026/08/28', 3) === null);
 
 // 등록되지 않은 연도로 넘어가면 화면에 경고를 띄워야 한다 (지어낸 날짜를 확정값처럼 보이지 않게)
+// 기준일은 로컬 날짜여야 한다. toISOString()은 UTC라 KST(UTC+9)에서 00:00~09:00에 하루 뒤처진다.
+const pad = (n) => String(n).padStart(2, '0');
+const localYmd = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+ok('today()는 로컬 날짜', holidays.today() === localYmd(new Date()), holidays.today());
+ok('shiftDays(0) = today()', holidays.shiftDays(0) === holidays.today());
+ok('shiftDays(-1)은 하루 전', holidays.shiftDays(-1) === localYmd(new Date(Date.now() - 86400000)));
+// UTC 경계 재현 — KST 오전 6시는 UTC로 전날 21시다. UTC로 날짜를 뽑으면 하루 뒤처진다.
+const boundary = new Date('2026-08-28T21:00:00Z');
+if (boundary.getTimezoneOffset() < 0) {          // UTC보다 동쪽(KST 등)에서만 성립
+  ok('UTC 방식은 하루 뒤처짐 (재현)', boundary.toISOString().slice(0, 10) === '2026-08-28');
+  ok('로컬 방식은 정확 (수정 확인)', localYmd(boundary) === '2026-08-29', localYmd(boundary));
+} else {
+  ok('UTC 경계 검증 건너뜀 (TZ가 UTC 이서)', true);
+  ok('UTC 경계 검증 건너뜀 2', true);
+}
+
 ok('등록 연도는 경고 없음', holidays.coverageWarning('2026-12-25') === null);
 ok('미등록 연도는 경고 있음', typeof holidays.coverageWarning('2030-01-05') === 'string');
 ok('경고에 연도 명시', String(holidays.coverageWarning('2030-01-05')).includes('2030'));
@@ -549,6 +565,51 @@ const uEmpty = resources.summarize([], AS_OF, 10).utilization;
 ok('빈 입력 가동률 0%', uEmpty.usage_pct === 0);
 ok('빈 입력 잔여 = 가용 전량 4', uEmpty.free === 4, String(uEmpty.free));
 ok('빈 입력 여유 인원 4명', uEmpty.idle.length === 4);
+ok('빈 입력 신호 safe', uEmpty.level === 'safe', uEmpty.level);
+
+// 1-b. 100% 초과 표기 — 배치 가동률은 하루 1인 1slot 규칙 때문에 구조적으로 100%를 넘을 수 없다.
+// 초과는 '계획 기준 수요(demand)'로만 드러난다. 이것이 빨강 표기의 근거다.
+const jam = ['이은경', '조아라', '이해찬', '문유림', '이은경', '조아라'].map((n, i) => ({
+  id: 200 + i, cert_type: 'Google xTS', test_type: 'MR', model_name: `J-${i}`,
+  status: '진행중', tester: n, plan_date: AS_OF,
+}));
+const uj = resources.summarize(jam, AS_OF, 10).utilization;
+ok('배치 가동률은 100% 이하 유지', uj.usage_pct <= 100, String(uj.usage_pct));
+ok('배치 가동률 100% (4명 전원 점유)', uj.usage_pct === 100, String(uj.usage_pct));
+ok('계획 수요 6 slot (겹침 허용)', uj.demand === 6, String(uj.demand));
+ok('계획 수요 150% — 100% 초과', uj.demand_pct === 150, String(uj.demand_pct));
+ok('초과분 2 slot', uj.demand_over === 2, String(uj.demand_over));
+ok('중복 배정 담당자 = 이은경·조아라', uj.doubled.slice().sort().join(',') === '이은경,조아라', uj.doubled.join(','));
+ok('100% 초과면 빨강(over)', uj.level === 'over', uj.level);
+ok('잔여 가용 0 slot', uj.free === 0, String(uj.free));
+
+// 여유가 0이면(가득) 계획 초과가 없어도 빨강 — 신규를 즉시 못 받는 상태다
+const full = ['이은경', '조아라', '이해찬', '문유림'].map((n, i) => ({
+  id: 300 + i, cert_type: 'Google xTS', test_type: 'MR', model_name: `F-${i}`,
+  status: '진행중', tester: n, plan_date: AS_OF,
+}));
+const uf = resources.summarize(full, AS_OF, 10).utilization;
+ok('가득이면 100%', uf.usage_pct === 100 && uf.free === 0);
+ok('가득이지만 계획 초과는 없음 (겹침 없음)', uf.demand_over === 0, String(uf.demand_over));
+ok('가득도 빨강(over) — 신규 수용 불가', uf.level === 'over', uf.level);
+
+// 80% 경계 — 4명 중 3명 점유 = 75% → safe
+const three = ['이은경', '조아라', '이해찬'].map((n, i) => ({
+  id: 400 + i, cert_type: 'Google xTS', test_type: 'MR', model_name: `T-${i}`,
+  status: '진행중', tester: n, plan_date: AS_OF,
+}));
+const u3 = resources.summarize(three, AS_OF, 10).utilization;
+ok('3/4 = 75% → safe', u3.usage_pct === 75 && u3.level === 'safe', `${u3.usage_pct}% ${u3.level}`);
+ok('3/4일 때 잔여 1 slot', u3.free === 1);
+
+// 예약대기는 가동률에도 계획 수요에도 들어가지 않는다 (확정 업무만)
+const waitOnly = [{ id: 500, cert_type: 'Netflix NTS', test_type: 'IR', model_name: 'W-1',
+  status: '예약대기', tester: '이은경', plan_date: AS_OF }];
+const uw = resources.summarize(waitOnly, AS_OF, 10).utilization;
+ok('예약대기만 있으면 가동률 0%', uw.usage_pct === 0, String(uw.usage_pct));
+ok('예약대기는 계획 수요에도 제외', uw.demand === 0, String(uw.demand));
+ok('예약대기는 waiting으로 별도 계상', uw.waiting === 1, String(uw.waiting));
+ok('예약대기만이면 신호 safe', uw.level === 'safe', uw.level);
 
 // 2. 팀원별 업무 부하도 (신호등)
 const dRow = (n) => ds.rows.find((r) => r.tester === n);

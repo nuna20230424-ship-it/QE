@@ -170,6 +170,18 @@ function dailyPlanOf(items, asOf, horizon, members = MEMBERS, absorbUnassigned =
     const used = assigned + pending;
     // 가동률은 확정된 업무(진행중·예약확정)만 센다. 예약대기는 아직 확정 전이라 뺀다.
     const committed = lane.filter((x) => COMMITTED.includes(x.status)).length;
+
+    // 계획 기준 수요 — 직렬 배치로 밀어내기 전에, 계획 일정대로면 그 날 몇 slot이 필요한가.
+    // 배치 결과(committed)는 하루 1인 1slot 규칙 때문에 절대 가용을 넘지 못하므로
+    // 가동률 100% 초과를 표시할 수 없다. 초과는 이 수요 기준으로만 드러난다.
+    const declared = placements.filter((p) => COMMITTED.includes(p.item.status)
+      && p.declared_idx <= i && i <= p.declared_idx + p.slots - 1);
+    const demand = declared.length;
+    // 그 날 계획이 2건 이상 겹친 담당자 = 실제 과다 배정 인원
+    const dblCount = new Map();
+    for (const p of declared) dblCount.set(p.tester, (dblCount.get(p.tester) || 0) + 1);
+    const doubled = [...dblCount.entries()].filter(([, n]) => n > 1).map(([n]) => n);
+
     return {
       date,
       weekday: '일월화수목금토'[new Date(`${date}T00:00:00`).getDay()],
@@ -183,6 +195,11 @@ function dailyPlanOf(items, asOf, horizon, members = MEMBERS, absorbUnassigned =
       free_committed: Math.max(0, capacity - committed),   // 즉시 수용 가능한 잔여 slot
       usage_pct: pct(used, capacity),
       committed_pct: pct(committed, capacity),
+      // 계획 기준 — 여기만 100%를 넘을 수 있다
+      demand,
+      demand_pct: pct(demand, capacity),
+      demand_over: Math.max(0, demand - capacity),
+      doubled,                                             // 계획이 겹친 담당자
       idle: members.filter((n) => !lane.some((x) => x.tester === n)),   // 그날 비어 있는 담당자
       busy_committed: members.filter((n) => lane.some((x) => x.tester === n && COMMITTED.includes(x.status))),
       lane,
@@ -366,6 +383,20 @@ function summarize(openRows, asOf, horizon = 20) {
     waiting: today ? today.waiting : 0,                    // 오늘 일정에 걸린 예약대기 건
     busy: today ? today.busy_committed : [],
     idle: today ? today.idle : MEMBERS.slice(),
+    // 계획 기준 수요. 배치 가동률(usage_pct)은 하루 1인 1slot 규칙 때문에 100%를 넘을 수 없어
+    // 초과는 이 값으로만 드러난다. demand_pct > 100 이면 계획이 가용을 넘긴 과부하다.
+    demand: today ? today.demand : 0,
+    demand_pct: today ? today.demand_pct : 0,
+    demand_over: today ? today.demand_over : 0,
+    doubled: today ? today.doubled : [],                   // 오늘 계획이 겹친 담당자
+    // 빨강 조건 — 계획이 가용을 넘겼거나(과부하), 여유가 0이라 신규를 못 받는 경우
+    level: (() => {
+      const d = today ? today.demand_pct : 0;
+      const uUsed = today ? today.committed_pct : 0;
+      if (d > 100 || uUsed >= 100) return 'over';
+      if (uUsed >= 80) return 'warn';
+      return 'safe';
+    })(),
     // 이번 주 보조 지표 (남은 영업일 기준)
     week: thisWeek ? {
       label: thisWeek.label, business_days: thisWeek.business_days,

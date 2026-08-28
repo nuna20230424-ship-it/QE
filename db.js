@@ -1,6 +1,7 @@
 // 인증업무 의뢰 데이터를 보관하는 SQLite 데이터 계층 (이력·타임스탬프·통계 포함)
 const path = require('path');
 const Database = require('better-sqlite3');
+const holidays = require('./holidays');
 
 // 운영은 data.db 고정. DB_PATH는 스모크 테스트가 실 DB를 건드리지 않게 하는 용도.
 const db = new Database(process.env.DB_PATH || path.join(__dirname, 'data.db'));
@@ -218,7 +219,8 @@ function bottlenecksOf({ roundThreshold = 5, staleDays = 14 } = {}) {
       round: r.round, fail: r.fail, last_date: r.last_date,
     }));
 
-  const limit = new Date(Date.now() - staleDays * 86400000).toISOString().slice(0, 10);
+  // 로컬 날짜 기준. UTC로 계산하면 KST 00:00~09:00에 하루 뒤처진다.
+  const limit = holidays.shiftDays(-staleDays);
   const stale = db.prepare(`
     SELECT id, model_name, cert_type, ${PURPOSE} AS test_purpose, round, status, tester,
            ${ACT_START} AS since,
@@ -396,7 +398,9 @@ module.exports = {
     const testerLoad = {}; // 미완료(완료/보류 제외) 기준 테스터 부하
     let overdue = 0;
     const leadDays = [];
-    const today = nowIso().slice(0, 10);
+    // 지연(overdue) 판정 기준일. 로컬 날짜여야 한다 — UTC면 KST 00:00~09:00에 하루 뒤처져
+    // 어제 지난 예약확정일이 아직 지연으로 잡히지 않는다.
+    const today = holidays.today();
 
     for (const r of all) {
       byStatus[r.status] = (byStatus[r.status] || 0) + 1;

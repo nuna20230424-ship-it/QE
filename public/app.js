@@ -784,8 +784,13 @@ function utilizationPanel(u, compact) {
         <div class="util-head">
           <span class="util-title">실시간 리소스 가동률</span>
           <small>${esc(u.date)} 기준 · 1일 총 가용 ${u.capacity} slot</small>
+          ${u.as_of_is_business_day ? '' : `<span class="util-note">오늘은 휴무${
+            u.as_of_holiday ? `(${esc(u.as_of_holiday)})` : ''} — 다음 영업일 기준</span>`}
           ${over ? `<span class="util-tag">계획 과부하 ${u.demand_pct}%</span>` : ''}
         </div>
+        ${u.no_plan_date.count ? `<div class="util-caveat">⚠ 계획 일정이 비어 있는 확정 업무
+          <b>${u.no_plan_date.count}건 (${u.no_plan_date.slots} slot)</b>이 기준일로 계상됐습니다 —
+          일정을 채우면 수요가 실제 날짜로 흩어집니다.</div>` : ''}
         <div class="util-track">
           <i class="ut-run" style="width:${bar(u.usage_pct)}%"></i>
           ${over ? `<i class="ut-over" style="width:${bar(u.demand_pct) - bar(100)}%;left:${bar(100)}%"></i>` : ''}

@@ -397,6 +397,15 @@ function summarize(openRows, asOf, horizon = 20) {
       if (uUsed >= 80) return 'warn';
       return 'safe';
     })(),
+    // 기준일이 휴일이면 첫 영업일로 넘어간다. 화면이 "오늘"이라고 오해하지 않게 알려준다.
+    as_of_is_business_day: holidays.isBusinessDay(asOf),
+    as_of_holiday: holidays.holidayName(asOf),
+    // 계획일이 비어 있는 확정 업무는 시작일을 알 수 없어 기준일로 계상된다.
+    // 그대로 두면 데이터 누락이 '오늘 과부하'라는 거짓 경보로 나타나므로 함께 알린다.
+    no_plan_date: (() => {
+      const rows = certItems.filter((r) => COMMITTED.includes(r.status) && !r.plan_date);
+      return { count: rows.length, slots: rows.reduce((a, r) => a + r.slots, 0) };
+    })(),
     // 이번 주 보조 지표 (남은 영업일 기준)
     week: thisWeek ? {
       label: thisWeek.label, business_days: thisWeek.business_days,

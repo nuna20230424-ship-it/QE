@@ -611,6 +611,27 @@ ok('예약대기는 계획 수요에도 제외', uw.demand === 0, String(uw.dema
 ok('예약대기는 waiting으로 별도 계상', uw.waiting === 1, String(uw.waiting));
 ok('예약대기만이면 신호 safe', uw.level === 'safe', uw.level);
 
+// 데이터 누락이 거짓 과부하로 보이지 않게 함께 알린다
+const noPlan = [1, 2, 3, 4, 5].map((i) => ({
+  id: 600 + i, cert_type: 'Google xTS', test_type: 'MR', model_name: `NP-${i}`,
+  status: '예약확정', tester: ['이은경', '조아라', '이해찬', '문유림', '이은경'][i - 1], plan_date: '',
+}));
+const unp = resources.summarize(noPlan, AS_OF, 5).utilization;
+ok('계획일 미입력 건은 기준일로 계상돼 초과가 뜬다', unp.demand_pct === 125 && unp.level === 'over',
+  `${unp.demand_pct}% ${unp.level}`);
+ok('계획일 미입력 건수·slot을 함께 알림', unp.no_plan_date.count === 5 && unp.no_plan_date.slots === 10,
+  JSON.stringify(unp.no_plan_date));
+ok('계획일이 있으면 미입력 경고 없음', resources.summarize(full, AS_OF, 5).utilization.no_plan_date.count === 0);
+
+// 기준일이 휴일이면 다음 영업일로 넘어간다 — 화면이 '오늘'로 오해하지 않게 알린다
+const sat = resources.summarize(full, '2026-08-29', 5).utilization;   // 토요일
+ok('토요일은 영업일 아님 표시', sat.as_of_is_business_day === false);
+ok('토요일 조회 시 기준일이 다음 월요일', sat.date === '2026-08-31', sat.date);
+const chu = resources.summarize(full, '2026-09-25', 5).utilization;   // 추석
+ok('공휴일은 영업일 아님 표시', chu.as_of_is_business_day === false);
+ok('공휴일 이름 노출', chu.as_of_holiday === '추석', String(chu.as_of_holiday));
+ok('영업일 조회는 휴무 표시 없음', resources.summarize(full, AS_OF, 5).utilization.as_of_is_business_day === true);
+
 // 2. 팀원별 업무 부하도 (신호등)
 const dRow = (n) => ds.rows.find((r) => r.tester === n);
 ok('신호등 임계 80/100', ds.load_levels.safe === 80 && ds.load_levels.warn === 100,

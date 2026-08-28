@@ -336,6 +336,16 @@ ok('빈 입력에도 담당 4명 행 유지', rsEmpty.rows.length === 4, String(
 ok('빈 입력 담당자 순서 고정', rsEmpty.rows.map((r) => r.tester).join(',') === '이은경,조아라,이해찬,문유림');
 ok('빈 입력 편차 0', rsEmpty.totals.spread === 0);
 ok('빈 입력 미정의 없음', rsEmpty.undefined_rules.length === 0);
+// 물량이 0이면 전체 리소스도 0% — 100%로 부풀리지 않는다
+ok('빈 입력 전체 0% (100% 아님)', rsEmpty.totals.total_pct === 0, String(rsEmpty.totals.total_pct));
+ok('빈 입력 점유율 전부 0 (NaN 아님)', rsEmpty.rows.every((r) => r.share === 0), JSON.stringify(rsEmpty.rows.map((r) => r.share)));
+ok('빈 입력 미배정 0%', rsEmpty.totals.unassigned_pct === 0);
+ok('빈 입력 쏠림 폭 0%p', rsEmpty.totals.spread_pct === 0);
+ok('빈 입력 초과 합계 0%p', rsEmpty.totals.overload_pct === 0);
+// 균등분담선은 물량과 무관하게 인원수로 정해진다 (4명 → 25%)
+ok('균등분담선 25% (4명)', rsEmpty.totals.baseline_pct === 25, String(rsEmpty.totals.baseline_pct));
+// 물량 0이면 쏠림 개념이 없다 — '25%p 여유'처럼 오해를 주지 않아야 한다
+ok('빈 입력 편차 0%p (여유로 오해 방지)', rsEmpty.rows.every((r) => r.delta_pct === 0), JSON.stringify(rsEmpty.rows.map((r) => r.delta_pct)));
 
 // 픽스처: NTS 12(이은경) + xTS IR 3(조아라) + AVTS 4(미배정) + xTS MR 2(김지윤=기타) + 미정의 1건
 const OPEN = [
@@ -368,13 +378,35 @@ ok('이은경 예상 소진일 = 12번째 영업일', rowOf('이은경').eta ===
 ok('건 없는 담당자는 소진일 null', rowOf('이해찬').eta === null);
 ok('미배정은 소진일 산출하지 않음', rs.unassigned.eta === null);
 
-// 여유/초과 = 4명 균등분담 기준선 대비 편차
-ok('기준선 = 총 slot ÷ 4', rs.totals.baseline === 5.3, String(rs.totals.baseline));   // 21/4 = 5.25 → 5.3
-ok('이은경은 초과(음수)', rowOf('이은경').delta < 0, String(rowOf('이은경').delta));
-ok('이해찬은 여유(양수)', rowOf('이해찬').delta > 0, String(rowOf('이해찬').delta));
-ok('미배정은 기준선 대비 없음(null)', rs.unassigned.delta === null);
-ok('기타 테스터도 기준선 대비 없음', rs.others[0].delta === null);
-ok('부하 편차 = 최다 - 최소', rs.totals.spread === 12, String(rs.totals.spread));
+// 전체 미완 물량을 100%로 산정 (총 21 slot)
+ok('전체 리소스 100%', rs.totals.total_pct === 100, String(rs.totals.total_pct));
+ok('균등분담선 25% (4명)', rs.totals.baseline_pct === 25, String(rs.totals.baseline_pct));
+ok('이은경 점유율 57.1% (12/21)', rowOf('이은경').share === 57.1, String(rowOf('이은경').share));
+ok('조아라 점유율 14.3% (3/21)', rowOf('조아라').share === 14.3, String(rowOf('조아라').share));
+ok('이해찬 점유율 0%', rowOf('이해찬').share === 0);
+ok('미배정 점유율 19% (4/21)', rs.unassigned.share === 19, String(rs.unassigned.share));
+ok('기타 점유율 9.5% (2/21)', rs.others[0].share === 9.5, String(rs.others[0].share));
+// 4명 + 미배정 + 기타 점유율 합이 100%가 되어야 한다 (반올림 오차 0.2%p 이내)
+const shareSum = [...rs.rows, rs.unassigned, ...rs.others].reduce((a, r) => a + r.share, 0);
+ok('점유율 합계 ≈ 100%', Math.abs(shareSum - 100) < 0.3, String(shareSum));
+ok('배정 + 미배정 = 100%', Math.abs(rs.totals.assigned_pct + rs.totals.unassigned_pct - 100) < 0.3,
+  `${rs.totals.assigned_pct}+${rs.totals.unassigned_pct}`);
+
+// 초과 / 여유 = 균등분담선(25%) 대비 %p
+ok('이은경 +32.1%p 초과', rowOf('이은경').delta_pct === 32.1, String(rowOf('이은경').delta_pct));
+ok('조아라 여유(음수)', rowOf('조아라').delta_pct < 0, String(rowOf('조아라').delta_pct));
+ok('이해찬 -25%p 여유(전부)', rowOf('이해찬').delta_pct === -25, String(rowOf('이해찬').delta_pct));
+ok('초과 합계 = 기준선 넘긴 분량만', rs.totals.overload_pct === 32.1, String(rs.totals.overload_pct));
+ok('쏠림 폭 = 최다 - 최소 점유율', rs.totals.spread_pct === 57.1, String(rs.totals.spread_pct));
+ok('미배정은 균등분담선 대비 없음(null)', rs.unassigned.delta_pct === null);
+ok('기타 테스터도 균등분담선 대비 없음', rs.others[0].delta_pct === null);
+
+// slot 환산값도 함께 남긴다 (재배정 시 "몇 slot 옮기면 되는가")
+ok('기준선 slot = 총 slot ÷ 4', rs.totals.baseline === 5.3, String(rs.totals.baseline));   // 21/4 = 5.25 → 5.3
+// 5.25 - 12 = -6.75. JS Math.round는 -0.5를 0 방향으로 올리므로 -6.7이다(표기용이라 무해).
+ok('이은경 초과 slot 표기', rowOf('이은경').delta === -6.7, String(rowOf('이은경').delta));
+ok('이해찬 여유 slot 표기', rowOf('이해찬').delta === 5.3, String(rowOf('이해찬').delta));
+ok('부하 편차 slot = 최다 - 최소', rs.totals.spread === 12, String(rs.totals.spread));
 
 // 전체 소진 예상: 4명이 하루 4 slot 소화 → ceil(21/4) = 6 영업일
 ok('1일 가용 = 담당 인원수', rs.totals.daily_capacity === 4);
@@ -410,10 +442,14 @@ notify.sendReportMail = async (subject, html) => { sent.push({ subject, html });
 
   ok('세 보고 모두 발송 호출됨', sent.length === 3, String(sent.length));
   const byKey = { daily: dRep, weekly: wRep, certstats: cRep };
+  // 본문 푸터에는 `자동 생성 · <생성 시각>`이 박혀 있다. 스케줄러는 발송 시점의 시각으로 본문을
+  // 다시 만들므로, 앞에서 만들어 둔 기대값과 초 단위가 어긋나면 문자열 비교가 깨진다(테스트가
+  // 길어질수록 자주 걸린다). 검증 의도는 '어느 본문을 보냈는가'이므로 시각만 지우고 비교한다.
+  const stripTs = (h) => String(h).replace(/자동 생성[^<]*/g, '자동 생성');
   ['daily', 'weekly', 'certstats'].forEach((k, i) => {
     const s = sent[i] || {};
-    ok(`${k} 자동발송은 mailHtml 사용`, s.html === byKey[k].mailHtml);
-    ok(`${k} 자동발송이 화면용 html이 아님`, s.html !== byKey[k].html);
+    ok(`${k} 자동발송은 mailHtml 사용`, stripTs(s.html) === stripTs(byKey[k].mailHtml));
+    ok(`${k} 자동발송이 화면용 html이 아님`, stripTs(s.html) !== stripTs(byKey[k].html));
     const hit = SECRETS.filter((v) => String(s.html).includes(v));
     ok(`${k} 자동발송에 모델명·실명·결함코멘트 없음`, hit.length === 0, hit.join(', '));
   });

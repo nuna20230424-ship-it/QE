@@ -654,24 +654,47 @@ async function renderBottlenecks() {
 // 기간을 자르지 않고 미완 물량 전체를 보되, 여유/초과는 4명 균등분담 기준선 대비로 표시한다.
 const etaText = (r) => (r.eta ? `${r.eta}${r.eta_warning ? ' ⚠' : ''}` : '—');
 
-// 기준선 대비 편차. 양수면 여유, 음수면 초과.
-function deltaCell(delta) {
-  if (delta === null || delta === undefined) return '<span class="rs-dim">—</span>';
-  if (delta === 0) return '<span class="rs-even">기준선</span>';
-  return delta > 0
-    ? `<span class="rs-slack">+${delta}일 여유</span>`
-    : `<span class="rs-over">${delta}일 초과</span>`;
+// 균등분담선 대비 편차(%p). 양수면 초과, 음수면 여유. slot 환산값을 함께 붙여 재배정에 바로 쓴다.
+function deltaCell(r) {
+  if (r.delta_pct === null || r.delta_pct === undefined) return '<span class="rs-dim">—</span>';
+  if (r.delta_pct === 0) return '<span class="rs-even">기준선</span>';
+  return r.delta_pct > 0
+    ? `<span class="rs-over">+${r.delta_pct}%p 초과</span><small class="rs-sub">${Math.abs(r.delta)} slot 넘김</small>`
+    : `<span class="rs-slack">${Math.abs(r.delta_pct)}%p 여유</span><small class="rs-sub">${r.delta} slot 받을 수 있음</small>`;
 }
 
-// 부하 막대. 가장 무거운 담당자를 100%로 정규화하고 기준선 위치를 눈금으로 표시한다.
-function loadBar(slots, max, baseline) {
-  const w = max > 0 ? Math.round((slots / max) * 100) : 0;
-  const mark = (max > 0 && baseline !== null) ? Math.min(100, Math.round((baseline / max) * 100)) : null;
-  const over = (baseline !== null && slots > baseline);
-  return `<span class="load-bar" title="${slots} slot">
+// 점유율 막대. 전체 미완 물량을 100%로 보고 그 안에서의 몫을 그린다.
+// 기준선(100 ÷ 인원수) 위치에 눈금을 찍어 초과·여유를 눈으로 가른다.
+function shareBar(share, baselinePct) {
+  const w = Math.min(100, Math.max(0, share));
+  const over = (baselinePct !== null && share > baselinePct);
+  return `<span class="load-bar" title="전체의 ${share}%">
     <i class="lb-fill ${over ? 'lb-over' : ''}" style="width:${w}%"></i>
-    ${mark === null ? '' : `<i class="lb-mark" style="left:${mark}%" title="균등분담 기준선 ${baseline} slot"></i>`}
+    ${baselinePct === null ? '' : `<i class="lb-mark" style="left:${baselinePct}%" title="균등분담선 ${baselinePct}%"></i>`}
   </span>`;
+}
+
+// 전체 리소스 배분을 한 줄에 쌓아 보여준다 (합이 100%).
+function allocationBar(s) {
+  const seg = (label, p, cls) => (p > 0
+    ? `<i class="ab-seg ${cls}" style="width:${p}%" title="${label} ${p}%">${p >= 8 ? `${p}%` : ''}</i>`
+    : '');
+  const parts = s.rows.map((r, i) => seg(r.tester, r.share, `ab-m${i % 4}`)).join('')
+    + seg('기타', s.totals.others_pct, 'ab-other')
+    + seg('미배정', s.totals.unassigned_pct, 'ab-unassigned');
+  const legend = [
+    ...s.rows.map((r, i) => ({ n: r.tester, p: r.share, c: `ab-m${i % 4}` })),
+    { n: '기타', p: s.totals.others_pct, c: 'ab-other' },
+    { n: '미배정', p: s.totals.unassigned_pct, c: 'ab-unassigned' },
+  ].filter((x) => x.p > 0)
+    .map((x) => `<span class="ab-key"><i class="${x.c}"></i>${esc(x.n)} ${x.p}%</span>`).join('');
+  return `
+    <div class="alloc">
+      <div class="alloc-head">전체 리소스 배분 <b>100%</b>
+        <small>= 미완 ${s.totals.slots} slot · 균등분담선 ${s.totals.baseline_pct}%</small></div>
+      <div class="alloc-bar">${parts || '<i class="ab-seg ab-empty" style="width:100%"></i>'}</div>
+      <div class="alloc-legend">${legend || '<span class="rs-dim">미완 의뢰가 없습니다.</span>'}</div>
+    </div>`;
 }
 
 // 담당자 한 명의 건별 상세 (접힌 상태로 두고 필요할 때만 펼친다)
@@ -700,20 +723,21 @@ function resourceItems(items) {
     </div>`;
 }
 
-function resourceRow(r, max, baseline) {
+function resourceRow(r, baselinePct) {
   const cls = r.group === 'unassigned' ? 'rs-unassigned' : '';
   return `
     <tr class="${cls}">
       <td><b>${esc(r.tester)}</b>${r.group === 'unassigned' ? '<span class="rs-tag">배정 필요</span>' : ''}</td>
+      <td class="num"><b>${r.share}%</b></td>
       <td class="num">${r.count}</td>
-      <td class="num"><b>${r.slots}</b></td>
+      <td class="num">${r.slots}</td>
       <td class="num">${r.days ? `${r.days}일` : '—'}</td>
       <td>${r.group === 'unassigned' ? '<span class="rs-dim">담당자 미정</span>' : etaText(r)}</td>
-      <td>${deltaCell(r.delta)}</td>
-      <td>${loadBar(r.slots, max, r.group === 'member' ? baseline : null)}</td>
+      <td>${deltaCell(r)}</td>
+      <td>${shareBar(r.share, r.group === 'member' ? baselinePct : null)}</td>
     </tr>
     <tr class="rs-detail-row">
-      <td colspan="7">
+      <td colspan="8">
         <details><summary>${esc(r.tester)} 건별 상세 ${r.count}건</summary>${resourceItems(r.items)}</details>
       </td>
     </tr>`;
@@ -729,24 +753,22 @@ async function renderResources() {
   state.resources = s;
 
   const t = s.totals;
+  // 상단은 전체를 100%로 본 정량 지표만 둔다. 담당자 이름은 아래 세부내용에서 본다.
   const chips = [
-    { k: '미완 의뢰', v: `${t.count}건` },
-    { k: '총 소요', v: `${t.slots} slot` },
-    { k: '1일 가용', v: `${t.daily_capacity} slot` },
-    { k: '전체 소진 예상', v: t.days ? `${t.days} 영업일` : '—' },
-    { k: '소진 완료일', v: t.eta || '—', warn: !!t.eta_warning },
-    { k: '균등분담 기준선', v: t.baseline === null ? '—' : `${t.baseline} slot` },
-    { k: '부하 편차', v: `${t.spread} slot`, warn: t.spread > t.daily_capacity },
-    { k: '미배정', v: `${t.unassigned_slots} slot`, warn: t.unassigned_slots > 0 },
-  ].map((c) => `<div class="sumcard ${c.warn ? 'warn' : ''}"><div class="k">${c.k}</div><div class="v">${c.v}</div></div>`).join('');
-
-  // 막대 정규화 기준: 4명·미배정·기타를 통틀어 가장 무거운 쪽
-  const all = [...s.rows, s.unassigned, ...s.others];
-  const max = Math.max(0, ...all.map((r) => r.slots));
+    { k: '전체 리소스', v: `${t.total_pct}%`, sub: `미완 ${t.count}건 · ${t.slots} slot` },
+    { k: '배정 완료', v: `${t.assigned_pct}%`, sub: `${t.assigned_slots} slot` },
+    { k: '미배정', v: `${t.unassigned_pct}%`, sub: `${t.unassigned_slots} slot`, warn: t.unassigned_slots > 0 },
+    { k: '균등분담선', v: t.baseline_pct === null ? '—' : `${t.baseline_pct}%`, sub: `1인당 ${t.baseline} slot` },
+    { k: '초과 합계', v: `${t.overload_pct}%p`, sub: '기준선 넘긴 분량', warn: t.overload_pct > 0 },
+    { k: '쏠림 폭', v: `${t.spread_pct}%p`, sub: `최다 − 최소 · ${t.spread} slot`, warn: t.spread_pct > t.baseline_pct },
+    { k: '전체 소진 예상', v: t.days ? `${t.days} 영업일` : '—', sub: `1일 가용 ${t.daily_capacity} slot` },
+    { k: '소진 완료일', v: t.eta || '—', sub: '주말·공휴일 제외', warn: !!t.eta_warning },
+  ].map((c) => `<div class="sumcard ${c.warn ? 'warn' : ''}">
+      <div class="k">${c.k}</div><div class="v">${c.v}</div><div class="sub">${c.sub}</div></div>`).join('');
 
   const head = `<thead><tr>
-      <th>담당자</th><th class="num">건수</th><th class="num">할당 slot</th>
-      <th class="num">소요 영업일</th><th>예상 소진일</th><th>기준선 대비</th><th>부하</th>
+      <th>담당자</th><th class="num">점유율</th><th class="num">건수</th><th class="num">할당 slot</th>
+      <th class="num">소요 영업일</th><th>예상 소진일</th><th>균등분담선 대비</th><th>점유 비중</th>
     </tr></thead>`;
 
   const rules = s.slot_rules.map((r) => `<li>${esc(r.label)} — <b>${r.slots} slot</b></li>`).join('');
@@ -765,21 +787,25 @@ async function renderResources() {
       <span class="bar-right"><button class="btn" data-rs-refresh="1">↻ 새로고침</button></span>
     </div>
     <p class="report-hint">대상 · 상태가 <b>예약대기 · 예약확정 · 진행중</b>인 의뢰 전체.
-      <b>1 slot = 1명의 1일 업무량</b>이라 할당 slot 합계가 그 담당자의 소요 영업일수입니다(주말·공휴일 제외).
-      여유/초과는 인증 담당 ${s.members.length}명 균등분담 기준선 대비 편차입니다.</p>
+      <b>전체 미완 물량을 100%</b>로 산정하고, 인증 담당 ${s.members.length}명 균등분담선(${t.baseline_pct}%) 대비
+      <b>초과 / 여유</b>를 %로 표기합니다. <b>1 slot = 1명의 1일 업무량</b>이라 할당 slot 합계가 그 담당자의
+      소요 영업일수입니다(주말·공휴일 제외).</p>
     ${warn}
     <div class="summary stats-summary">${chips}</div>
+    ${allocationBar(s)}
     ${undef}
+
+    <h3 class="rs-section">세부내용 · 담당자별 리소스 할당</h3>
     <div class="table-wrap">
       <table class="stats-table rs-table">
         ${head}
         <tbody>
-          <tr class="rs-group"><td colspan="7">인증 담당 (${s.members.length}명)</td></tr>
-          ${s.rows.map((r) => resourceRow(r, max, t.baseline)).join('')}
-          <tr class="rs-group"><td colspan="7">미배정</td></tr>
-          ${resourceRow(s.unassigned, max, t.baseline)}
-          ${s.others.length ? `<tr class="rs-group"><td colspan="7">기타 테스터 (${s.others.length}명)</td></tr>
-          ${s.others.map((r) => resourceRow(r, max, t.baseline)).join('')}` : ''}
+          <tr class="rs-group"><td colspan="8">인증 담당 (${s.members.length}명)</td></tr>
+          ${s.rows.map((r) => resourceRow(r, t.baseline_pct)).join('')}
+          <tr class="rs-group"><td colspan="8">미배정</td></tr>
+          ${resourceRow(s.unassigned, t.baseline_pct)}
+          ${s.others.length ? `<tr class="rs-group"><td colspan="8">기타 테스터 (${s.others.length}명)</td></tr>
+          ${s.others.map((r) => resourceRow(r, t.baseline_pct)).join('')}` : ''}
         </tbody>
       </table>
     </div>
@@ -800,14 +826,15 @@ async function renderResourceStrip() {
 
   const t = s.totals;
   if (!t.count) { el.classList.add('hidden'); return; }
-  // 4명 중 가장 무거운 담당자 (동률이면 앞선 사람)
-  const top = s.rows.reduce((a, r) => (r.slots > a.slots ? r : a), s.rows[0]);
+  // 담당자 이름은 싣지 않는다 — 요약은 전체 정량 지표만 보여주고 개인별은 탭에서 본다.
   el.innerHTML = `
     <span class="rs-strip-k">QE 리소스</span>
-    <span>미완 <b>${t.slots} slot</b> (${t.count}건)</span>
+    <span>미완 <b>${t.slots} slot</b> (${t.count}건) = <b>100%</b></span>
+    <span>균등분담선 <b>${t.baseline_pct}%</b></span>
+    <span>초과 합계 <b class="${t.overload_pct > 0 ? 'rs-over' : ''}">${t.overload_pct}%p</b></span>
+    <span>쏠림 폭 <b>${t.spread_pct}%p</b></span>
     <span>소진 예상 <b>${t.days || 0} 영업일</b>${t.eta ? ` · ${t.eta}` : ''}</span>
-    <span>최다 부하 <b>${esc(top.tester)} ${top.slots}일</b></span>
-    ${t.unassigned_slots ? `<span class="rs-strip-warn">미배정 ${t.unassigned_slots} slot</span>` : ''}
+    ${t.unassigned_pct ? `<span class="rs-strip-warn">미배정 ${t.unassigned_pct}%</span>` : ''}
     <span class="rs-strip-go">자세히 ▸</span>`;
   el.classList.remove('hidden');
 }

@@ -41,11 +41,18 @@ function ruleLabelOf(row) {
 }
 
 const round1 = (n) => Math.round(n * 10) / 10;
+// 분모가 0이면 0으로 돌려 0 나눗셈을 차단한다.
+const pct = (n, d) => (d > 0 ? round1((n / d) * 100) : 0);
 
 // 담당자 한 명의 집계 행을 만든다. slot 합계가 곧 소요 영업일수다(1 slot = 1명 1일).
-function rowOf(name, group, items, asOf, baseline) {
+// share      — 전체 미완 물량(=100%) 중 이 담당자가 지고 있는 몫
+// delta_pct  — 균등분담선(100 ÷ 인원수) 대비 %p. 양수면 초과, 음수면 여유
+function rowOf(name, group, items, asOf, total, baselinePct) {
   const slots = items.reduce((a, r) => a + r.slots, 0);
   const eta = slots > 0 ? holidays.nthBusinessDay(asOf, slots) : null;
+  const share = pct(slots, total);
+  // 물량이 0이면 쏠림이라는 개념 자체가 없다. '25%p 여유'처럼 오해를 주지 않게 편차를 0으로 둔다.
+  const hasWork = total > 0 && baselinePct !== null;
   return {
     tester: name,
     group,                                  // member | other | unassigned
@@ -54,8 +61,11 @@ function rowOf(name, group, items, asOf, baseline) {
     days: slots,                            // 1 slot = 1일이므로 변환 계수 1
     eta,                                    // 예상 소진일 (오늘부터 slots번째 영업일)
     eta_warning: holidays.coverageWarning(eta),
-    // 균등분담 기준선 대비 여유(+)/초과(-). 기간 개념이 없어 사용률 대신 이 편차로 본다.
-    delta: baseline === null ? null : round1(baseline - slots),
+    share,                                  // 전체 100 중 점유율 (%)
+    // 균등분담선 대비 편차. 기간 개념이 없어 '가용 대비 사용률'을 낼 수 없으므로
+    // 전체 물량을 100으로 정규화하고 그 안에서의 쏠림을 정량화한다.
+    delta_pct: baselinePct === null ? null : (hasWork ? round1(share - baselinePct) : 0),
+    delta: baselinePct === null ? null : (hasWork ? round1((total * baselinePct) / 100 - slots) : 0),
     items,
   };
 }
@@ -86,17 +96,20 @@ function summarize(openRows, asOf) {
   }
 
   const totalSlots = items.reduce((a, r) => a + r.slots, 0);
-  // 균등분담 기준선 = 전체 물량 ÷ 인증 담당 인원. 인원이 0이면 기준선을 두지 않는다(0 나눗셈 방어).
+  // 전체 미완 물량을 100%로 산정한다. 기간 개념이 없어 '가용 대비 사용률'을 낼 수 없으므로,
+  // 전체를 100으로 정규화하고 균등분담선(100 ÷ 인원수) 대비 초과·여유를 %로 표기한다.
+  const baselinePct = MEMBERS.length > 0 ? round1(100 / MEMBERS.length) : null;
+  // 균등분담 기준선을 slot으로도 남긴다(재배정 시 "몇 slot을 옮기면 되는가"에 쓴다).
   const baseline = MEMBERS.length > 0 ? round1(totalSlots / MEMBERS.length) : null;
 
   const pick = (fn) => items.filter(fn);
-  const memberRows = MEMBERS.map((n) => rowOf(n, 'member', pick((r) => r.tester === n), asOf, baseline));
-  const unassigned = rowOf('미배정', 'unassigned', pick((r) => !r.tester), asOf, null);
+  const memberRows = MEMBERS.map((n) => rowOf(n, 'member', pick((r) => r.tester === n), asOf, totalSlots, baselinePct));
+  const unassigned = rowOf('미배정', 'unassigned', pick((r) => !r.tester), asOf, totalSlots, null);
   unassigned.eta = null;                    // 담당자가 없으면 소진일을 낼 수 없다
   unassigned.eta_warning = null;
 
   const otherNames = [...new Set(pick((r) => r.tester && !MEMBERS.includes(r.tester)).map((r) => r.tester))].sort();
-  const otherRows = otherNames.map((n) => rowOf(n, 'other', pick((r) => r.tester === n), asOf, null));
+  const otherRows = otherNames.map((n) => rowOf(n, 'other', pick((r) => r.tester === n), asOf, totalSlots, null));
 
   // 전체 소진 예상: 담당 4명이 하루 4 slot을 소화한다고 볼 때 필요한 영업일수.
   const dailyCapacity = MEMBERS.length;
@@ -106,6 +119,10 @@ function summarize(openRows, asOf) {
   // 부하 편차 — 4명 중 최다와 최소의 차이. 재배정이 필요한지 한눈에 본다.
   const memberSlots = memberRows.map((r) => r.slots);
   const spread = memberSlots.length ? Math.max(...memberSlots) - Math.min(...memberSlots) : 0;
+  const memberShares = memberRows.map((r) => r.share);
+  const spreadPct = memberShares.length ? round1(Math.max(...memberShares) - Math.min(...memberShares)) : 0;
+  // 균등분담선을 넘긴 담당자들의 초과분 합계(%p). 재배정으로 옮겨야 하는 물량의 크기다.
+  const overloadPct = round1(memberRows.reduce((a, r) => a + Math.max(0, r.delta_pct || 0), 0));
 
   return {
     as_of: asOf,
@@ -120,6 +137,14 @@ function summarize(openRows, asOf) {
       days: totalDays,
       eta: totalEta,
       eta_warning: holidays.coverageWarning(totalEta),
+      // 전체를 100%로 본 정량 지표
+      total_pct: totalSlots > 0 ? 100 : 0,
+      assigned_pct: pct(totalSlots - unassigned.slots, totalSlots),
+      unassigned_pct: pct(unassigned.slots, totalSlots),
+      others_pct: pct(otherRows.reduce((a, r) => a + r.slots, 0), totalSlots),
+      baseline_pct: baselinePct,
+      spread_pct: spreadPct,
+      overload_pct: overloadPct,
       baseline,
       spread,
     },

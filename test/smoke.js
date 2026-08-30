@@ -100,6 +100,8 @@ ok('Test 목적으로 행 분리 (3PL vs MR)', !!row('KM-100', 'Google xTS', 'MR
 ok('MR 행은 1차 Pass', row('KM-100', 'Google xTS', 'MR').result === 'Pass' && row('KM-100', 'Google xTS', 'MR').round === 1);
 ok('인증종류로도 행 분리 유지', row('KM-100', 'Netflix NTS', '3PL').round === 2);
 ok('Fail만 있는 조합은 Fail율 100%', row('KM-200', 'Google xTS', '3PL').fail_rate === 100);
+ok('인증완료일 = 최신 판정 건의 completed_date', x.completed_date === thisWeek(2), x.completed_date);
+ok('MR 행 인증완료일도 그 건의 completed_date', row('KM-100', 'Google xTS', 'MR').completed_date === thisWeek(1));
 
 // ---------- Task 4-3 / 주차(월~금) 필터 ----------
 head('Task 4. 주차 월~금 필터');

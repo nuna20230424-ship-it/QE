@@ -432,6 +432,7 @@ function certStatsTable(rows) {
       <td><strong>${esc(r.model_name)}</strong></td>
       <td><span class="badge badge-${certClass(r.cert_type)}">${esc(r.cert_type)}</span></td>
       <td>${resultCell(r.result)}</td>
+      <td>${esc(r.completed_date) || '-'}</td>
       <td>${esc(r.test_purpose)}</td>
       <td class="num">${r.round}차</td>
       <td class="num">${r.pass}</td>
@@ -444,7 +445,7 @@ function certStatsTable(rows) {
     <div class="table-wrap">
     <table class="stats-table">
       <thead><tr>
-        <th>모델명</th><th>인증종류</th><th>결과</th><th>Test 목적</th>
+        <th>모델명</th><th>인증종류</th><th>결과</th><th>인증완료일</th><th>Test 목적</th>
         <th class="num">진행차수</th>
         <th class="num">Pass</th><th class="num">Fail</th>
         <th class="num">Pass율</th><th class="num">Fail율</th>
@@ -465,6 +466,7 @@ function downloadCertStatsCsv() {
     ['모델명', (r) => r.model_name],
     ['인증종류', (r) => r.cert_type],
     ['결과', (r) => r.result],
+    ['인증완료일', (r) => r.completed_date],
     ['Test 목적', (r) => r.test_purpose],
     ['진행차수', (r) => r.round],
     ['Pass', (r) => r.pass],

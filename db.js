@@ -119,7 +119,9 @@ function certStatsOf(range) {
            MAX(${SORT_KEY})                                  AS latest_key,
            verdict                                           AS result,
            round                                             AS last_round,
-           ${ACT_DATE}                                       AS last_date
+           ${ACT_DATE}                                       AS last_date,
+           completed_date                                    AS raw_completed_date,
+           completed_at                                      AS raw_completed_at
     FROM requests
     WHERE ${cond.join(' AND ')}
     GROUP BY model_name, cert_type, ${PURPOSE}
@@ -133,6 +135,8 @@ function certStatsOf(range) {
     result: r.result,                            // 최신 판정 (Pass | Fail)
     round: Number(r.last_round) || r.judged,     // 진행차수 = 최신 판정 건의 Round (미입력 시 판정 횟수로 대체)
     last_date: r.last_date,
+    // 인증완료일 = 최신 판정 건의 완료일(테스터 입력 completed_date, 없으면 상태 전환 시각 completed_at)
+    completed_date: r.raw_completed_date || (r.raw_completed_at ? r.raw_completed_at.slice(0, 10) : ''),
     judged: r.judged,
     pass: r.pass,
     fail: r.fail,

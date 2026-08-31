@@ -254,37 +254,85 @@ function saveCsv(lines, fname) {
 }
 
 // ---- 보고 본문 복사 ----
-// 메일 작성창에 붙여넣었을 때 표·색상·서식이 그대로 살아나도록 text/html로 클립보드에 넣는다.
-// 대시보드는 사내망 http로 열리는데 navigator.clipboard는 보안 컨텍스트(https·localhost)에서만
-// 동작하므로, 화면 밖 요소를 선택해 복사하는 execCommand 경로가 사실상 기본 경로다.
-async function copyRichHtml(html, plain) {
-  if (window.isSecureContext && navigator.clipboard && window.ClipboardItem) {
-    await navigator.clipboard.write([new ClipboardItem({
-      'text/html': new Blob([html], { type: 'text/html' }),
-      'text/plain': new Blob([plain], { type: 'text/plain' }),
-    })]);
-    return;
-  }
+// 메일 작성창에 붙여넣었을 때 표·색상·서식이 그대로 살아나도록 클립보드에 text/html을 함께 싣는다.
+// 대시보드는 사내망 http로 열리고 navigator.clipboard는 보안 컨텍스트(https·localhost) 전용이라
+// 아래 2번이 사실상 기본 경로다.
+//   1) Clipboard API        — https·localhost 에서만
+//   2) copy 이벤트 가로채기  — 클립보드에 실을 서식을 우리가 직접 지정한다. http 에서도 동작.
+//   3) 화면 밖 선택 복사     — 1·2가 모두 막혔을 때의 최후 수단
+// 2번을 기본으로 올린 이유. 3번은 브라우저가 선택 영역을 알아서 직렬화하는 방식인데, 뷰포트 밖
+// (left:-99999px)에 있는 요소는 text/plain 만 실리는 경우가 있어 "붙여넣으면 서식이 통째로
+// 사라지는" 증상이 난다. 실을 내용을 우리가 지정하면 그 변수를 없앨 수 있다.
+
+// 붙여넣는 쪽(Outlook·Word 등)이 인코딩을 오해하지 않도록 charset 을 명시해 감싼다.
+const clipHtml = (html) => `<meta charset="utf-8">${html}`;
+
+// innerText·선택 복사는 화면에 붙은 요소에서만 제대로 동작한다(떼어 낸 요소의 innerText 는
+// textContent 와 같아져 줄바꿈·표 구조가 사라진다). 보이지 않게 붙였다가 바로 걷어낸다.
+function withHiddenHolder(html, fn) {
   const holder = document.createElement('div');
   holder.innerHTML = html;
-  holder.setAttribute('style', 'position:fixed;left:-99999px;top:0;');
+  holder.setAttribute('style', 'position:fixed;left:0;top:0;opacity:0;pointer-events:none;z-index:-1;');
   document.body.appendChild(holder);
-  const range = document.createRange();
-  range.selectNodeContents(holder);
-  const sel = window.getSelection();
-  sel.removeAllRanges();
-  sel.addRange(range);
-  const ok = document.execCommand('copy');
-  sel.removeAllRanges();
-  holder.remove();
-  if (!ok) throw new Error('브라우저가 복사를 거부했습니다. 본문을 직접 드래그해 복사해 주세요.');
+  try { return fn(holder); } finally { holder.remove(); }
+}
+
+function copyViaCopyEvent(html, plain) {
+  let wrote = false;
+  const onCopy = (e) => {
+    if (!e.clipboardData) return;
+    e.clipboardData.setData('text/html', clipHtml(html));
+    e.clipboardData.setData('text/plain', plain);
+    e.preventDefault();
+    wrote = true;
+  };
+  // execCommand('copy')는 선택 영역이나 편집 가능 요소가 있어야 copy 이벤트를 낸다.
+  const ta = document.createElement('textarea');
+  ta.value = plain;
+  ta.setAttribute('style', 'position:fixed;left:0;top:0;opacity:0;pointer-events:none;z-index:-1;');
+  document.body.appendChild(ta);
+  ta.focus();
+  ta.select();
+  document.addEventListener('copy', onCopy, true);
+  try { document.execCommand('copy'); }
+  finally {
+    document.removeEventListener('copy', onCopy, true);
+    ta.remove();
+  }
+  return wrote;
+}
+
+function copyViaSelection(html) {
+  return withHiddenHolder(html, (holder) => {
+    const range = document.createRange();
+    range.selectNodeContents(holder);
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+    const ok = document.execCommand('copy');
+    sel.removeAllRanges();
+    return ok;
+  });
+}
+
+async function copyRichHtml(html, plain) {
+  if (window.isSecureContext && navigator.clipboard && window.ClipboardItem) {
+    try {
+      await navigator.clipboard.write([new ClipboardItem({
+        'text/html': new Blob([clipHtml(html)], { type: 'text/html' }),
+        'text/plain': new Blob([plain], { type: 'text/plain' }),
+      })]);
+      return;
+    } catch (err) { /* 권한 거부 등. 아래 폴백으로 넘어간다. */ }
+  }
+  if (copyViaCopyEvent(html, plain)) return;
+  if (copyViaSelection(html)) return;
+  throw new Error('브라우저가 복사를 거부했습니다. 본문을 직접 드래그해 복사해 주세요.');
 }
 
 // 서식을 못 받는 메일 클라이언트를 위한 텍스트 대체본
 function htmlToPlain(html) {
-  const d = document.createElement('div');
-  d.innerHTML = html;
-  return d.innerText.replace(/\n{3,}/g, '\n\n').trim();
+  return withHiddenHolder(html, (h) => h.innerText.replace(/\n{3,}/g, '\n\n').trim());
 }
 
 // period: daily | weekly | certstats. query는 통계 탭의 기간(?from=&to=).

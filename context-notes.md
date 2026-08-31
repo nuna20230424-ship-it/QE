@@ -340,6 +340,25 @@ v5 Task 7에 예시로 적힌 두 가지는 6차에서 이미 구현됐다(ⓘ �
 
 **테스트.** 스모크 351 → 385건. 영업일 차 계산(같은 날·주말·공휴일·역순·잘못된 입력), 자동 차감, 당일 착수 소화 0, 예정 초과 시 잔여 1 유지, 수동 override와 경계값(상한·하한·0·비수치), 잔여 기준 총계, 일별 배치 총합 = 잔여 물량, 착수일을 지우면 계획 전량으로 복귀. 라이브 E2E 91 → 107건(PATCH로 착수일·잔여 slot을 넣고 API 응답과 변경 이력 기록까지 확인 후 원복).
 
+### 본문 복사 서식 유실 — 클립보드에 text/html 이 실리지 않았다 (2026-08-31, 8차 요청)
+사용자가 일일보고·주간보고·인증통계 세 곳 모두에서 "복사 후 붙여넣으면 템플릿이 하나도 적용되지 않는다"고 알렸다.
+
+**서버 쪽은 원인이 아니었다.** 9차에 세워 둔 규칙(복사 본문은 `report.js`의 인라인 스타일 HTML, class·`<style>` 없음)은 그대로 지켜지고 있었고 스모크 테스트도 통과 중이었다. 로컬에서 서버를 띄워 `/api/report/daily/copy`·`/api/report/certstats/copy`를 직접 받아 봐도 `style=`가 박힌 본문이 왔다. **문제는 그 좋은 HTML이 클립보드까지 가지 못한 것이다.**
+
+**원인 1 — 폴백이 브라우저의 직렬화에 기대고 있었다.** 대시보드는 사내망 http라 `isSecureContext`가 false이고 Clipboard API가 막히므로, 실제로 쓰이는 경로는 `document.execCommand('copy')` 폴백이다. 이 폴백은 본문을 `left:-99999px`로 **뷰포트 밖에** 붙여 두고 선택 영역을 만든 뒤 브라우저가 알아서 직렬화하기를 기다린다. 뷰포트 밖 요소는 브라우저·상황에 따라 text/plain 만 실려 나가고, 그러면 붙여넣기에서 서식이 통째로 사라진다. **9차 체크리스트에 "브라우저에서 복사 동작 육안 확인"이 미완으로 남아 있었는데, 정확히 그 미검증 경로가 터진 것이다.**
+
+→ **실을 내용을 우리가 직접 지정하는 경로를 기본으로 올렸다.** `copyViaCopyEvent()`가 `copy` 이벤트를 가로채 `e.clipboardData.setData('text/html', …)`와 `setData('text/plain', …)`를 넣고 `preventDefault()`한다. execCommand는 선택 영역이나 편집 가능 요소가 있어야 copy 이벤트를 내므로 화면 밖 `textarea`를 잠깐 만들어 select한다. 이러면 브라우저의 직렬화 판단이라는 변수가 사라진다. 경로는 3단이다 — Clipboard API(https·localhost) → copy 이벤트(http 기본) → 선택 복사(최후).
+
+**원인 2 — 텍스트 대체본도 깨져 있었다.** `htmlToPlain`이 `document.createElement('div')`에 innerHTML만 넣고 `innerText`를 읽었는데, **화면에 붙지 않은 요소의 `innerText`는 `textContent`와 같아진다.** 줄바꿈도 표 구조도 없는 한 덩어리 문자열이 나온다. 원인 1로 text/html이 빠진 상태에서 이 대체본만 붙으니 "서식이 하나도 안 산다"가 두 배로 성립했다. 요소를 보이지 않게(`opacity:0`) 화면에 붙였다가 걷어내는 `withHiddenHolder()`로 묶어 innerText와 선택 복사가 같은 조건을 쓰게 했다.
+
+**뷰포트 밖(`left:-99999px`)을 뷰포트 안 투명(`left:0;opacity:0`)으로 바꾼 것이 이번 수정의 핵심 한 줄이다.** `pointer-events:none;z-index:-1`을 함께 줘 클릭을 가로채지 않게 하고, 동기적으로 즉시 제거하므로 화면에 보이지 않는다.
+
+**부수로 Clipboard API 실패를 폴백으로 흘려보냈다.** 기존 코드는 secure context면 `navigator.clipboard.write`만 시도하고 거부되면 그대로 예외였다. localhost 개발 중 권한 거부 한 번에 복사가 죽을 이유가 없어 try로 감싸 아래 단계로 내려가게 했다.
+
+**회귀 가드는 문자열 검사로 넣었다.** 클립보드 동작은 node 스모크에서 재현할 수 없다. 대신 `public/app.js`를 읽어 `setData('text/html'`·`setData('text/plain'` 존재와 innerText 추출이 붙인 요소 기준인지를 검사한다. 이 파일의 기존 테스트(복사본에 `class=` 없음 등)와 같은 결의 방어선이다. 388건 통과.
+
+**남은 한계 — Outlook 데스크톱은 Word 렌더러라 `border-radius`·span 배경 같은 일부 CSS를 버린다.** 표·색상·굵기·정렬은 살지만 배지의 둥근 모서리는 각지게 나올 수 있다. 이건 클립보드 문제가 아니라 수신 클라이언트 한계이므로 이번 수정 범위 밖으로 뒀다.
+
 ## 실행
 - `npm install` 후 `npm start` (기본 PORT 3000, HOST 0.0.0.0). 환경변수 PORT/HOST로 변경 가능.
 - 이메일 발송은 config.json의 smtp 설정 필요(미설정 시 앱·스케줄러는 정상 동작하되 발송만 생략).

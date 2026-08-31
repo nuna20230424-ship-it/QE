@@ -273,6 +273,14 @@ ok('일일 복사본에 모델명 포함', dRep.html.includes('KM-100'));
 ok('통계 복사본에 모델명 포함', copyAll.html.includes('KM-100'));
 ok('복사본은 발송용 본문과 다름', dRep.html !== dRep.mailHtml && copyWk.html !== cRep.mailHtml);
 
+// 클립보드 경로 회귀 방지. 서버가 인라인 스타일 본문을 잘 만들어도, 클라이언트가 클립보드에
+// text/html 을 싣지 않으면 붙여넣기에서 서식이 통째로 날아간다(사내망 http = 비보안 컨텍스트라
+// Clipboard API 가 막히고, 뷰포트 밖 요소를 선택해 복사하면 text/plain 만 실릴 수 있다).
+const appJs = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.js'), 'utf8');
+ok('클립보드에 text/html 직접 지정', appJs.includes("setData('text/html'"));
+ok('클립보드에 text/plain 대체본 동봉', appJs.includes("setData('text/plain'"));
+ok('텍스트 대체본을 화면에 붙인 요소에서 추출', appJs.includes('withHiddenHolder(html, (h) => h.innerText'));
+
 // ---------- Task 6. 영업일 계산 (주말·공휴일 제외) ----------
 head('Task 6-A. 영업일 계산');
 const holidays = require('../holidays');

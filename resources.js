@@ -325,7 +325,52 @@ function dailyPlanOf(items, asOf, horizon, members = MEMBERS, absorbUnassigned =
   }
   releases.sort((a, b) => a.d_day - b.d_day);
 
-  return { days: dayRows, weeks, horizon: days.length, overflow, excluded, conflicts, delays, releases };
+  // 일정 조정 필요 — 예약대기 건이 희망 일정(declared)에 못 들어가고 뒤로 밀린 경우.
+  // 예약대기의 plan_date 는 COALESCE 로 desired_date 가 들어오므로 declared 가 곧 희망일이다.
+  //
+  // 사유를 둘로 가르는 이유는 조정 방법이 다르기 때문이다.
+  // - tester_busy : 희망일에 비는 담당자가 있는데 배정된(또는 자동 배정 예정) 사람만 차 있다.
+  //                 담당자만 바꾸면 희망일을 지킬 수 있다.
+  // - team_full   : 그날 전원이 점유 중이라 담당자를 바꿔도 안 된다. 날짜를 옮겨야 한다.
+  // 판정은 배치가 끝난 dayRows[희망일].idle 로 한다. 직렬 큐 배치와 같은 자료를 보므로
+  // "밀렸다"는 사실과 "왜 밀렸나"가 어긋나지 않는다.
+  const scheduleRisks = placements
+    .filter((p) => p.item.status === WAITING
+      && p.declared_idx < days.length
+      && p.actual_idx > p.declared_idx)
+    .map((p) => {
+      const d = p.declared_idx;
+      const freeTesters = dayRows[d].idle.filter((n) => n !== p.tester);
+      // 희망일에 그 담당자를 막고 있는 건 (겹침 상대)
+      const blocking = placements.find((q) => q.tester === p.tester && q.item.id !== p.item.id
+        && q.actual_idx <= d && d <= q.end_idx);
+      return {
+        id: p.item.id,
+        model_name: p.item.model_name,
+        cert_type: p.item.cert_type,
+        tester: p.tester,
+        pending: p.pending,                 // 담당자 미배정 — 자동 배정 예정자다
+        slots: p.slots,
+        desired_date: p.declared_date,      // 희망 일정
+        available_date: p.actual_date,      // 가장 빨리 시작 가능한 영업일
+        delay_days: p.actual_idx - p.declared_idx,
+        reason: freeTesters.length ? 'tester_busy' : 'team_full',
+        free_testers: freeTesters,
+        blocking: blocking ? {
+          id: blocking.item.id,
+          model_name: blocking.item.model_name,
+          from: blocking.actual_date,
+          to: blocking.end_date,
+        } : null,
+      };
+    })
+    .sort((a, b) => String(a.desired_date).localeCompare(String(b.desired_date))
+      || b.delay_days - a.delay_days);
+
+  return {
+    days: dayRows, weeks, horizon: days.length, overflow, excluded,
+    conflicts, delays, releases, scheduleRisks,
+  };
 }
 
 // 미완 의뢰 목록을 받아 전체·담당자별·일별 리소스 현황을 낸다.
@@ -548,6 +593,16 @@ function summarize(openRows, asOf, horizon = 20) {
       slots: items.reduce((a, r) => a + r.slots, 0),
     },
     utilization,
+    // ---- 2. 일정 조정 필요 (예약대기 희망일 기준) ----
+    // 가동률(확정 업무 기준) 아래에 붙는다. 인증 담당 풀만 본다 — 기타 테스터는
+    // 자동 배정 대상이 아니라 "담당자를 바꾸면 풀린다"는 안내가 성립하지 않는다.
+    schedule_risks: {
+      count: daily.scheduleRisks.length,
+      tester_busy: daily.scheduleRisks.filter((r) => r.reason === 'tester_busy').length,
+      team_full: daily.scheduleRisks.filter((r) => r.reason === 'team_full').length,
+      horizon: daily.horizon,
+      items: daily.scheduleRisks,
+    },
     pipeline,
     type_distribution: typeDistribution,
     alerts,

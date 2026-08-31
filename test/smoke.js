@@ -843,6 +843,67 @@ ok('실 픽스처 총 slot이 음수 아님', rsLive.totals.slots >= 0, String(r
 ok('실 픽스처 사용률 NaN 아님', Number.isFinite(rsLive.totals.usage_pct), String(rsLive.totals.usage_pct));
 ok('실 픽스처 일별 현황 생성', rsLive.daily.days.length > 0 && rsLive.daily.days.every((d) => d.used <= d.capacity));
 
+// ---------- Task 6-J. 일정 조정 필요 (예약대기 희망 일정 기준) ----------
+head('Task 6-J. 일정 조정 필요');
+// AS_OF = 2026-08-28(금). NTS/IR = 12 slot, xTS/MR = 2 slot.
+const RK = (rows) => resources.summarize(rows, AS_OF, 20).schedule_risks;
+const busy = (id, tester, model) => ({
+  id, cert_type: 'Netflix NTS', test_type: 'IR', model_name: model,
+  status: '진행중', tester, plan_date: AS_OF,
+});
+const waiting = (id, model, tester, desired) => ({
+  id, cert_type: 'Google xTS', test_type: 'MR', model_name: model,
+  status: '예약대기', tester: tester || '', plan_date: desired, desired_date: desired,
+});
+
+// 1) 아무도 안 바쁘면 희망일에 그대로 들어간다
+ok('여유가 있으면 조정 필요 없음', RK([waiting(1, 'KM-100', '', '2026-09-01')]).count === 0);
+
+// 2) 담당자 겹침 — 이은경만 12 slot 점유, 나머지 3명은 비어 있다
+const rkBusy = RK([busy(1, '이은경', 'KM-8500'), waiting(2, 'KM-100', '이은경', '2026-09-01')]);
+ok('담당자 겹침 1건 감지', rkBusy.count === 1 && rkBusy.tester_busy === 1, JSON.stringify(rkBusy.count));
+const rb = rkBusy.items[0];
+ok('겹침 사유 = tester_busy', rb.reason === 'tester_busy', rb.reason);
+ok('희망일 = desired_date', rb.desired_date === '2026-09-01', rb.desired_date);
+ok('가능일이 희망일보다 뒤', rb.available_date > rb.desired_date, `${rb.desired_date}→${rb.available_date}`);
+ok('밀린 영업일 수 > 0', rb.delay_days > 0, String(rb.delay_days));
+ok('희망일에 비는 담당자 3명', rb.free_testers.length === 3, JSON.stringify(rb.free_testers));
+ok('본인은 대안에서 제외', !rb.free_testers.includes('이은경'));
+ok('막고 있는 건을 짚는다', rb.blocking && rb.blocking.model_name === 'KM-8500',
+  JSON.stringify(rb.blocking));
+
+// 3) 팀 포화 — 4명 전원이 같은 날부터 12 slot 점유
+const rkFull = RK([
+  ...MEMBERS_LIST.map((t, i) => busy(i + 1, t, `B-${i}`)),
+  waiting(9, 'TX-1100', '', '2026-09-01'),
+]);
+ok('팀 포화 1건 감지', rkFull.count === 1 && rkFull.team_full === 1, JSON.stringify(rkFull));
+ok('포화 사유 = team_full', rkFull.items[0].reason === 'team_full', rkFull.items[0].reason);
+ok('포화면 대안 담당자 없음', rkFull.items[0].free_testers.length === 0);
+ok('미배정 건은 자동 배정 예정 표시', rkFull.items[0].pending === true);
+
+// 4) 대상은 예약대기뿐 — 확정 업무가 밀리는 것은 여기서 다루지 않는다(alerts·delays 소관)
+const rkFixed = RK([
+  busy(1, '이은경', 'KM-8500'),
+  { id: 2, cert_type: 'Google xTS', test_type: 'MR', model_name: 'KM-100',
+    status: '예약확정', tester: '이은경', plan_date: '2026-09-01' },
+]);
+ok('예약확정 건은 대상 아님', rkFixed.count === 0, JSON.stringify(rkFixed.count));
+
+// 5) 정렬 — 희망일이 이른 건이 먼저
+const rkSort = RK([
+  busy(1, '이은경', 'KM-8500'),
+  waiting(2, 'LATE', '이은경', '2026-09-08'),
+  waiting(3, 'EARLY', '이은경', '2026-09-01'),
+]);
+ok('희망일 순 정렬', rkSort.items[0].model_name === 'EARLY',
+  rkSort.items.map((r) => r.model_name).join(','));
+
+// 6) 요약 카운트가 목록과 어긋나지 않는다
+ok('요약 카운트 = 목록 길이', rkSort.count === rkSort.items.length);
+ok('사유별 합 = 전체', rkSort.tester_busy + rkSort.team_full === rkSort.count);
+ok('조회 구간을 함께 알린다', rkSort.horizon === 20, String(rkSort.horizon));
+
 // ---------- 스케줄러 자동발송이 실제로 넘기는 본문 ----------
 // report.js의 mailHtml만 검증하면 스케줄러가 r.html을 넘겨도 통과한다. 호출 인자를 직접 가로채 확인한다.
 head('스케줄러 자동발송 본문');

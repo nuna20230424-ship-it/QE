@@ -879,6 +879,72 @@ function utilizationPanel(u, compact) {
     </div>`;
 }
 
+// ---- 1-1. 일정 조정 필요 (예약대기 희망 일정 기준) ----
+// 가동률은 확정 업무(진행중·예약확정)만 세므로 "지금 몇 % 찼나"까지만 답한다.
+// 예약대기가 희망일에 들어갈 자리가 있는지는 별개 질문이라 바로 아래에 붙인다.
+// 사유가 둘로 갈리는 이유는 조정 방법이 다르기 때문이다 — 겹침은 담당자 교체로 풀리고,
+// 포화는 날짜를 옮기는 수밖에 없다.
+const RISK_MODELS_SHOWN = 6;
+
+function riskWhy(r, capacity) {
+  if (r.reason === 'team_full') {
+    return `<b>팀 포화</b> — ${esc(r.desired_date)}에 ${capacity}명 전원 점유 (여유 0 slot)`;
+  }
+  const who = `${esc(r.tester)}${r.pending ? '<small>(자동 배정 예정)</small>' : ''}`;
+  return r.blocking
+    ? `<b>담당자 겹침</b> — ${who}이(가) ${esc(r.blocking.model_name)}
+       (${esc(r.blocking.from)} ~ ${esc(r.blocking.to)}) 진행 중`
+    : `<b>담당자 겹침</b> — ${who}이(가) 희망일에 다른 건으로 점유 중`;
+}
+
+function riskFix(r) {
+  return r.reason === 'team_full'
+    ? `가장 빠른 가능일은 <b>${esc(r.available_date)}</b> — 희망일을 옮기거나 소요 slot을 줄여야 합니다`
+    : `<b>${r.free_testers.map(esc).join(' · ')}</b>에게 넘기면 희망일을 지킬 수 있습니다`;
+}
+
+function scheduleRiskPanel(sr, capacity, compact) {
+  if (!sr.count) {
+    return compact
+      ? '<div class="risk risk-ok risk-compact">✓ 예약대기 희망 일정 충돌 없음</div>'
+      : `<div class="risk risk-ok">✓ 예약대기 건이 모두 희망 일정에 배치 가능합니다
+         <small>(향후 ${sr.horizon}영업일 기준)</small></div>`;
+  }
+
+  const names = sr.items.map((r) => r.model_name);
+  if (compact) {
+    const shown = names.slice(0, RISK_MODELS_SHOWN).map(esc).join(', ');
+    const rest = names.length > RISK_MODELS_SHOWN ? ` 외 ${names.length - RISK_MODELS_SHOWN}건` : '';
+    return `
+      <div class="risk risk-compact">
+        <span class="risk-badge">⚠ ${sr.count}건</span>
+        <span class="risk-models">${shown}${rest} <b>일정조정필요</b></span>
+        <span class="risk-go">세부 가이드 ▸</span>
+      </div>`;
+  }
+
+  const list = sr.items.map((r) => `
+    <li class="risk-item ri-${r.reason}">
+      <div class="ri-head">
+        <b class="ri-model">${esc(r.model_name)}</b>
+        <span class="ri-cert">${esc(r.cert_type)} · ${r.slots} slot</span>
+        <span class="ri-when">희망 <b>${esc(r.desired_date)}</b> →
+          <b class="ri-avail">${esc(r.available_date)}</b> 가능
+          <small>(${r.delay_days}영업일 밀림)</small></span>
+      </div>
+      <div class="ri-line"><span class="ri-k">사유</span> ${riskWhy(r, capacity)}</div>
+      <div class="ri-line"><span class="ri-k">조정</span> ${riskFix(r)}</div>
+    </li>`).join('');
+
+  return `
+    <div class="risk">
+      <div class="risk-sum">희망 일정에 자리가 없는 예약대기 <b>${sr.count}건</b>
+        <span class="risk-split">담당자 겹침 ${sr.tester_busy} · 팀 포화 ${sr.team_full}</span>
+        <small>향후 ${sr.horizon}영업일 기준</small></div>
+      <ul class="risk-list">${list}</ul>
+    </div>`;
+}
+
 // ---- 2. 팀원별 업무 부하도 (신호등) ----
 const LEVEL_LABEL = { safe: '안정', warn: '주의', over: '초과' };
 
@@ -1081,6 +1147,13 @@ async function renderResources() {
     <p class="field-hint">가동률은 <b>확정된 업무(진행중 · 예약확정)</b>만 셉니다. 예약대기는 아직 확정 전이라 제외하고
       아래 파이프라인에서 별도로 봅니다. 잔여 가용은 <b>신규 의뢰를 즉시 수용할 수 있는 slot</b>입니다.</p>
 
+    <h3 class="rs-section rs-sub">1-1 · 일정 조정 필요 <small>예약대기의 Test 희망 일정 기준</small></h3>
+    ${scheduleRiskPanel(s.schedule_risks, s.utilization.capacity, false)}
+    <p class="field-hint"><b>희망 일정에 자리가 있는지</b>를 봅니다. 예약대기 건을 희망일부터 배치해 보고,
+      그날 자리가 없어 뒤로 밀리는 건을 사유별로 나눕니다.
+      <b>담당자 겹침</b>은 그날 비는 사람이 있어 <b>담당자 교체로 풀리고</b>,
+      <b>팀 포화</b>는 전원이 차 있어 <b>날짜를 옮겨야</b> 합니다.</p>
+
     <h3 class="rs-section">2 · 팀원별 업무 부하도 <small>${esc(s.members.join(' · '))}</small></h3>
     ${workloadPanel(s)}
 
@@ -1145,9 +1218,12 @@ async function renderResourceStrip() {
   const el = $('#resource-strip');
   if (state.view !== 'board') { el.classList.add('hidden'); return; }
   let s;
-  try { s = await api('/api/resources?days=5'); } catch { el.classList.add('hidden'); return; }
+  // 조회 구간은 QE 리소스 탭(기본 20영업일)과 같아야 한다. 5일로 줄이면 메인의
+  // '일정 조정 필요' 건수가 탭보다 적게 나와 두 화면이 서로 다른 말을 한다.
+  try { s = await api('/api/resources'); } catch { el.classList.add('hidden'); return; }
 
-  el.innerHTML = utilizationPanel(s.utilization, true);
+  el.innerHTML = utilizationPanel(s.utilization, true)
+    + scheduleRiskPanel(s.schedule_risks, s.utilization.capacity, true);
   el.classList.remove('hidden');
 }
 

@@ -283,6 +283,11 @@ ok('복사본 인증종류에 배지 색 적용', certColors.some(([, bg]) => co
 // Word 는 style 의 color 를 흘릴 수 있어 font 속성과 이중으로 건다.
 ok('글자색은 font 속성과 style 이중 지정', copyables.every((h) => /<font color="[^"]+" style="color:/.test(h) || !h.includes('<font')));
 
+// Fail 은 배지(중첩 표)가 아니라 셀 자체를 칠해야 한다. Word 가 중첩 표를 흘리면서
+// 안쪽 흰 글씨 지정까지 버려 붙여넣기에서 검은 글씨가 되는 것을 막는다.
+ok('Fail 칸은 셀 자체에 빨간 bgcolor', copyAll.html.includes('<td bgcolor="#d23227"'));
+ok('Fail 글씨는 흰색', /<td bgcolor="#d23227"[^>]*>s*<b><font color="#ffffff"/.test(copyAll.html));
+
 // 복사본은 화면 그대로(상세 포함) — 발송용 링크 본문과 달라야 한다.
 ok('일일 복사본에 모델명 포함', dRep.html.includes('KM-100'));
 ok('통계 복사본에 모델명 포함', copyAll.html.includes('KM-100'));

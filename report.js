@@ -169,12 +169,22 @@ const resultCell = (v) => (
       : '—'
 );
 
+// Fail 은 칸 자체를 빨갛게 칠하고 글씨를 흰색으로 둔다.
+// 배지(중첩 표)로 두면 Word 가 그 표를 흘리면서 안쪽 흰 글씨 지정까지 같이 버려
+// 붙여넣기에서 검은 글씨로 나온다. 실제 셀의 bgcolor 는 Word 가 가장 확실히 그리는 구조다.
+const tdResult = (v) => (
+  v !== 'Fail' ? td(resultCell(v))
+    : `<td bgcolor="#d23227" align="center" style="padding:8px 10px;border-bottom:1px solid #eef1f6;`
+      + `vertical-align:top;font-size:13px;background:#d23227;color:#ffffff;font-weight:800;text-align:center;">`
+      + `<b><font color="#ffffff" style="color:#ffffff;">Fail</font></b></td>`
+);
+
 function certStatsTable(rows) {
   if (!rows.length) return emptyLine('해당 주차에 판정이 끝난 인증 의뢰가 없습니다.');
   const body = rows.map((r) => `<tr>
     ${td('<strong>' + esc(r.model_name) + '</strong>')}
     ${td(certBadge(r.cert_type))}
-    ${td(resultCell(r.result))}
+    ${tdResult(r.result)}
     ${td(esc(r.test_purpose))}
     ${tdNum(r.round + '차')}
     ${tdNum(r.pass)}

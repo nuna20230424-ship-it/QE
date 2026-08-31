@@ -186,7 +186,7 @@ ok('주차 범위(월~금) 표기', w.html.includes(`${wk.from} ~ ${wk.to}`));
 ok('결과 컬럼 헤더 추가', w.html.includes('>결과</th>'));
 ok('Test 목적 컬럼 헤더 추가', w.html.includes('>Test 목적</th>'));
 ok('미판정 컬럼 헤더 삭제', !w.html.includes('>미판정</th>'));
-ok('Pass 파란 볼드 (4-3)', w.html.includes('<b style="color:#1257c9;">Pass</b>'));
+ok('Pass 파란 볼드 (4-3)', /<b [^>]*color:#1257c9[^>]*>[^<]*<font color="#1257c9"[^>]*>Pass</.test(w.html));
 ok('Fail 빨간 음영 볼드 (4-3)', w.html.includes('background:#d23227;color:#ffffff'));
 ok('Fail 상세에 결과 코멘트 유지', w.html.includes('DRM 재생 실패'));
 ok('본문 집계 구간은 월~일 유지', report.weekRange(now).to !== wk.to);
@@ -273,6 +273,15 @@ ok('복사본에 <style> 블록 없음', copyables.every((h) => !h.includes('<st
 ok('색 있는 조각에 bgcolor 속성', copyables.every((h) => h.includes('bgcolor=')));
 ok('인라인 요소에 background 없음', copyables.every((h) => !/<(span|b)s[^>]*background/.test(h)));
 ok('표에 cellspacing 속성 (Word 는 style 로 못 받음)', copyables.every((h) => !h.includes('<table') || h.includes('cellspacing="0"')));
+
+// 인증종류 배지 색은 화면(styles.css .badge-*)과 복사본(report.js CERT_COLORS)에 각각 적힌다.
+// 한쪽만 고치면 "붙여넣으면 화면과 색이 다르다"가 되므로 두 값이 같은지 묶어 둔다.
+const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'styles.css'), 'utf8');
+const certColors = [['netflix', '#fde8e8', '#c0392b'], ['google', '#e8f0fe', '#1a73e8'], ['amazon', '#fff1de', '#c77700']];
+ok('인증종류 배지 색이 화면과 동일', certColors.every(([, bg, fg]) => css.includes(bg) && css.includes(fg)));
+ok('복사본 인증종류에 배지 색 적용', certColors.some(([, bg]) => copyAll.html.includes('bgcolor="' + bg + '"')));
+// Word 는 style 의 color 를 흘릴 수 있어 font 속성과 이중으로 건다.
+ok('글자색은 font 속성과 style 이중 지정', copyables.every((h) => /<font color="[^"]+" style="color:/.test(h) || !h.includes('<font')));
 
 // 복사본은 화면 그대로(상세 포함) — 발송용 링크 본문과 달라야 한다.
 ok('일일 복사본에 모델명 포함', dRep.html.includes('KM-100'));

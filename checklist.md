@@ -225,6 +225,17 @@
 미해결(별건) — 인증통계는 화면(10칼럼 + 비율 막대 + 색상 배지)과 복사본(9칼럼, 비율 막대 없음)이
 원래부터 다른 표다. 화면은 `styles.css` 클래스로, 복사본은 `report.js` 인라인 스타일로 따로 그린다.
 "화면 그대로" 복사를 원하면 복사본을 10칼럼으로 다시 만들어야 한다.
+### 12차-3 인증종류 배지 색 · 글자색 (같은 날, 재확인 2)
+"Pass·Fail 글자색 미적용, NTS·xTS 색상 미적용".
+- [x] 확인 — 복사본의 인증종류 칼럼은 **색 지정이 아예 없었다**(`<td …>Google xTS</td>`). 화면은 `styles.css`의 `.badge-netflix`/`.badge-google`로 칠하는데 서버 본문에는 대응물이 없었다
+- [x] `CERT_COLORS` + `certKind()` + `certBadge()` 추가 — 화면 배지와 같은 색값(netflix `#fde8e8`/`#c0392b`, google `#e8f0fe`/`#1a73e8`, amazon `#fff1de`/`#c77700`)
+- [x] 통계 표 인증종류 칼럼과 일일·주간 `인증 / Test` 칼럼에 배지 적용
+- [x] `certOf()` — 배지와 Test 표기를 표 한 행 두 칸으로 묶음 (Word가 `display:inline-table`을 무시해 줄이 갈라지는 것 방지)
+- [x] `fontColor()` 추가 — Word는 style의 `color`를 흘릴 수 있어 `<font color>` 속성과 이중 지정. Pass·Fail 숫자·Fail율·요약 칩 숫자·Fail 상세 제목·배지 안 글자에 적용
+- [x] 기존 테스트 1건 갱신(마크업 고정 → 의도 검사) + 회귀 가드 3건 추가 — `npm test` 394건 통과
+- [ ] **Outlook 데스크톱에 붙여넣어 육안 재확인**
+- [ ] Mac Mini 재배포
+
 
 
 ## 향후(요청 시)

@@ -38,9 +38,18 @@ const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => (
   { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]
 ));
 const dash = (s) => (s !== null && s !== undefined && String(s).trim() ? esc(s) : '—');
+
+// Word(Outlook 데스크톱)는 style 의 color 를 흘릴 때가 있지만 <font color> 속성은 확실히 먹는다.
+// 배경에 bgcolor 를 함께 준 것과 같은 이유로, 글자색도 속성·스타일을 이중으로 건다.
+const fontColor = (html, color) => `<font color="${color}" style="color:${color};">${html}</font>`;
+// 배지와 뒤따르는 Test 표기를 한 줄에 붙여 둔다. Word 는 display:inline-table 을 무시해
+// 배지를 블록으로 그리므로, 표 한 행에 두 칸으로 넣어야 줄이 갈라지지 않는다.
 const certOf = (r) => {
   const t = [r.test_type, r.test_purpose].filter(Boolean).join(' ');
-  return esc(`${r.cert_type}${t ? ' / ' + t : ''}`);
+  if (!t) return certBadge(r.cert_type);
+  return `<table cellspacing="0" cellpadding="0" border="0" style="border-collapse:collapse;">`
+    + `<tr><td style="padding:0;">${certBadge(r.cert_type)}</td>`
+    + `<td style="padding:0 0 0 6px;font-size:13px;white-space:nowrap;">${esc(t)}</td></tr></table>`;
 };
 const modelOf = (r) => esc(`${r.model_name}${r.fw_version ? ' (' + r.fw_version + ')' : ''}`);
 const compDate = (r) => r.completed_date || (r.completed_at ? r.completed_at.slice(0, 10) : '');
@@ -54,9 +63,25 @@ const roundVerdictLabel = (r) => [r.round ? `진행차수 ${r.round}차` : '', r
 // Word 는 이 선언을 무시해 블록으로 그리지만 셀 하나만 차지하는 위치라 결과가 같다.
 function tag(text, bg, color, radius = '999px') {
   return `<table cellspacing="0" cellpadding="0" border="0" style="border-collapse:collapse;display:inline-table;">`
-    + `<tr><td bgcolor="${bg}" style="background:${bg};color:${color};padding:2px 8px;border-radius:${radius};font-weight:700;font-size:12px;white-space:nowrap;">${text}</td></tr>`
+    + `<tr><td bgcolor="${bg}" style="background:${bg};color:${color};padding:2px 8px;border-radius:${radius};font-weight:700;font-size:12px;white-space:nowrap;">${fontColor(text, color)}</td></tr>`
     + `</table>`;
 }
+
+// 화면의 인증종류 배지(styles.css .badge-netflix 등)와 같은 색을 복사본에도 입힌다.
+// 배경·글자색 값은 styles.css 쪽과 짝을 맞춰 둔 것이라 한쪽만 고치면 화면과 어긋난다.
+const CERT_COLORS = {
+  netflix: ['#fde8e8', '#c0392b'],
+  google: ['#e8f0fe', '#1a73e8'],
+  amazon: ['#fff1de', '#c77700'],
+  etc: ['#eef2f8', '#6b7686'],
+};
+const certKind = (c) => (
+  /netflix/i.test(c) ? 'netflix' : /google/i.test(c) ? 'google' : /amazon/i.test(c) ? 'amazon' : 'etc'
+);
+const certBadge = (c) => {
+  const [bg, fg] = CERT_COLORS[certKind(c)];
+  return tag(esc(c), bg, fg);
+};
 
 function verdictBadge(r) {
   const map = { Pass: ['#e1ecff', '#1a56d6'], Fail: ['#fde2e0', '#d23227'], Drop: ['#eceef2', '#5b6473'] };
@@ -75,7 +100,7 @@ const emptyLine = (t) => `<p style="color:#6b7686;margin:6px 0;">${t}</p>`;
 
 // 칩도 배경이 있어 표 셀로 만든다. 칩 사이 간격은 Word 가 무시하는 border-spacing 대신
 // 빈 셀(스페이서)로 벌린다 — 옛날 메일 HTML 방식이지만 어디서나 같게 나온다.
-const chip = (label, val, color) => `<td bgcolor="#f4f6fa" style="background:#f4f6fa;border:1px solid #e2e7ef;border-radius:8px;padding:6px 12px;font-size:13px;white-space:nowrap;"><b style="color:${color};font-size:16px;">${val}</b> ${label}</td>`;
+const chip = (label, val, color) => `<td bgcolor="#f4f6fa" style="background:#f4f6fa;border:1px solid #e2e7ef;border-radius:8px;padding:6px 12px;font-size:13px;white-space:nowrap;"><b style="color:${color};font-size:16px;">${fontColor(val, color)}</b> ${label}</td>`;
 const chipGap = '<td style="width:8px;font-size:0;line-height:0;">&nbsp;</td>';
 
 function summaryLine(c) {
@@ -108,7 +133,7 @@ function failDetails(rows) {
       <tr>
         <td width="4" bgcolor="#d23227" style="width:4px;background:#d23227;font-size:0;line-height:0;">&nbsp;</td>
         <td bgcolor="#fdf6f5" style="background:#fdf6f5;border:1px solid #f3c9c4;border-left:none;padding:10px 14px;font-size:13px;">
-          <div style="font-weight:700;color:#c0392b;">${modelOf(r)} <span style="font-weight:600;color:#6b7686;">· ${esc(r.cert_type)} · ${esc(roundVerdictLabel(r) || 'Fail')} · 테스터 ${dash(r.tester)}</span></div>
+          <div style="font-weight:700;color:#c0392b;">${fontColor(modelOf(r), '#c0392b')} <span style="font-weight:600;color:#6b7686;">· ${esc(r.cert_type)} · ${esc(roundVerdictLabel(r) || 'Fail')} · 테스터 ${dash(r.tester)}</span></div>
           <div style="margin-top:6px;"><span style="color:#6b7686;font-weight:700;">진행사항</span> ${dash(r.progress)}</div>
           <div style="margin-top:4px;"><span style="color:#6b7686;font-weight:700;">결과코멘트</span> ${dash(r.result)}</div>
         </td>
@@ -139,7 +164,7 @@ function inProgressTable(rows) {
 // 미판정 건은 집계에서 제외하므로 분모는 판정 완료 건수이고 Pass율 + Fail율 = 100%다.
 // 메일 클라이언트가 <style>을 제거하므로 결과 강조도 인라인 스타일로 넣는다.
 const resultCell = (v) => (
-  v === 'Pass' ? '<b style="color:#1257c9;">Pass</b>'
+  v === 'Pass' ? `<b style="color:#1257c9;font-weight:800;">${fontColor('Pass', '#1257c9')}</b>`
     : v === 'Fail' ? tag('Fail', '#d23227', '#ffffff', '3px')
       : '—'
 );
@@ -148,14 +173,14 @@ function certStatsTable(rows) {
   if (!rows.length) return emptyLine('해당 주차에 판정이 끝난 인증 의뢰가 없습니다.');
   const body = rows.map((r) => `<tr>
     ${td('<strong>' + esc(r.model_name) + '</strong>')}
-    ${td(esc(r.cert_type))}
+    ${td(certBadge(r.cert_type))}
     ${td(resultCell(r.result))}
     ${td(esc(r.test_purpose))}
     ${tdNum(r.round + '차')}
     ${tdNum(r.pass)}
-    ${tdNum(r.fail ? `<b style="color:#d23227;">${r.fail}</b>` : 0)}
+    ${tdNum(r.fail ? `<b style="color:#d23227;">${fontColor(r.fail, '#d23227')}</b>` : 0)}
     ${tdNum(r.pass_rate + '%')}
-    ${tdNum(r.fail ? `<b style="color:#d23227;">${r.fail_rate}%</b>` : '0%')}
+    ${tdNum(r.fail ? `<b style="color:#d23227;">${fontColor(r.fail_rate + '%', '#d23227')}</b>` : '0%')}
   </tr>`).join('');
   return `<table width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;border-collapse:collapse;border:1px solid #e2e7ef;">
     <thead><tr>${th('모델명')}${th('인증종류')}${th('결과')}${th('Test 목적')}${thNum('진행차수')}${thNum('Pass')}${thNum('Fail')}${thNum('Pass율')}${thNum('Fail율')}</tr></thead>

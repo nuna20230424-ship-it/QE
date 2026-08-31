@@ -268,6 +268,12 @@ ok('복사본에 class 속성 없음 (서식 유실 방지)', copyables.every((h
 ok('복사본에 style 속성 있음', copyables.every((h) => h.includes('style=')));
 ok('복사본에 <style> 블록 없음', copyables.every((h) => !h.includes('<style')));
 
+// Outlook 데스크톱은 Word 렌더러라 span·b 같은 인라인 요소의 background 와 border-radius 를
+// 버린다. 색이 실리는 조각은 전부 표 셀 + bgcolor 속성이어야 붙여넣기에서 살아남는다.
+ok('색 있는 조각에 bgcolor 속성', copyables.every((h) => h.includes('bgcolor=')));
+ok('인라인 요소에 background 없음', copyables.every((h) => !/<(span|b)s[^>]*background/.test(h)));
+ok('표에 cellspacing 속성 (Word 는 style 로 못 받음)', copyables.every((h) => !h.includes('<table') || h.includes('cellspacing="0"')));
+
 // 복사본은 화면 그대로(상세 포함) — 발송용 링크 본문과 달라야 한다.
 ok('일일 복사본에 모델명 포함', dRep.html.includes('KM-100'));
 ok('통계 복사본에 모델명 포함', copyAll.html.includes('KM-100'));

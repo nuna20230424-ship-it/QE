@@ -208,6 +208,24 @@
 - [x] 회귀 가드 3건 추가 — `npm test` 388건 통과
 - [ ] **브라우저에서 복사 → 메일 작성창 붙여넣기 육안 확인** (사내망 http 경로. 자동 테스트로는 검증 불가)
 - [ ] Mac Mini 재배포
+### 12차-2 Outlook 데스크톱 서식 대응 (같은 날, 재확인)
+표는 살지만 배지·칩 색이 죽는다는 재보고. 붙여넣기 대상은 Outlook 데스크톱.
+- [x] 화면 HTML과 복사 HTML 대조 — 일일 3140자 / 주간 3593자로 **양쪽 완전 동일**. 우리 쪽 차이 아님을 먼저 확인
+- [x] 원인 — Outlook 데스크톱은 Word 렌더러라 `span`·`b` 등 **인라인 요소의 `background`와 `border-radius`를 버린다**. 배지·칩이 전부 인라인 요소였다
+- [x] `tag(text, bg, color, radius)` 신설 — 색 있는 조각을 1칸짜리 표(`display:inline-table`) + `bgcolor` 속성으로 감쌈
+- [x] 판정 배지(`verdictBadge`)·통계 Fail 배지(`resultCell`)를 `tag()`로 전환
+- [x] 요약 칩(`chip`/`summaryLine`)을 표 셀로 전환, 칩 간격은 Word가 무시하는 `border-spacing` 대신 스페이서 셀로
+- [x] 표 머리행(`th`/`thNum`)에 `bgcolor="#f7f9fc"` 속성 추가
+- [x] Fail 상세 박스를 `div` → 표로 전환 (왼쪽 빨간 띠는 4px 셀 + `bgcolor`)
+- [x] 세 표에 `cellspacing="0" cellpadding="0" border="0"` 속성 추가 (Word는 style로 못 받음)
+- [x] 회귀 가드 3건 추가 (bgcolor 존재 · 인라인 요소 background 없음 · cellspacing 속성) — `npm test` 391건 통과
+- [ ] **Outlook 데스크톱에 붙여넣어 육안 재확인**
+- [ ] Mac Mini 재배포
+
+미해결(별건) — 인증통계는 화면(10칼럼 + 비율 막대 + 색상 배지)과 복사본(9칼럼, 비율 막대 없음)이
+원래부터 다른 표다. 화면은 `styles.css` 클래스로, 복사본은 `report.js` 인라인 스타일로 따로 그린다.
+"화면 그대로" 복사를 원하면 복사본을 10칼럼으로 다시 만들어야 한다.
+
 
 ## 향후(요청 시)
 - [ ] 사용자 인증/로그인 (현재는 LAN 신뢰 기반, 인증 없음)

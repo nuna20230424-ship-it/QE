@@ -48,28 +48,43 @@ const compDate = (r) => r.completed_date || (r.completed_at ? r.completed_at.sli
 // 진행차수(Round) + 판정을 한 문구로 조합: "진행차수 3차, Pass"
 const roundVerdictLabel = (r) => [r.round ? `진행차수 ${r.round}차` : '', r.verdict || ''].filter(Boolean).join(', ');
 
+// Outlook 데스크톱은 Word 렌더러라 span·b 같은 인라인 요소의 background 와 border-radius 를
+// 버린다. 확실히 존중하는 것은 표 셀의 bgcolor 속성이므로, 색이 실리는 조각은 전부
+// 1칸짜리 표로 감싼다. display:inline-table 은 브라우저에서 기존처럼 줄 안에 놓이게 하고,
+// Word 는 이 선언을 무시해 블록으로 그리지만 셀 하나만 차지하는 위치라 결과가 같다.
+function tag(text, bg, color, radius = '999px') {
+  return `<table cellspacing="0" cellpadding="0" border="0" style="border-collapse:collapse;display:inline-table;">`
+    + `<tr><td bgcolor="${bg}" style="background:${bg};color:${color};padding:2px 8px;border-radius:${radius};font-weight:700;font-size:12px;white-space:nowrap;">${text}</td></tr>`
+    + `</table>`;
+}
+
 function verdictBadge(r) {
   const map = { Pass: ['#e1ecff', '#1a56d6'], Fail: ['#fde2e0', '#d23227'], Drop: ['#eceef2', '#5b6473'] };
   const c = map[r.verdict] || ['#eef2f8', '#6b7686'];
-  return `<span style="display:inline-block;padding:1px 8px;border-radius:999px;font-weight:700;font-size:12px;background:${c[0]};color:${c[1]};">${esc(roundVerdictLabel(r) || '—')}</span>`;
+  return tag(esc(roundVerdictLabel(r) || '—'), c[0], c[1]);
 }
 
-const th = (t) => `<th style="text-align:left;padding:8px 10px;background:#f7f9fc;color:#6b7686;font-weight:700;border-bottom:1px solid #e2e7ef;font-size:12px;">${t}</th>`;
-const thNum = (t) => `<th style="text-align:right;padding:8px 10px;background:#f7f9fc;color:#6b7686;font-weight:700;border-bottom:1px solid #e2e7ef;font-size:12px;">${t}</th>`;
+// bgcolor 속성을 style 과 함께 둔다. Word 는 style 의 background 를 셀에서도 흘릴 때가 있어
+// 속성 쪽이 최후의 보루다.
+const th = (t) => `<th bgcolor="#f7f9fc" style="text-align:left;padding:8px 10px;background:#f7f9fc;color:#6b7686;font-weight:700;border-bottom:1px solid #e2e7ef;font-size:12px;">${t}</th>`;
+const thNum = (t) => `<th bgcolor="#f7f9fc" style="text-align:right;padding:8px 10px;background:#f7f9fc;color:#6b7686;font-weight:700;border-bottom:1px solid #e2e7ef;font-size:12px;">${t}</th>`;
 const td = (t) => `<td style="padding:8px 10px;border-bottom:1px solid #eef1f6;vertical-align:top;font-size:13px;">${t}</td>`;
 const tdNum = (t) => `<td style="padding:8px 10px;border-bottom:1px solid #eef1f6;vertical-align:top;font-size:13px;text-align:right;">${t}</td>`;
 const section = (title, inner) => `<h3 style="font-size:15px;margin:22px 0 8px;padding-bottom:5px;border-bottom:2px solid #e2e7ef;">${title}</h3>${inner}`;
 const emptyLine = (t) => `<p style="color:#6b7686;margin:6px 0;">${t}</p>`;
 
-const chip = (label, val, color) => `<span style="display:inline-block;margin:0 8px 8px 0;padding:6px 12px;border-radius:8px;background:#f4f6fa;border:1px solid #e2e7ef;font-size:13px;"><b style="color:${color};font-size:16px;">${val}</b> ${label}</span>`;
+// 칩도 배경이 있어 표 셀로 만든다. 칩 사이 간격은 Word 가 무시하는 border-spacing 대신
+// 빈 셀(스페이서)로 벌린다 — 옛날 메일 HTML 방식이지만 어디서나 같게 나온다.
+const chip = (label, val, color) => `<td bgcolor="#f4f6fa" style="background:#f4f6fa;border:1px solid #e2e7ef;border-radius:8px;padding:6px 12px;font-size:13px;white-space:nowrap;"><b style="color:${color};font-size:16px;">${val}</b> ${label}</td>`;
+const chipGap = '<td style="width:8px;font-size:0;line-height:0;">&nbsp;</td>';
 
 function summaryLine(c) {
-  return `<div style="margin:14px 0 4px;">
-    ${chip('완료', c.completed, '#2faa61')}
-    ${chip('Pass', c.pass, '#1a56d6')}
-    ${chip('Fail', c.fail, '#d23227')}
+  return `<table cellspacing="0" cellpadding="0" border="0" style="border-collapse:separate;margin:14px 0 4px;"><tr>
+    ${chip('완료', c.completed, '#2faa61')}${chipGap}
+    ${chip('Pass', c.pass, '#1a56d6')}${chipGap}
+    ${chip('Fail', c.fail, '#d23227')}${chipGap}
     ${chip('진행중', c.inProgress, '#e8a317')}
-  </div>`;
+  </tr></table>`;
 }
 
 function completedTable(rows) {
@@ -81,7 +96,7 @@ function completedTable(rows) {
     ${td(verdictBadge(r))}
     ${td(dash(compDate(r)))}
   </tr>`).join('');
-  return `<table style="width:100%;border-collapse:collapse;border:1px solid #e2e7ef;">
+  return `<table width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;border-collapse:collapse;border:1px solid #e2e7ef;">
     <thead><tr>${th('인증 / Test')}${th('모델 (FW)')}${th('테스터')}${th('판정')}${th('완료일')}</tr></thead>
     <tbody>${body}</tbody></table>`;
 }
@@ -89,11 +104,16 @@ function completedTable(rows) {
 function failDetails(rows) {
   if (!rows.length) return '';
   const items = rows.map((r) => `
-    <div style="border:1px solid #f3c9c4;background:#fdf6f5;border-left:4px solid #d23227;border-radius:8px;padding:10px 14px;margin:8px 0;">
-      <div style="font-weight:700;color:#c0392b;">${modelOf(r)} <span style="font-weight:600;color:#6b7686;">· ${esc(r.cert_type)} · ${esc(roundVerdictLabel(r) || 'Fail')} · 테스터 ${dash(r.tester)}</span></div>
-      <div style="margin-top:6px;"><span style="color:#6b7686;font-weight:700;">진행사항</span> ${dash(r.progress)}</div>
-      <div style="margin-top:4px;"><span style="color:#6b7686;font-weight:700;">결과코멘트</span> ${dash(r.result)}</div>
-    </div>`).join('');
+    <table width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;border-collapse:collapse;margin:8px 0;">
+      <tr>
+        <td width="4" bgcolor="#d23227" style="width:4px;background:#d23227;font-size:0;line-height:0;">&nbsp;</td>
+        <td bgcolor="#fdf6f5" style="background:#fdf6f5;border:1px solid #f3c9c4;border-left:none;padding:10px 14px;font-size:13px;">
+          <div style="font-weight:700;color:#c0392b;">${modelOf(r)} <span style="font-weight:600;color:#6b7686;">· ${esc(r.cert_type)} · ${esc(roundVerdictLabel(r) || 'Fail')} · 테스터 ${dash(r.tester)}</span></div>
+          <div style="margin-top:6px;"><span style="color:#6b7686;font-weight:700;">진행사항</span> ${dash(r.progress)}</div>
+          <div style="margin-top:4px;"><span style="color:#6b7686;font-weight:700;">결과코멘트</span> ${dash(r.result)}</div>
+        </td>
+      </tr>
+    </table>`).join('');
   return section('Fail 상세 (진행/결과 코멘트)', items);
 }
 
@@ -109,7 +129,7 @@ function inProgressTable(rows) {
       ${td(dash(r.progress))}
     </tr>`;
   }).join('');
-  return `<table style="width:100%;border-collapse:collapse;border:1px solid #e2e7ef;">
+  return `<table width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;border-collapse:collapse;border:1px solid #e2e7ef;">
     <thead><tr>${th('인증 / Test')}${th('모델 (FW)')}${th('테스터')}${th('일정')}${th('진행사항')}</tr></thead>
     <tbody>${body}</tbody></table>`;
 }
@@ -120,7 +140,7 @@ function inProgressTable(rows) {
 // 메일 클라이언트가 <style>을 제거하므로 결과 강조도 인라인 스타일로 넣는다.
 const resultCell = (v) => (
   v === 'Pass' ? '<b style="color:#1257c9;">Pass</b>'
-    : v === 'Fail' ? '<b style="background:#d23227;color:#ffffff;padding:1px 7px;border-radius:3px;">Fail</b>'
+    : v === 'Fail' ? tag('Fail', '#d23227', '#ffffff', '3px')
       : '—'
 );
 
@@ -137,7 +157,7 @@ function certStatsTable(rows) {
     ${tdNum(r.pass_rate + '%')}
     ${tdNum(r.fail ? `<b style="color:#d23227;">${r.fail_rate}%</b>` : '0%')}
   </tr>`).join('');
-  return `<table style="width:100%;border-collapse:collapse;border:1px solid #e2e7ef;">
+  return `<table width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;border-collapse:collapse;border:1px solid #e2e7ef;">
     <thead><tr>${th('모델명')}${th('인증종류')}${th('결과')}${th('Test 목적')}${thNum('진행차수')}${thNum('Pass')}${thNum('Fail')}${thNum('Pass율')}${thNum('Fail율')}</tr></thead>
     <tbody>${body}</tbody></table>`;
 }

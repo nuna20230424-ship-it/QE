@@ -12,46 +12,75 @@ Claude는 이 서버에 SSH 키가 없어 비대화형 접속이 거부되므로
 
 ---
 
-## 0. 선행 조건 — 개발 PC에서 origin으로 push (아직 안 됨)
+## 0. 선행 조건 — 개발 PC 준비 (병합·번들·전달 완료)
 
-Mac Mini는 `origin`에서 pull한다. 그런데 이번 변경이 아직 푸시되지 않았고,
-**지난 회차와 달리 그냥 `git push`를 하면 거부된다.**
-
-```
-## main...origin/main [ahead 5, behind 1]
-```
+Mac Mini는 원래 `origin`에서 pull한다. 그런데 원격 이력이 갈려 있어 **그냥 `git push`를 하면 거부되는**
+상태였다. 그래서 병합을 먼저 하고, 번들로 맥미니에 직접 전달했다.
 
 ### 왜 갈렸나
 
-원격 `main`이 `c348389 인증 통계에 모델별 인증완료일 표기`로 앞서 있다.
-로컬은 **같은 변경을 `9271d28`이라는 다른 해시로 이미 품고 있다** — 어제 `git pull`이 충돌로 멈춰 있던 것을
+원격 `main`이 `c348389 인증 통계에 모델별 인증완료일 표기`로 앞서 있었다.
+로컬은 **같은 변경을 `9271d28`이라는 다른 해시로 이미 품고 있었다** — 어제 `git pull`이 충돌로 멈춰 있던 것을
 오늘 해소해 커밋했는데(`392707d`), 그 사이 원격 쪽 이력이 다시 만들어지면서 해시가 갈렸다.
-**내용은 같고 계보만 다르다.** 그래서 병합이 필요하다.
-
-### 병합 결과를 미리 확인해 뒀다
-
-`git merge-tree`로 작업 트리를 건드리지 않고 미리 돌려 본 결과다.
-
-- **충돌 없음.**
-- 병합 후 파일 내용이 **현재 로컬과 완전히 동일하다.** 계보만 합쳐지고 코드는 한 줄도 바뀌지 않는다.
-
-### 개발 PC(Windows)에서 실행
-
-```powershell
-cd C:\Users\k251110\Desktop\QE
-git fetch origin
-git status -sb                       # "ahead 5, behind 1" 확인
-git merge origin/main                # 충돌 없이 병합 커밋 하나 생긴다
-git status -sb                       # "ahead 6" (기존 5 + 병합 커밋 1)
-npm test                             # 478건 PASS 재확인
-git push origin main
-git log --oneline origin/main -1     # 방금 만든 병합 커밋인지 확인
-```
+**내용은 같고 계보만 다르다.** 그래서 병합이 필요했다.
 
 > ⚠️ **`git pull --rebase`는 쓰지 않는다.** 오늘 만든 충돌 해소 병합(`392707d`)이 평탄화되면서
 > 어제 해결한 `report.js` 충돌이 되살아난다. `git merge`로 간다.
 
-푸시는 외부 저장소에 올리는 행위라 **사람이 직접 실행**한다. 끝나면 1번으로 넘어간다.
+### 여기까지 완료 (2026-09-01)
+
+| 단계 | 결과 |
+|---|---|
+| `git merge origin/main` | 충돌 없이 병합 → `c47ae9f`. **파일 내용은 병합 전과 동일**하고 계보만 합쳐졌다 |
+| `npm test` | 478건 PASS |
+| `git bundle create qe-2026-09-01.bundle main` | **289 KB**, `git bundle verify` → `is okay` · `complete history` |
+| fast-forward 가능 여부 | 맥미니(`c348389`) → `c47ae9f` **가능** |
+| `scp` 로 맥미니 전달 | **성공** — 아래 참조 |
+| origin push | **아직 안 됨** (`main...origin/main [ahead 8]`) |
+
+맥미니가 받을 커밋 8개다.
+
+```
+c47ae9f Merge remote-tracking branch 'origin/main'
+168303f push가 막힐 때의 우회 경로를 작업지시서에 넣는다
+918737f 맥미니(M4) 재배포 작업지시서 — 메인/서브 담당 테스터와 리소스 분담
+81834f0 14차 작업 기록 — 메인/서브 담당자와 분담 계산 결정 근거
+3101b24 서브 담당 테스터 입력 칸과 분담 표기를 화면·보고 본문에 붙인다
+1aa10db 담당 테스터를 메인·서브로 나누고 2인 이상이면 slot을 분담해 계상한다
+392707d 원격 '인증완료일' 컬럼과 로컬 Outlook 대응 서식을 함께 살려 병합
+9271d28 인증 통계에 모델별 인증완료일 표기
+```
+
+### 번들 전달 완료 (2026-09-01)
+
+일반 터미널(PowerShell 창)에서 사람이 직접 실행해 성공했다.
+**Claude Code 안에서는 이 명령이 막힌다** — 이유는 0-B의 `⚠️ 함정` 절에 있다.
+
+```
+PS C:\Users\k251110\Desktop\QE> scp qe-2026-09-01.bundle dqa@172.16.3.136:
+(dqa@172.16.3.136) Password:
+qe-2026-09-01.bundle    100%  289KB   9.1MB/s   00:00
+```
+
+번들은 맥미니 홈(`~/qe-2026-09-01.bundle`)에 있다.
+**다음은 방법 B의 맥미니 절차**로 넘어가고, 4번만 origin 대신 번들에서 받는다.
+
+> 이 회차는 **방법 A(배포 스크립트)를 쓸 수 없다.** 스크립트 4단계가 `git pull origin main`이라
+> "Already up to date"가 뜨고 아무것도 바뀌지 않는다. 방법 B로 간다.
+
+### origin push는 아직 남아 있다
+
+번들로 옮긴 커밋과 push할 커밋은 **같은 객체**라, 나중에 아래를 실행하는 순간
+맥미니와 origin이 추가 조치 없이 일치한다. 급하지는 않지만 미뤄 두면
+**다른 사람이 origin에 커밋을 올렸을 때 맥미니의 다음 `pull --ff-only`가 막힌다.**
+
+```powershell
+cd C:\Users\k251110\Desktop\QE
+git push origin main
+git log --oneline origin/main -1     # c47ae9f 인지 확인
+```
+
+푸시는 외부로 나가는 행위라 **사람이 일반 터미널에서 직접 실행**한다.
 
 ---
 
@@ -76,6 +105,43 @@ git log --oneline origin/main -1     # 방금 만든 병합 커밋인지 확인
 | `403` · `Permission ... denied to` | 토큰 권한/SSO | 대안 1 |
 | `Could not resolve host` · `Failed to connect` · 프록시 오류 | 사내망이 GitHub 쓰기를 막음 | 대안 2 |
 | `pre-receive hook declined` · 정책 거부 | 저장소 정책 | 대안 2 |
+
+---
+
+### ⚠️ 함정 — Claude Code 세션 안에서는 맥미니로 접속할 수 없다
+
+**Claude Code의 Bash 도구와 `!` 로 실행하는 명령은 샌드박스 셸에서 돌고, 이 샌드박스가
+맥미니로 가는 연결을 막는다.** github(443)는 허용되므로 `git fetch`·`git push`는 되지만
+`ssh`·`scp`·맥미니로의 `curl`은 전부 막힌다. 2026-09-01 실측이다.
+
+| 경로 | 결과 | 뜻 |
+|---|---|---|
+| PowerShell `Test-NetConnection 172.16.3.136 -Port 22` | `True` | 포트 열려 있음 |
+| Windows OpenSSH `ssh dqa@172.16.3.136` | `Permission denied (publickey,password,keyboard-interactive)` | **접속 성공** — 서버가 인증을 요구한 것 |
+| Git Bash `ssh` / Claude Code `!` | `connect to host ... port 22: Permission denied` | **연결 자체가 막힘** |
+| Claude Code Bash → 맥미니 `:3001` | `000` | 같은 이유로 막힘 |
+
+두 에러 문구가 다른 것이 판정 근거다. `Permission denied (publickey,...)`는 **서버까지 갔다는 뜻**이고,
+`connect to host ... Permission denied`는 **가지도 못했다는 뜻**이다.
+포트가 막혔다고 오판해 방화벽 담당자에게 문의하기 전에 이 둘을 먼저 구분한다.
+
+**그래서 `scp`·`ssh`는 Claude Code 밖의 일반 터미널(PowerShell 창·Windows Terminal)에서 실행한다.**
+비밀번호를 물어보므로 대화형 창이어야 한다.
+
+```powershell
+cd C:\Users\k251110\Desktop\QE
+scp qe-2026-09-01.bundle dqa@172.16.3.136:
+```
+
+- `cd`로 먼저 이동한다. `C:/...` 경로를 그대로 넘기면 `C:`의 콜론을 호스트 구분자로 오해할 수 있다.
+- 목적지 끝을 `:`만 두면 홈 디렉터리다. `~/`보다 확실하다.
+
+> 🔴 **`scp`는 개발 PC에서 실행한다.** 맥미니에서 실행하면 자기 자신에게 접속하려 하고,
+> 애초에 `C:/Users/...` 경로가 거기엔 없다. 맥미니에서 하는 일은 받은 번들을 `git pull`로 푸는 것뿐이다.
+
+**같은 이유로 Claude가 대신 할 수 없는 일이 정해진다.** 병합·번들 생성·테스트·GitHub 조회는
+Claude가 하고, `scp`·`ssh`·재기동은 사람이 일반 터미널에서 한다.
+배포 후 검증은 Claude가 PowerShell로 맥미니 HTTP를 볼 수 있으므로 다시 Claude 몫이다.
 
 ---
 
@@ -289,7 +355,11 @@ Claude가 `http://172.16.3.136:3001`로 직접 확인한 결과다.
 
 ---
 
-## 방법 A — 스크립트 한 줄 (권장)
+## 방법 A — 스크립트 한 줄 (이번 회차는 쓸 수 없다)
+
+> 🔴 **이번 회차는 방법 A를 건너뛰고 방법 B로 간다.** 스크립트 4단계가 `git pull origin main`인데
+> origin에는 아직 아무것도 올라가지 않았다. "이미 최신입니다"가 뜨고 **아무것도 바뀌지 않는다.**
+> origin push를 먼저 푼 경우에만 아래가 유효하다.
 
 개발 PC에서 실행한다. 스크립트가 폴더 찾기 → 백업 → 상태 확인 → pull → install → 재기동 → 기동 검증까지 한다.
 
@@ -354,13 +424,16 @@ git log --oneline -1                   # c348389 인증 통계에 모델별 인�
 ### 4. 코드 갱신
 
 ```bash
-git fetch origin
-git pull --ff-only origin main
-git log --oneline -6
+# 이번 회차는 origin 이 아니라 전달받은 번들에서 받는다 (0번 참조)
+git bundle verify ~/qe-2026-09-01.bundle
+git pull --ff-only ~/qe-2026-09-01.bundle main
+git log --oneline -6                   # 최상단이 c47ae9f
 ls -la assignees.js                    # 신규 파일이 내려왔는지 확인
 ```
 
-0번(push)을 건너뛰었다면 여기서 "Already up to date"가 뜬다 — 그러면 0번부터 다시 한다.
+`git log`의 최상단이 `c47ae9f`가 아니면 번들을 잘못 받은 것이다 — `git bundle list-heads`로
+번들 안의 ref를 먼저 확인한다. `verify`가 실패하면 전송이 깨진 것이니 `scp`를 다시 한다.
+(origin push를 먼저 푼 경우라면 이 자리에 `git pull --ff-only origin main`을 쓰면 된다.)
 
 ### 5. 의존성
 
@@ -583,35 +656,49 @@ cp ~/data.db.bak-<타임스탬프> data.db
 
 ---
 
-## 요약 — 최소 경로
+## 요약 — 최소 경로 (2026-09-01 진행 상태 반영)
 
-```powershell
-# 1) 개발 PC (Windows) — 병합 후 푸시 (그냥 push하면 거부된다)
-cd C:\Users\k251110\Desktop\QE
-git fetch origin
-git merge origin/main
-npm test
-git push origin main
+개발 PC 쪽은 끝났다. **남은 것은 맥미니 4단계와 검증이다.**
+
+```
+[완료] 병합 c47ae9f · npm test 478 PASS · 번들 289KB 생성 · scp 로 맥미니 홈 전달
 ```
 
 ```bash
-# 2) 개발 PC — 배포 한 줄
-ssh dqa@172.16.3.136 bash -s < scripts/deploy-macmini.sh
+# 1) Mac Mini — 배포 폴더 찾기
+lsof -i :3001
+lsof -a -p <위 PID> -d cwd -Fn
+cd <위에서 찾은 경로>
 
-# 1)이 막히면 GitHub를 우회한다 (0-B 대안 2) — 번들 271KB
-#   git merge origin/main && git bundle create qe-2026-09-01.bundle main
-#   scp qe-2026-09-01.bundle dqa@172.16.3.136:~/
-#   (맥미니) git pull --ff-only ~/qe-2026-09-01.bundle main
+# 2) Mac Mini — 백업 (스키마 변경 있음, 생략 금지)
+cp data.db ~/data.db.bak-$(date +%Y%m%d-%H%M%S)
 
-# 3) Mac Mini — 반영 신호 네 줄 (전부 1 이상이어야 한다)
+# 3) Mac Mini — 번들에서 받기 (origin 이 아니다)
+git bundle verify ~/qe-2026-09-01.bundle
+git pull --ff-only ~/qe-2026-09-01.bundle main
+git log --oneline -1                 # c47ae9f 여야 한다
+npm install --no-audit --no-fund
+
+# 4) Mac Mini — 재기동 (방법 B 6번)
+
+# 5) Mac Mini — 반영 신호 네 줄 (전부 1 이상이어야 한다)
 curl -s http://127.0.0.1:3001/api/requests   | grep -c tester_sub
 curl -s http://127.0.0.1:3001/index.html     | grep -c f-tester_sub-select
 curl -s http://127.0.0.1:3001/app.js         | grep -c share_count
 curl -s http://127.0.0.1:3001/api/resources  | grep -c share_count
+
+# 6) Mac Mini — 정리
+rm ~/qe-2026-09-01.bundle
 ```
 
 ```
-# 4) Claude에게 "확인해줘" → HTTP로 대신 검증
-# 5) 브라우저에서 위 육안 체크리스트
+# 7) Claude에게 "확인해줘" → HTTP로 대신 검증
+# 8) 브라우저에서 위 육안 체크리스트
 #    (특히 서브를 붙인 NTS 건이 6/6으로 갈리고 가동률에 두 사람이 잡히는지)
+```
+
+```powershell
+# 9) 나중에 — 개발 PC 일반 터미널에서 origin 동기화
+cd C:\Users\k251110\Desktop\QE
+git push origin main
 ```

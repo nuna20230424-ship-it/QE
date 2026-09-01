@@ -1,5 +1,6 @@
 // QE 담당자별 업무 리소스(slot) 산정 — 미완 의뢰의 소요 slot을 영업일수로 환산한다
 const holidays = require('./holidays');
+const assignees = require('./assignees');
 
 // 인증 담당 인원. 화면에는 이 순서대로 항상 4명이 나오고, 건이 0이어도 행을 유지한다.
 const MEMBERS = ['이은경', '조아라', '이해찬', '문유림'];
@@ -290,14 +291,25 @@ function dailyPlanOf(items, asOf, horizon, members = MEMBERS, absorbUnassigned =
     }
   }
 
+  // 분담 건은 담당자 수만큼 배치되므로 '건' 단위 목록에서는 가장 심한 몫 하나만 남긴다.
+  // 접지 않으면 2인 배정 한 건이 목록에도 카운트에도 두 번 잡힌다.
+  const worstPerRequest = (list, worse) => {
+    const best = new Map();
+    for (const r of list) {
+      const cur = best.get(r.id);
+      if (!cur || worse(r, cur)) best.set(r.id, r);
+    }
+    return [...best.values()];
+  };
+
   // 일정 밀림 — 직렬 배치 결과가 계획일보다 늦게 시작하는 건 (충돌의 결과이자 지연 신호)
-  const delays = placements
+  const delays = worstPerRequest(placements
     .filter((p) => p.actual_idx > p.declared_idx && p.declared_idx < days.length)
     .map((p) => ({
       tester: p.tester, id: p.item.id, model_name: p.item.model_name, status: p.item.status,
       declared_date: p.declared_date, actual_date: p.actual_date,
       delay_days: p.actual_idx - p.declared_idx, pending: p.pending,
-    }))
+    })), (a, b) => a.delay_days > b.delay_days)
     .sort((a, b) => b.delay_days - a.delay_days);
 
   // 리소스 확보 예정 — 담당자가 busy → idle로 바뀌는 첫 시점과 그때 끝나는 건.
@@ -334,7 +346,7 @@ function dailyPlanOf(items, asOf, horizon, members = MEMBERS, absorbUnassigned =
   // - team_full   : 그날 전원이 점유 중이라 담당자를 바꿔도 안 된다. 날짜를 옮겨야 한다.
   // 판정은 배치가 끝난 dayRows[희망일].idle 로 한다. 직렬 큐 배치와 같은 자료를 보므로
   // "밀렸다"는 사실과 "왜 밀렸나"가 어긋나지 않는다.
-  const scheduleRisks = placements
+  const scheduleRisks = worstPerRequest(placements
     .filter((p) => p.item.status === WAITING
       && p.declared_idx < days.length
       && p.actual_idx > p.declared_idx)
@@ -363,7 +375,7 @@ function dailyPlanOf(items, asOf, horizon, members = MEMBERS, absorbUnassigned =
           to: blocking.end_date,
         } : null,
       };
-    })
+    }), (a, b) => a.delay_days > b.delay_days)
     .sort((a, b) => String(a.desired_date).localeCompare(String(b.desired_date))
       || b.delay_days - a.delay_days);
 
@@ -372,6 +384,39 @@ function dailyPlanOf(items, asOf, horizon, members = MEMBERS, absorbUnassigned =
     conflicts, delays, releases, scheduleRisks,
   };
 }
+
+// 담당자가 2인 이상인 건을 '담당자 한 명의 몫' 단위로 펼친다.
+// 한 건의 업무량을 인원수로 나눠 각자에게 계상하므로(분담) 팀 총 물량은 그대로이고
+// 개인 부하와 소요 기간만 갈린다 — NTS 12 slot을 둘이 맡으면 6/6이 되어 6영업일에 끝난다.
+// 나눠 담은 slot·계획·소화의 합은 언제나 원래 값과 같아 어느 집계에서도 물량이 새지 않는다.
+// 담당자가 없는 건은 이름이 빈 몫 하나로 남겨 '미배정'과 자동 할당 미리보기가 그대로 돌아간다.
+function assignmentsOf(items) {
+  const out = [];
+  for (const it of items) {
+    const names = it.assignees.length ? it.assignees : [''];
+    const slots = assignees.split(it.slots, names.length);
+    const planSlots = assignees.split(it.plan_slots, names.length);
+    const consumed = assignees.split(it.consumed, names.length);
+    names.forEach((name, i) => {
+      out.push({
+        ...it,
+        tester: name,
+        slots: slots[i],
+        plan_slots: planSlots[i],
+        consumed: consumed[i],
+        share_count: names.length,                      // 이 건을 나눠 맡은 인원수 (1이면 단독)
+        share_index: i,                                 // 0 = 메인
+        co_testers: names.filter((_, k) => k !== i),    // 같은 건을 맡은 다른 담당자
+        full_slots: it.slots,                           // 나누기 전 그 건의 잔여 전량
+        full_plan_slots: it.plan_slots,
+      });
+    });
+  }
+  return out;
+}
+
+// 몫 단위 목록에서 의뢰 건수를 센다. 2인 분담 건이 2건으로 보이면 안 된다.
+const countIds = (list) => new Set(list.map((a) => a.id)).size;
 
 // 미완 의뢰 목록을 받아 전체·담당자별·일별 리소스 현황을 낸다.
 // asOf는 'YYYY-MM-DD'. horizon은 일별 현황을 몇 영업일까지 볼지(기본 20일 = 4주).
@@ -393,7 +438,9 @@ function summarize(openRows, asOf, horizon = 20) {
       model_name: r.model_name,
       round: r.round || '',
       status: r.status,
-      tester: String(r.tester || '').trim(),
+      tester: String(r.tester || '').trim(),          // 메인 담당자
+      tester_sub: String(r.tester_sub || '').trim(),  // 서브 담당자 원문 (콤마 구분)
+      assignees: assignees.listOf(r),                 // [메인, ...서브] — 비어 있으면 미배정
       plan_date: r.plan_date || '',
       desired_date: r.desired_date || '',
       started_date: r.started_date || '',
@@ -410,14 +457,20 @@ function summarize(openRows, asOf, horizon = 20) {
     else items.push(item);
   }
 
-  const pick = (fn) => items.filter(fn);
+  // 담당자별 집계·일별 배치는 '누구의 몫인가'가 단위다. 분담 건은 여기서 사람 수만큼 갈린다.
+  const shares = assignmentsOf(items);
+  const pick = (fn) => shares.filter(fn);
 
   // ---- 리소스 풀을 둘로 나눈다 ----
   // 인증 담당(4명)과 기타 테스터는 별도 리소스로 관리하므로 가용·사용률을 섞지 않는다.
   // 기타 물량이 인증 담당 풀의 100%에 섞이면 사용률이 왜곡된다.
+  // 메인이 인증 담당이고 서브가 기타 테스터면 한 건의 몫이 두 풀에 갈려 들어간다 — 그게 실제다.
   const otherNames = [...new Set(pick((r) => r.tester && !MEMBERS.includes(r.tester)).map((r) => r.tester))].sort();
-  const certItems = pick((r) => !r.tester || MEMBERS.includes(r.tester));
-  const otherItems = pick((r) => r.tester && !MEMBERS.includes(r.tester));
+  const certShares = pick((r) => !r.tester || MEMBERS.includes(r.tester));
+  const otherShares = pick((r) => r.tester && !MEMBERS.includes(r.tester));
+  // 건 단위로 봐야 하는 목록(최장 대기·초과 진행)은 몫이 인증 담당 풀에 걸린 건만 고른다.
+  const certIds = new Set(certShares.map((a) => a.id));
+  const certRequests = items.filter((r) => certIds.has(r.id));
 
   const memberRows = MEMBERS.map((n) => rowOf(n, 'member', pick((r) => r.tester === n), asOf));
   const unassigned = rowOf('미배정', 'unassigned', pick((r) => !r.tester), asOf);
@@ -427,11 +480,12 @@ function summarize(openRows, asOf, horizon = 20) {
   const otherRows = otherNames.map((n) => rowOf(n, 'other', pick((r) => r.tester === n), asOf));
 
   // 풀 하나의 총계. 1주 가용(인원수 × 5 slot)을 100%로 놓는다.
-  const totalsOf = (poolItems, poolMembers, unassignedSlots) => {
-    const slots = poolItems.reduce((a, r) => a + r.slots, 0);
+  // 입력은 담당자 몫 단위라 분담 건은 여러 줄로 들어온다 — slot 합은 그대로이고 건수만 중복을 뺀다.
+  const totalsOf = (poolShares, poolMembers, unassignedSlots) => {
+    const slots = poolShares.reduce((a, r) => a + r.slots, 0);
     // 진행률 반영 전 계획 소요와 이미 소화한 분량. "18 slot 중 5 소화, 잔여 13"을 보여준다.
-    const planSlots = poolItems.reduce((a, r) => a + r.plan_slots, 0);
-    const consumedSlots = poolItems.reduce((a, r) => a + r.consumed, 0);
+    const planSlots = poolShares.reduce((a, r) => a + r.plan_slots, 0);
+    const consumedSlots = poolShares.reduce((a, r) => a + r.consumed, 0);
     const dailyCapacity = poolMembers.length;
     const weekCapacity = dailyCapacity * WEEK_BUSINESS_DAYS;
     const usagePct = pct(slots, weekCapacity);
@@ -439,7 +493,7 @@ function summarize(openRows, asOf, horizon = 20) {
     const eta = days > 0 ? holidays.nthBusinessDay(asOf, days) : null;
     return {
       headcount: dailyCapacity,
-      count: poolItems.length,
+      count: countIds(poolShares),             // 분담 건이 인원수만큼 부풀지 않게 의뢰 단위로 센다
       slots,                                  // 잔여 = 리소스로 계상하는 값
       plan_slots: planSlots,                  // 계획 소요 합계
       consumed_slots: consumedSlots,          // 이미 소화한 분량
@@ -463,9 +517,9 @@ function summarize(openRows, asOf, horizon = 20) {
   };
 
   // 인증 담당 풀은 미배정 건을 자동 할당 대상으로 흡수한다. 기타 풀은 흡수하지 않는다.
-  const daily = dailyPlanOf(certItems, asOf, horizon, MEMBERS, true);
+  const daily = dailyPlanOf(certShares, asOf, horizon, MEMBERS, true);
   const othersDaily = otherNames.length
-    ? dailyPlanOf(otherItems, asOf, horizon, otherNames, false)
+    ? dailyPlanOf(otherShares, asOf, horizon, otherNames, false)
     : null;
 
   // ---- 1. 실시간 리소스 가동률 ----
@@ -502,8 +556,8 @@ function summarize(openRows, asOf, horizon = 20) {
     // 계획일이 비어 있는 확정 업무는 시작일을 알 수 없어 기준일로 계상된다.
     // 그대로 두면 데이터 누락이 '오늘 과부하'라는 거짓 경보로 나타나므로 함께 알린다.
     no_plan_date: (() => {
-      const rows = certItems.filter((r) => COMMITTED.includes(r.status) && !r.plan_date);
-      return { count: rows.length, slots: rows.reduce((a, r) => a + r.slots, 0) };
+      const rows = certShares.filter((r) => COMMITTED.includes(r.status) && !r.plan_date);
+      return { count: countIds(rows), slots: rows.reduce((a, r) => a + r.slots, 0) };
     })(),
     // 이번 주 보조 지표 (남은 영업일 기준)
     week: thisWeek ? {
@@ -523,20 +577,20 @@ function summarize(openRows, asOf, horizon = 20) {
 
   const pipeline = {
     stages: STATUS_ORDER.map((st) => {
-      const rows = certItems.filter((r) => r.status === st);
+      const rows = certShares.filter((r) => r.status === st);
       return {
         status: st,
-        count: rows.length,
+        count: countIds(rows),
         slots: rows.reduce((a, r) => a + r.slots, 0),
-        unassigned: rows.filter((r) => !r.tester).length,
+        unassigned: countIds(rows.filter((r) => !r.tester)),
       };
     }),
     // 가장 오래 대기 중인 건 — 등록일로부터 며칠 지났는지. 최우선 배정 대상이다.
-    longest_waiting: certItems
+    longest_waiting: certRequests
       .filter((r) => r.status === WAITING)
       .map((r) => ({
         id: r.id, model_name: r.model_name, cert_type: r.cert_type, rule: r.rule,
-        slots: r.slots, tester: r.tester, desired_date: r.desired_date,
+        slots: r.slots, tester: r.tester, assignees: r.assignees, desired_date: r.desired_date,
         created_date: dayOf(r.created_at),
         waiting_days: daysBetween(dayOf(r.created_at), asOf),
         // 희망일이 이미 지났으면 배정이 늦은 것이다
@@ -548,22 +602,22 @@ function summarize(openRows, asOf, horizon = 20) {
 
   // ---- 4. 인증 타입별 점유 현황 ----
   // 어떤 인증이 리소스를 가장 많이 먹고 있는지. 도넛 차트의 원본 데이터다.
-  const poolSlots = certItems.reduce((a, r) => a + r.slots, 0);
+  const poolSlots = certShares.reduce((a, r) => a + r.slots, 0);
   const typeDistribution = SLOT_RULES.map((rule) => {
-    const rows = certItems.filter((r) => r.rule === rule.label);
+    const rows = certShares.filter((r) => r.rule === rule.label);
     const slots = rows.reduce((a, r) => a + r.slots, 0);
     return {
       label: rule.label, unit_slots: rule.slots,
-      count: rows.length, slots, share: pct(slots, poolSlots),
+      count: countIds(rows), slots, share: pct(slots, poolSlots),
     };
   }).filter((t) => t.count > 0).sort((a, b) => b.slots - a.slots);
 
   // ---- 5. 스마트 알림 ----
   // 예정 소요를 넘겨 진행 중인 건. 진행률 자동 차감이 잔여를 1로 붙잡고 있다는 신호이기도 하다.
-  const overrun = certItems
+  const overrun = certRequests
     .filter((r) => r.overrun_days > 0)
     .map((r) => ({
-      id: r.id, model_name: r.model_name, cert_type: r.cert_type, tester: r.tester,
+      id: r.id, model_name: r.model_name, cert_type: r.cert_type, tester: r.tester, assignees: r.assignees,
       plan_slots: r.plan_slots, consumed: r.consumed, overrun_days: r.overrun_days,
       started_date: r.started_date,
     }))
@@ -606,8 +660,8 @@ function summarize(openRows, asOf, horizon = 20) {
     pipeline,
     type_distribution: typeDistribution,
     alerts,
-    totals: totalsOf(certItems, MEMBERS, unassigned.slots),
-    others_totals: totalsOf(otherItems, otherNames, 0),
+    totals: totalsOf(certShares, MEMBERS, unassigned.slots),
+    others_totals: totalsOf(otherShares, otherNames, 0),
     daily,
     others_daily: othersDaily,
     rows: memberRows,

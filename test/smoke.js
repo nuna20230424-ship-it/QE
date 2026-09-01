@@ -906,6 +906,160 @@ ok('요약 카운트 = 목록 길이', rkSort.count === rkSort.items.length);
 ok('사유별 합 = 전체', rkSort.tester_busy + rkSort.team_full === rkSort.count);
 ok('조회 구간을 함께 알린다', rkSort.horizon === 20, String(rkSort.horizon));
 
+// ---------- Task 7. 메인 / 서브 담당 테스터 ----------
+// 한 건에 담당자가 2인 이상이면 그 건의 업무량을 인원수로 나눠 각자에게 계상한다(분담).
+// 팀 총 물량은 그대로이고 개인 부하와 소요 기간만 갈린다.
+head('Task 7-A. 담당자 명단·분담 규칙');
+const assignees = require('../assignees');
+
+ok('서브가 없으면 메인 한 명', assignees.listOf({ tester: '이은경', tester_sub: '' }).join(',') === '이은경');
+ok('메인 + 서브 순서 유지', assignees.listOf({ tester: '이은경', tester_sub: '조아라' }).join(',') === '이은경,조아라');
+ok('서브 여러 명 (콤마 구분)',
+  assignees.listOf({ tester: '이은경', tester_sub: '조아라, 이해찬' }).join(',') === '이은경,조아라,이해찬');
+ok('공백·빈 조각은 버린다',
+  assignees.listOf({ tester: '이은경', tester_sub: ' 조아라 , , ' }).join(',') === '이은경,조아라');
+// 같은 사람이 메인·서브에 겹쳐 들어오면 부하가 두 번 잡히고 분담 몫도 실제보다 작아진다
+ok('메인이 서브에 또 들어와도 한 번만',
+  assignees.listOf({ tester: '이은경', tester_sub: '이은경, 조아라' }).join(',') === '이은경,조아라');
+ok('서브끼리 중복도 한 번만',
+  assignees.listOf({ tester: '이은경', tester_sub: '조아라, 조아라' }).join(',') === '이은경,조아라');
+ok('담당자가 없으면 빈 배열', assignees.listOf({ tester: '', tester_sub: '' }).length === 0);
+// 메인이 비고 서브만 있는 비정상 입력도 담당자로는 세어야 리소스에서 사라지지 않는다
+ok('메인이 비어도 서브는 담당자', assignees.listOf({ tester: '', tester_sub: '조아라' }).join(',') === '조아라');
+
+ok('12 slot 2인 → 6/6', assignees.split(12, 2).join(',') === '6,6');
+ok('홀수는 메인이 하나 더 (3 slot 2인 → 2/1)', assignees.split(3, 2).join(',') === '2,1');
+ok('4 slot 3인 → 2/1/1', assignees.split(4, 3).join(',') === '2,1,1');
+ok('단독이면 전량', assignees.split(12, 1).join(',') === '12');
+ok('0 slot도 NaN 없이 0', assignees.split(0, 2).join(',') === '0,0');
+// 분담 때문에 팀 총 물량이 늘거나 줄면 모든 집계가 틀어진다
+[[12, 2], [3, 2], [4, 3], [7, 4], [1, 3], [2, 5]].forEach(([total, n]) => {
+  ok(`분담 합 = 원래 물량 (${total} slot ${n}인)`,
+    assignees.split(total, n).reduce((a, b) => a + b, 0) === total,
+    assignees.split(total, n).join(','));
+});
+
+head('Task 7-B. 분담이 실시간 리소스 가동률에 잡히는가');
+const SUB_AS = '2026-08-28';   // 금요일, 공휴일 아님
+const nts = (extra) => [{
+  id: 1, cert_type: 'Netflix NTS', test_type: 'IR', model_name: 'SUB-100',
+  status: '진행중', tester: '이은경', plan_date: SUB_AS, ...extra,
+}];
+const solo = resources.summarize(nts({ tester_sub: '' }), SUB_AS, 20);
+const duo = resources.summarize(nts({ tester_sub: '조아라' }), SUB_AS, 20);
+const who = (rs, n) => rs.rows.find((r) => r.tester === n);
+
+ok('단독이면 메인이 12 slot 전량', who(solo, '이은경').slots === 12, String(who(solo, '이은경').slots));
+ok('단독이면 서브 후보는 0 slot', who(solo, '조아라').slots === 0);
+ok('2인이면 메인 6 slot', who(duo, '이은경').slots === 6, String(who(duo, '이은경').slots));
+ok('2인이면 서브 6 slot', who(duo, '조아라').slots === 6, String(who(duo, '조아라').slots));
+// 분담은 나누는 것이지 늘리는 것이 아니다 — 팀 총량과 건수는 그대로여야 한다
+ok('팀 총 slot 불변 (12)', duo.totals.slots === solo.totals.slots && duo.totals.slots === 12,
+  `${duo.totals.slots} vs ${solo.totals.slots}`);
+ok('의뢰 건수 불변 (1건)', duo.totals.count === 1, String(duo.totals.count));
+ok('전체 물량도 1건 12 slot', duo.overall.count === 1 && duo.overall.slots === 12,
+  `${duo.overall.count}건 / ${duo.overall.slots} slot`);
+ok('파이프라인 건수도 1건', duo.pipeline.stages.find((x) => x.status === '진행중').count === 1);
+ok('타입 분포 건수도 1건', duo.type_distribution[0].count === 1, String(duo.type_distribution[0].count));
+
+// 소요 기간 — 12영업일이 6영업일로 준다. 이것이 분담을 쓰는 이유다.
+ok('단독 소진 12영업일', who(solo, '이은경').eta === holidays.nthBusinessDay(SUB_AS, 12), String(who(solo, '이은경').eta));
+ok('2인 소진 6영업일', who(duo, '이은경').eta === holidays.nthBusinessDay(SUB_AS, 6), String(who(duo, '이은경').eta));
+ok('2인이면 서브도 같은 소진일', who(duo, '조아라').eta === who(duo, '이은경').eta);
+
+// ---- 요청 2번의 핵심: 실시간 리소스 가동률에 두 사람이 모두 잡혀야 한다 ----
+ok('단독이면 오늘 1명 점유', solo.utilization.used === 1, String(solo.utilization.used));
+ok('2인이면 오늘 2명 점유', duo.utilization.used === 2, String(duo.utilization.used));
+ok('가동률 25% → 50%', solo.utilization.usage_pct === 25 && duo.utilization.usage_pct === 50,
+  `${solo.utilization.usage_pct}% → ${duo.utilization.usage_pct}%`);
+ok('점유 인원에 서브 포함', duo.utilization.busy.includes('이은경') && duo.utilization.busy.includes('조아라'),
+  duo.utilization.busy.join(','));
+ok('서브는 여유 인원에서 빠진다', !duo.utilization.idle.includes('조아라'), duo.utilization.idle.join(','));
+ok('여유 slot도 2 줄어든다', duo.utilization.free === 2 && solo.utilization.free === 3,
+  `${duo.utilization.free} / ${solo.utilization.free}`);
+// 일별 배치 — 6영업일 동안 둘이 나란히 점유하고 7일째 함께 풀린다
+const busyOn = (rs, n, k) => (rs.daily.days.find((d) => d.date === holidays.nthBusinessDay(SUB_AS, k)) || { lane: [] })
+  .lane.some((x) => x.tester === n);
+ok('6영업일째 둘 다 점유', busyOn(duo, '이은경', 6) && busyOn(duo, '조아라', 6));
+ok('7영업일째 둘 다 해제', !busyOn(duo, '이은경', 7) && !busyOn(duo, '조아라', 7));
+
+head('Task 7-C. 분담 몫 나누기 (홀수·3인·기타 풀·중복)');
+const share = (rows) => resources.summarize(rows, SUB_AS, 20);
+const odd = share([{
+  id: 1, cert_type: 'Google xTS', test_type: 'IR', model_name: 'SUB-200',
+  status: '예약확정', tester: '이은경', tester_sub: '조아라', plan_date: SUB_AS,
+}]);
+ok('3 slot 2인 → 메인 2', odd.rows.find((r) => r.tester === '이은경').slots === 2,
+  String(odd.rows.find((r) => r.tester === '이은경').slots));
+ok('3 slot 2인 → 서브 1', odd.rows.find((r) => r.tester === '조아라').slots === 1,
+  String(odd.rows.find((r) => r.tester === '조아라').slots));
+ok('홀수 분담도 합은 3 slot', odd.totals.slots === 3, String(odd.totals.slots));
+
+const trio = share([{
+  id: 1, cert_type: 'Netflix NTS', test_type: 'IR', model_name: 'SUB-300',
+  status: '진행중', tester: '이은경', tester_sub: '조아라, 이해찬', plan_date: SUB_AS,
+}]);
+ok('3인 분담 4/4/4', ['이은경', '조아라', '이해찬']
+  .every((n) => trio.rows.find((r) => r.tester === n).slots === 4),
+  trio.rows.map((r) => `${r.tester}:${r.slots}`).join(','));
+ok('3인이어도 팀 총량 12 slot', trio.totals.slots === 12, String(trio.totals.slots));
+ok('3인 모두 오늘 점유', trio.utilization.used === 3, String(trio.utilization.used));
+
+// 메인이 서브에 또 적혀 있으면 그 사람 부하가 두 배로 잡힌다 — 명단 단계에서 막는다
+const dup = share(nts({ tester_sub: '이은경' }));
+ok('메인 중복 입력은 단독과 같다', dup.rows.find((r) => r.tester === '이은경').slots === 12,
+  String(dup.rows.find((r) => r.tester === '이은경').slots));
+ok('메인 중복 입력해도 총량 12 slot', dup.totals.slots === 12, String(dup.totals.slots));
+
+// 메인이 인증 담당, 서브가 기타 테스터면 한 건의 몫이 두 풀에 갈린다
+const mixed = share(nts({ tester_sub: '김지윤' }));
+ok('기타 테스터 서브는 기타 풀로', mixed.other_members.join(',') === '김지윤', mixed.other_members.join(','));
+ok('인증 담당 풀은 메인 몫 6 slot', mixed.totals.slots === 6, String(mixed.totals.slots));
+ok('기타 풀은 서브 몫 6 slot', mixed.others_totals.slots === 6, String(mixed.others_totals.slots));
+ok('두 풀 합 = 원래 12 slot', mixed.totals.slots + mixed.others_totals.slots === 12);
+ok('두 풀 모두 같은 1건으로 센다', mixed.totals.count === 1 && mixed.others_totals.count === 1,
+  `${mixed.totals.count} / ${mixed.others_totals.count}`);
+
+// 분담 건이 '건' 단위 경고에서 인원수만큼 중복되면 안 된다
+const risky = share([
+  { id: 1, cert_type: 'Netflix NTS', test_type: 'IR', model_name: 'BLOCK', status: '진행중',
+    tester: '이은경', tester_sub: '조아라', plan_date: SUB_AS },
+  { id: 2, cert_type: 'Google xTS', test_type: 'IR', model_name: 'LATE', status: '예약대기',
+    tester: '이은경', tester_sub: '조아라', desired_date: SUB_AS, plan_date: SUB_AS },
+]);
+ok('밀린 분담 건은 1건으로', risky.schedule_risks.count === 1, String(risky.schedule_risks.count));
+ok('일정 조정 목록에 중복 없음', risky.schedule_risks.items.filter((r) => r.id === 2).length === 1,
+  String(risky.schedule_risks.items.length));
+ok('지연 목록에도 중복 없음', risky.alerts.delays.filter((r) => r.id === 2).length === 1,
+  risky.alerts.delays.map((r) => `${r.id}/${r.tester}`).join(','));
+
+head('Task 7-D. 서브 담당자 저장·이력·집계');
+const subReq = repo.create({
+  cert_type: 'Netflix NTS', test_type: 'IR', model_name: 'SUB-DB', test_purpose: '3PL',
+  requester: 'PL', tester: '이은경', tester_sub: '조아라',
+}, '테스트');
+ok('등록 시 서브 저장', subReq.tester_sub === '조아라', String(subReq.tester_sub));
+ok('메인은 그대로', subReq.tester === '이은경');
+const subUpd = repo.update(subReq.id, { tester_sub: '조아라, 이해찬' }, '테스트');
+ok('수정 시 서브 갱신', subUpd.tester_sub === '조아라, 이해찬', String(subUpd.tester_sub));
+ok('변경 이력에 서브 테스터 라벨',
+  repo.history(subReq.id).some((h) => String(h.detail).includes('서브 테스터')),
+  repo.history(subReq.id).map((h) => h.detail).join(' | '));
+// 서브를 비우는 것도 수정이다 — 지워지지 않으면 부하가 계속 남는다
+ok('서브를 비울 수 있다', repo.update(subReq.id, { tester_sub: '' }, '테스트').tester_sub === '');
+
+const subOpen = repo.create({
+  cert_type: 'Google xTS', test_type: 'IR', model_name: 'SUB-OPEN', test_purpose: '3PL',
+  requester: 'PL', tester: '이은경', tester_sub: '조아라',
+}, '테스트');
+ok('openRequests가 서브를 넘긴다',
+  (repo.openRequests().find((r) => r.id === subOpen.id) || {}).tester_sub === '조아라');
+// 요약 위젯의 테스터 부하도 리소스 화면과 같은 인원을 가리켜야 한다
+ok('테스터 부하에 서브 포함', (repo.stats().testerLoad['조아라'] || 0) > 0,
+  JSON.stringify(repo.stats().testerLoad));
+repo.remove(subReq.id, '테스트');
+repo.remove(subOpen.id, '테스트');
+
 // ---------- 스케줄러 자동발송이 실제로 넘기는 본문 ----------
 // report.js의 mailHtml만 검증하면 스케줄러가 r.html을 넘겨도 통과한다. 호출 인자를 직접 가로채 확인한다.
 head('스케줄러 자동발송 본문');

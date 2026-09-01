@@ -2,6 +2,7 @@
 const path = require('path');
 const Database = require('better-sqlite3');
 const holidays = require('./holidays');
+const assignees = require('./assignees');
 
 // 운영은 data.db 고정. DB_PATH는 스모크 테스트가 실 DB를 건드리지 않게 하는 용도.
 const db = new Database(process.env.DB_PATH || path.join(__dirname, 'data.db'));
@@ -20,7 +21,8 @@ db.exec(`
     note           TEXT,                     -- 비고
     desired_date   TEXT,                     -- 희망 일정 (의뢰자 입력)
     scheduled_date TEXT,                     -- 예약 확정 일정 (테스터 입력)
-    tester         TEXT,                     -- 담당 테스터
+    tester         TEXT,                     -- 담당 테스터 (메인)
+    tester_sub     TEXT,                     -- 서브 담당 테스터 (콤마 구분, 없는 경우가 대부분)
     status         TEXT NOT NULL DEFAULT '예약대기',  -- 진행 상태 (… | 중단)
     progress       TEXT,                     -- 진행 사항 메모
     result         TEXT,                     -- 결과 코멘트
@@ -58,7 +60,7 @@ db.exec(`
 
 // 기존 DB 호환: 신규 컬럼 누락 시 보강 (request_item 컬럼은 미사용 처리)
 const existingCols = db.prepare('PRAGMA table_info(requests)').all().map((c) => c.name);
-for (const name of ['test_type', 'test_purpose', 'round', 'verdict', 'started_date', 'completed_date', 'remaining_slots', 'confirmed_at', 'started_at', 'completed_at']) {
+for (const name of ['test_type', 'test_purpose', 'round', 'verdict', 'started_date', 'completed_date', 'remaining_slots', 'confirmed_at', 'started_at', 'completed_at', 'tester_sub']) {
   if (!existingCols.includes(name)) db.exec(`ALTER TABLE requests ADD COLUMN ${name} TEXT`);
 }
 
@@ -70,7 +72,7 @@ const nowIso = () => new Date().toISOString();
 
 const ALLOWED = [
   'cert_type', 'test_type', 'test_purpose', 'round', 'model_name', 'fw_version', 'requester', 'note',
-  'desired_date', 'scheduled_date', 'tester', 'status', 'progress', 'result', 'verdict', 'started_date', 'completed_date',
+  'desired_date', 'scheduled_date', 'tester', 'tester_sub', 'status', 'progress', 'result', 'verdict', 'started_date', 'completed_date',
   'remaining_slots',
 ];
 
@@ -78,7 +80,7 @@ const ALLOWED = [
 const LABELS = {
   cert_type: '인증종류', test_type: 'Test type', test_purpose: 'Test 목적', round: 'Round', model_name: '모델명',
   fw_version: 'FW', requester: '의뢰자', note: '비고', desired_date: '희망일정',
-  scheduled_date: '예약일정', tester: '테스터', status: '상태', progress: '진행사항', result: '결과',
+  scheduled_date: '예약일정', tester: '테스터', tester_sub: '서브 테스터', status: '상태', progress: '진행사항', result: '결과',
   verdict: '판정', started_date: '시작일', completed_date: '완료일',
   remaining_slots: '잔여 slot',
 };
@@ -272,6 +274,7 @@ module.exports = {
       desired_date: d.desired_date || '',
       scheduled_date: d.scheduled_date || '',
       tester: d.tester || '',
+      tester_sub: d.tester_sub || '',
       status: d.status || '예약대기',
       progress: d.progress || '',
       result: d.result || '',
@@ -284,10 +287,10 @@ module.exports = {
     };
     const info = db.prepare(`INSERT INTO requests
       (cert_type, test_type, test_purpose, round, model_name, fw_version, requester, note, desired_date,
-       scheduled_date, tester, status, progress, result, verdict, started_date, completed_date, remaining_slots, confirmed_at, started_at, completed_at, created_at, updated_at)
+       scheduled_date, tester, tester_sub, status, progress, result, verdict, started_date, completed_date, remaining_slots, confirmed_at, started_at, completed_at, created_at, updated_at)
       VALUES
       (@cert_type, @test_type, @test_purpose, @round, @model_name, @fw_version, @requester, @note, @desired_date,
-       @scheduled_date, @tester, @status, @progress, @result, @verdict, @started_date, @completed_date, @remaining_slots, @confirmed_at, @started_at, @completed_at, @created_at, @updated_at)`)
+       @scheduled_date, @tester, @tester_sub, @status, @progress, @result, @verdict, @started_date, @completed_date, @remaining_slots, @confirmed_at, @started_at, @completed_at, @created_at, @updated_at)`)
       .run(row);
     logHistory(info.lastInsertRowid, actor, '등록', `${d.cert_type} / ${d.model_name}`);
     return this.get(info.lastInsertRowid);
@@ -315,7 +318,7 @@ module.exports = {
       cert_type=@cert_type, test_type=@test_type, test_purpose=@test_purpose, round=@round,
       model_name=@model_name, fw_version=@fw_version,
       requester=@requester, note=@note, desired_date=@desired_date, scheduled_date=@scheduled_date,
-      tester=@tester, status=@status, progress=@progress, result=@result,
+      tester=@tester, tester_sub=@tester_sub, status=@status, progress=@progress, result=@result,
       verdict=@verdict, started_date=@started_date, completed_date=@completed_date, remaining_slots=@remaining_slots,
       confirmed_at=@confirmed_at, started_at=@started_at, completed_at=@completed_at, updated_at=@updated_at
       WHERE id=@id`).run(merged);
@@ -347,7 +350,7 @@ module.exports = {
   openRequests() {
     return db.prepare(`
       SELECT id, cert_type, test_type, test_purpose, round, model_name, fw_version,
-             requester, tester, status, desired_date, scheduled_date, started_date, remaining_slots, created_at,
+             requester, tester, tester_sub, status, desired_date, scheduled_date, started_date, remaining_slots, created_at,
              ${ACT_START} AS plan_date
       FROM requests
       WHERE status IN ('예약대기', '예약확정', '진행중')
@@ -403,7 +406,9 @@ module.exports = {
     const all = db.prepare('SELECT * FROM requests').all();
     const byStatus = {};
     const byCert = {};
-    const testerLoad = {}; // 미완료(완료/보류 제외) 기준 테스터 부하
+    // 미완료(완료/보류 제외) 기준 테스터 부하. 서브 담당자도 그 건에 붙어 있으므로 함께 센다
+    // — 여기서 빠지면 리소스 화면과 요약 위젯이 서로 다른 인원을 가리킨다.
+    const testerLoad = {};
     let overdue = 0;
     const leadDays = [];
     // 지연(overdue) 판정 기준일. 로컬 날짜여야 한다 — UTC면 KST 00:00~09:00에 하루 뒤처져
@@ -414,7 +419,7 @@ module.exports = {
       byStatus[r.status] = (byStatus[r.status] || 0) + 1;
       byCert[r.cert_type] = (byCert[r.cert_type] || 0) + 1;
       if (!['완료', '보류', '중단'].includes(r.status)) {
-        if (r.tester) testerLoad[r.tester] = (testerLoad[r.tester] || 0) + 1;
+        for (const n of assignees.listOf(r)) testerLoad[n] = (testerLoad[n] || 0) + 1;
       }
       // 지연: 예약 확정일이 지났는데 아직 진행중으로 전환되지 않은 건 (예약대기/예약확정 상태로 잔류)
       if (r.scheduled_date && r.scheduled_date < today && (r.status === '예약대기' || r.status === '예약확정')) {

@@ -1020,6 +1020,29 @@ ok('두 풀 합 = 원래 12 slot', mixed.totals.slots + mixed.others_totals.slot
 ok('두 풀 모두 같은 1건으로 센다', mixed.totals.count === 1 && mixed.others_totals.count === 1,
   `${mixed.totals.count} / ${mixed.others_totals.count}`);
 
+head('Task 7-E. 기준 인원(4명)을 넘긴 실인원 과부하 표시');
+// 인증 담당 4명이 각자 단독 건으로 오늘 전원 점유되고, 기타 풀도 1명 함께 뛰는 상황.
+// slot·가동률 집계는 풀을 안 섞지만, "오늘 실제로 몇 명이 뛰는가"는 기준 4명을 넘겨 알려야 한다.
+const fullTeam = ['이은경', '조아라', '이해찬', '문유림'].map((n, i) => ({
+  id: i + 1, cert_type: 'Google xTS', test_type: 'MR', model_name: `HC-${i}`,
+  status: '진행중', tester: n, plan_date: SUB_AS,
+}));
+const withOther = share([...fullTeam, {
+  id: 5, cert_type: 'Google xTS', test_type: 'MR', model_name: 'HC-4',
+  status: '진행중', tester: '조진원', plan_date: SUB_AS,
+}]);
+const noOther = share(fullTeam);
+ok('기타 없이 4명이면 기준 그대로', noOther.utilization.total_used === 4 && noOther.utilization.total_pct === 100,
+  `${noOther.utilization.total_used} / ${noOther.utilization.total_pct}%`);
+ok('기타 없이 4명이면 초과 아님', noOther.utilization.total_over === 0);
+ok('기타 1명 합류하면 실인원 5명', withOther.utilization.total_used === 5, String(withOther.utilization.total_used));
+ok('실인원 가동률 125%', withOther.utilization.total_pct === 125, String(withOther.utilization.total_pct));
+ok('기준 대비 1명 초과', withOther.utilization.total_over === 1, String(withOther.utilization.total_over));
+ok('기타 점유 인원 명단에 노출', withOther.utilization.other_busy.join(',') === '조진원',
+  withOther.utilization.other_busy.join(','));
+ok('인증 담당 풀 자체 used는 그대로 4', withOther.utilization.used === 4, String(withOther.utilization.used));
+ok('실인원 초과는 level을 over로 올린다', withOther.utilization.level === 'over', withOther.utilization.level);
+
 // 분담 건이 '건' 단위 경고에서 인원수만큼 중복되면 안 된다
 const risky = share([
   { id: 1, cert_type: 'Netflix NTS', test_type: 'IR', model_name: 'BLOCK', status: '진행중',

@@ -185,6 +185,7 @@ function certStatsTable(rows) {
     ${td('<strong>' + esc(r.model_name) + '</strong>')}
     ${td(certBadge(r.cert_type))}
     ${tdResult(r.result)}
+    ${td(esc(r.completed_date) || '-')}
     ${td(esc(r.test_purpose))}
     ${tdNum(r.round + '차')}
     ${tdNum(r.pass)}
@@ -193,7 +194,7 @@ function certStatsTable(rows) {
     ${tdNum(r.fail ? `<b style="color:#d23227;">${fontColor(r.fail_rate + '%', '#d23227')}</b>` : '0%')}
   </tr>`).join('');
   return `<table width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;border-collapse:collapse;border:1px solid #e2e7ef;">
-    <thead><tr>${th('모델명')}${th('인증종류')}${th('결과')}${th('Test 목적')}${thNum('진행차수')}${thNum('Pass')}${thNum('Fail')}${thNum('Pass율')}${thNum('Fail율')}</tr></thead>
+    <thead><tr>${th('모델명')}${th('인증종류')}${th('결과')}${th('인증완료일')}${th('Test 목적')}${thNum('진행차수')}${thNum('Pass')}${thNum('Fail')}${thNum('Pass율')}${thNum('Fail율')}</tr></thead>
     <tbody>${body}</tbody></table>`;
 }
 

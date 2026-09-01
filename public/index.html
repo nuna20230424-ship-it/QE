@@ -175,6 +175,19 @@
               </select>
               <input id="f-tester-custom" class="hidden combo-custom" placeholder="새 테스터 입력" />
             </label>
+            <label>서브 담당 테스터 <small>(선택)</small>
+              <select id="f-tester_sub-select" class="multi-select" multiple size="4">
+                <option value="이해찬">이해찬</option>
+                <option value="이은경">이은경</option>
+                <option value="김지윤">김지윤</option>
+                <option value="조진원">조진원</option>
+                <option value="조아라">조아라</option>
+                <option value="문유림">문유림</option>
+              </select>
+              <input id="f-tester_sub-custom" class="combo-custom" placeholder="명단 밖 인원은 콤마로 구분해 입력" />
+              <small class="field-hint">Ctrl(⌘)+클릭으로 여러 명을 고릅니다. 서브가 없으면 비워 두세요.
+                담당이 2인 이상이면 그 건의 업무량을 인원수로 나눠 각자 리소스에 계상합니다.</small>
+            </label>
             <label>상태
               <select id="f-status">
                 <option value="예약대기">예약대기</option>

@@ -594,3 +594,9 @@ fieldset:disabled legend::after { content: " · 읽기 전용"; color: var(--mut
 .risk-models b { color: var(--danger); }
 .risk-go { color: var(--primary); font-weight: 700; font-size: 12px; white-space: nowrap; }
 .resource-strip .risk:hover { border-color: var(--primary); }
+
+/* ---- 서브 담당 테스터 다중 선택 ---- */
+.multi-select { padding: 4px; }
+.multi-select option { padding: 3px 6px; border-radius: 4px; }
+/* 일정표·건별 상세에서 메인 뒤에 붙는 서브 담당자 표기 */
+.sub-tester { color: var(--muted); font-weight: 600; }

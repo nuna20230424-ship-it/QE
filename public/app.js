@@ -139,7 +139,7 @@ function cardHtml(it) {
       </div>
       <div class="meta">
         ${esc(line1)}<br>
-        의뢰자 ${esc(it.requester) || '—'} · 테스터 ${esc(it.tester) || '—'}<br>
+        의뢰자 ${esc(it.requester) || '—'} · 테스터 ${testerCell(it)}<br>
         일정 ${esc(schedLabel(it))}
       </div>
     </div>`;
@@ -176,7 +176,7 @@ const SORT_KEYS = {
   model: (it) => it.model_name || '',
   round: (it) => it.round || '',
   requester: (it) => it.requester || '',
-  tester: (it) => it.tester || '',
+  tester: (it) => assigneeList(it).join(' '),
   status: (it) => String(STATUSES.indexOf(it.status)).padStart(2, '0'),
   verdict: (it) => it.verdict || '',
   comment: (it) => it.result || '',
@@ -207,7 +207,7 @@ function renderSchedule() {
         <td><strong>${esc(it.model_name)}</strong>${it.fw_version ? ` <small>${esc(it.fw_version)}</small>` : ''}</td>
         <td>${esc(it.round) || '—'}</td>
         <td>${esc(it.requester) || '—'}</td>
-        <td>${esc(it.tester) || '—'}</td>
+        <td>${testerCell(it)}</td>
         <td><span class="status-pill st-${it.status}"><span class="dot bg-${it.status}"></span>${it.status}</span></td>
         <td>${verdictChip(it) || '—'}</td>
         <td class="cell-comment">${esc(it.result) || '—'}</td>
@@ -366,6 +366,7 @@ function downloadExcel() {
     ['FW', (it) => it.fw_version],
     ['의뢰자', (it) => it.requester],
     ['테스터', (it) => it.tester],
+    ['서브 테스터', (it) => subTesters(it).join(' / ')],
     ['상태', (it) => it.status],
     ['판정', (it) => it.verdict],
     ['진행사항', (it) => it.progress],
@@ -781,13 +782,15 @@ function resourceItems(items) {
       <td>${esc(it.plan_date || '미정')}</td>
       <td><span class="badge badge-${certClass(it.cert_type)}">${esc(it.cert_type)}</span></td>
       <td>${esc(it.test_type || '—')}</td>
-      <td><strong>${esc(it.model_name)}</strong></td>
+      <td><strong>${esc(it.model_name)}</strong>${it.co_testers && it.co_testers.length
+        ? `<small class="sub-tester">함께 ${it.co_testers.map(esc).join(' · ')}</small>` : ''}</td>
       <td>${it.round ? `${esc(it.round)}차` : '—'}</td>
       <td>${esc(it.status)}</td>
       <td>${esc(it.rule)}</td>
       <td class="num">${it.plan_slots}</td>
       <td class="num">${it.consumed || '—'}</td>
-      <td class="num"><b>${it.slots}</b></td>
+      <td class="num"><b>${it.slots}</b>${it.share_count > 1
+        ? `<small class="rs-sub">${it.share_count}인 분담 · 건 전체 ${it.full_slots}</small>` : ''}</td>
       <td>
         <span class="pg-bar" title="${it.progress_pct}% 진행"><i style="width:${Math.min(100, it.progress_pct)}%"></i></span>
         <small class="rs-sub">${it.progress_pct}% · ${SRC_TAG[it.progress_source] || ''}${
@@ -991,7 +994,7 @@ function pipelinePanel(p) {
       <b>${esc(w.model_name)}</b> · ${esc(w.cert_type)} · ${w.slots} slot
       <span class="bn-sub">등록 ${esc(w.created_date || '—')}
         ${w.desired_date ? ` · 희망 ${esc(w.desired_date)}${w.desired_overdue ? ' (경과)' : ''}` : ''}
-        ${w.tester ? ` · ${esc(w.tester)}` : ' · 담당 미정'}</span>
+        ${w.assignees && w.assignees.length ? ` · ${w.assignees.map(esc).join(' · ')}` : ' · 담당 미정'}</span>
     </li>`).join('') : '<li class="rs-dim">예약대기 건이 없습니다.</li>';
 
   return `
@@ -1067,7 +1070,7 @@ function alertsPanel(a) {
 
   const orun = a.overrun.map((o) => `
     <li><span class="sa-badge sa-amber">초과진행</span>
-      <b>${esc(o.model_name)}</b> · ${esc(o.tester || '담당 미정')} · 예정 ${o.plan_slots}일을 <b>${o.overrun_days}일</b> 넘김
+      <b>${esc(o.model_name)}</b> · ${(o.assignees && o.assignees.length ? o.assignees : ['담당 미정']).map(esc).join(' · ')} · 예정 ${o.plan_slots}일을 <b>${o.overrun_days}일</b> 넘김
       <span class="bn-sub">${esc(o.started_date)} 착수 · ${o.consumed}일 소화 — 잔여를 1 slot으로 붙잡아 두고 있습니다</span></li>`).join('');
 
   const rel = a.releases.map((r) => `
@@ -1329,6 +1332,45 @@ function buildModelOptions() {
   $('#model-list').innerHTML = state.options.models.map((n) => `<option value="${esc(n)}"></option>`).join('');
 }
 
+// ---- 서브 담당 테스터 (다중 선택 + 명단 밖 직접 입력) ----
+// 서버는 콤마로 이어 붙인 한 칸에 저장한다. 서버의 assignees.js 와 같은 규칙으로 자른다.
+const subTesters = (it) => String((it && it.tester_sub) || '').split(/[,;\n]/)
+  .map((n) => n.trim()).filter(Boolean);
+
+// 담당자 명단 = [메인, ...서브]. 메인이 서브에 또 들어와도 한 번만 센다.
+function assigneeList(it) {
+  const main = String((it && it.tester) || '').trim();
+  const names = main ? [main] : [];
+  for (const n of subTesters(it)) if (!names.includes(n)) names.push(n);
+  return names;
+}
+
+// 표에 넣을 담당자 표기. 메인은 그대로, 서브는 흐리게 뒤에 붙인다.
+function testerCell(it) {
+  const main = String((it && it.tester) || '').trim();
+  const subs = subTesters(it).filter((n) => n !== main);
+  if (!main && !subs.length) return '—';
+  const head = main ? esc(main) : '<span class="rs-dim">미배정</span>';
+  return subs.length ? `${head} <small class="sub-tester">+${subs.map(esc).join(' · ')}</small>` : head;
+}
+
+function setSubTesters(value) {
+  const sel = $('#f-tester_sub-select');
+  const custom = $('#f-tester_sub-custom');
+  const names = subTesters({ tester_sub: value });
+  const known = new Set([...sel.options].map((o) => o.value));
+  for (const o of sel.options) o.selected = names.includes(o.value);
+  custom.value = names.filter((n) => !known.has(n)).join(', ');
+}
+
+function readSubTesters() {
+  const picked = [...$('#f-tester_sub-select').selectedOptions].map((o) => o.value);
+  const typed = $('#f-tester_sub-custom').value.split(/[,;\n]/).map((n) => n.trim()).filter(Boolean);
+  const out = [];
+  for (const n of [...picked, ...typed]) if (!out.includes(n)) out.push(n);
+  return out.join(', ');
+}
+
 function setCombo(prefix, value) {
   const sel = $(`#f-${prefix}-select`);
   const custom = $(`#f-${prefix}-custom`);
@@ -1389,6 +1431,7 @@ function openModal(item) {
   buildPurposeOptions();
   setCombo('test_purpose', isNew ? NEW_DEFAULTS.test_purpose : (item.test_purpose || ''));
   setCombo('tester', isNew ? '' : (item.tester || ''));
+  setSubTesters(isNew ? '' : (item.tester_sub || ''));
 
   // 진행차수 자동 산출 상태 초기화. 신규 등록일 때만 이력을 조회한다.
   roundAuto.key = null;
@@ -1420,6 +1463,7 @@ function readForm() {
   out.requester = $('#f-requester').value.trim();
   out.test_purpose = purposeValue();
   out.tester = readCombo('tester');
+  out.tester_sub = readSubTesters();
   return out;
 }
 

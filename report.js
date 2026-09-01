@@ -1,6 +1,7 @@
 // 일일/주간 현황보고 기간 계산 및 HTML 생성 (앱 뷰·이메일 본문 공용, 인라인 스타일)
 const repo = require('./db');
 const notify = require('./notify');   // 메일 링크에 쓸 baseUrl 조회
+const assignees = require('./assignees');
 
 const pad2 = (n) => String(n).padStart(2, '0');
 const ymd = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
@@ -52,6 +53,9 @@ const certOf = (r) => {
     + `<td style="padding:0 0 0 6px;font-size:13px;white-space:nowrap;">${esc(t)}</td></tr></table>`;
 };
 const modelOf = (r) => esc(`${r.model_name}${r.fw_version ? ' (' + r.fw_version + ')' : ''}`);
+// 담당 테스터 표기 — 메인 · 서브를 함께 적는다. 서브가 없으면 예전과 같은 한 명이다.
+// 이 표기는 사내 화면용 본문(html)에만 들어간다. 자동발송 본문(mailHtml)은 집계와 링크만 담는다.
+const testerOf = (r) => dash(assignees.listOf(r).join(' · '));
 const compDate = (r) => r.completed_date || (r.completed_at ? r.completed_at.slice(0, 10) : '');
 
 // 진행차수(Round) + 판정을 한 문구로 조합: "진행차수 3차, Pass"
@@ -117,7 +121,7 @@ function completedTable(rows) {
   const body = rows.map((r) => `<tr>
     ${td(certOf(r))}
     ${td('<strong>' + modelOf(r) + '</strong>')}
-    ${td(dash(r.tester))}
+    ${td(testerOf(r))}
     ${td(verdictBadge(r))}
     ${td(dash(compDate(r)))}
   </tr>`).join('');
@@ -133,7 +137,7 @@ function failDetails(rows) {
       <tr>
         <td width="4" bgcolor="#d23227" style="width:4px;background:#d23227;font-size:0;line-height:0;">&nbsp;</td>
         <td bgcolor="#fdf6f5" style="background:#fdf6f5;border:1px solid #f3c9c4;border-left:none;padding:10px 14px;font-size:13px;">
-          <div style="font-weight:700;color:#c0392b;">${fontColor(modelOf(r), '#c0392b')} <span style="font-weight:600;color:#6b7686;">· ${esc(r.cert_type)} · ${esc(roundVerdictLabel(r) || 'Fail')} · 테스터 ${dash(r.tester)}</span></div>
+          <div style="font-weight:700;color:#c0392b;">${fontColor(modelOf(r), '#c0392b')} <span style="font-weight:600;color:#6b7686;">· ${esc(r.cert_type)} · ${esc(roundVerdictLabel(r) || 'Fail')} · 테스터 ${testerOf(r)}</span></div>
           <div style="margin-top:6px;"><span style="color:#6b7686;font-weight:700;">진행사항</span> ${dash(r.progress)}</div>
           <div style="margin-top:4px;"><span style="color:#6b7686;font-weight:700;">결과코멘트</span> ${dash(r.result)}</div>
         </td>
@@ -149,7 +153,7 @@ function inProgressTable(rows) {
     return `<tr>
       ${td(certOf(r))}
       ${td('<strong>' + modelOf(r) + '</strong>')}
-      ${td(dash(r.tester))}
+      ${td(testerOf(r))}
       ${td(esc(sched))}
       ${td(dash(r.progress))}
     </tr>`;

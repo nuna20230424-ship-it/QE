@@ -133,18 +133,28 @@ node -e "const c=require('./confluence-client'); console.log(c.missing().length 
 
 ### 개발 PC — PowerShell
 
+PowerShell에서는 `#`이 정상적인 주석이므로 아래 블록을 **그대로 통째로** 붙여넣어도 된다.
+
 ```powershell
 cd C:\Users\k251110\Desktop\QE
 
-# 1) PAT — .env 에만 둔다 (.gitignore 대상이라 커밋되지 않는다)
+# PAT 를 .env 에 넣는다. 홑따옴표 안은 그대로 저장되므로 토큰에 특수문자가 있어도 안전하다.
+# .env 는 .gitignore 대상이라 커밋되지 않는다.
 Set-Content -Path .env -Value 'CONFLUENCE_PAT=발급받은-토큰' -Encoding utf8
 
-# 2) config.json 에 confluence 섹션이 없으면 예시를 참고해 추가한다
-notepad config.example.json   # confluence 섹션을 복사
-notepad config.json           # 붙여넣고 baseUrl · subCalendarId 를 채운다
+# 채워졌는지 확인 — 토큰 값은 찍지 않고 부족한 것만 알려 준다.
+node -e "const c=require('./confluence-client'); console.log(c.missing().length ? '부족: '+c.missing().join(' / ') : '설정 완료 — 실행 가능')"
 ```
 
-`config.json` 의 `confluence` 부분이 최소 이렇게 되면 된다.
+토큰을 손으로 넣고 싶으면 메모장을 써도 된다.
+
+```powershell
+notepad .env      # 없으면 "새 파일을 만들까요?" → 예 → CONFLUENCE_PAT=토큰 한 줄 저장
+```
+
+> `-Encoding utf8` 은 Windows PowerShell 5.1 에서 BOM을 붙이지만 로더가 벗기므로 문제없다(확인함).
+
+`config.json` 의 `confluence` 부분은 **2026-09-10에 이미 채워 뒀다.** 아래 형태면 정상이다.
 
 ```json
 "confluence": {
@@ -160,7 +170,8 @@ notepad config.json           # 붙여넣고 baseUrl · subCalendarId 를 채운
 }
 ```
 
-> `relatedPage`·`created` 는 **지금은 비워 둔다.** 이 스크립트로 확인한 뒤 채운다.
+> `relatedPage`·`created` 는 **비워 둔 상태가 맞다.** 이 스크립트로 확인한 뒤 채운다.
+> `config.json` 은 더 건드릴 필요가 없다 — 남은 준비물은 PAT 하나다.
 
 ### 맥미니 (bash)
 

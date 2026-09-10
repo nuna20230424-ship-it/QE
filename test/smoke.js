@@ -1324,6 +1324,34 @@ const pst = cpoll.status();
 ok('상태에 설정 여부가 있다', typeof pst.configured === 'boolean');
 ok('상태에 부족한 설정 목록이 있다', Array.isArray(pst.missing));
 ok('상태에 폴링 주기가 있다', Number(pst.pollMinutes) > 0, String(pst.pollMinutes));
+
+// ---------- 모델명 → 의뢰자 룩업 (지시서의 [모델명-의뢰자 DB]) ----------
+head('모델명-의뢰자 룩업');
+// 기대값을 하드코딩하지 않고 이력에서 계산한다 — 픽스처가 바뀌어도 의미가 유지되게.
+const kmRows = repo.list({}).filter((r) => r.model_name === 'KM-100' && String(r.requester || '').trim());
+const kmLatest = kmRows.length ? kmRows.reduce((a, b) => (a.id > b.id ? a : b)).requester : '';
+ok('이력에서 그 모델의 최신 의뢰자를 찾는다', repo.requesterOfModel('KM-100') === kmLatest, `${repo.requesterOfModel('KM-100')} vs ${kmLatest}`);
+ok('없는 모델은 빈 문자열', repo.requesterOfModel('없는모델-zzz') === '');
+ok('빈 모델명은 빈 문자열', repo.requesterOfModel('') === '');
+ok('config 명시 매핑이 이력보다 우선', cpoll.lookupRequester('KM-100', { 'KM-100': '박PL' }) === '박PL');
+ok('명시 매핑에 없으면 이력으로 내려간다', cpoll.lookupRequester('KM-100', { 'KM-999': '박PL' }) === kmLatest);
+ok('둘 다 없으면 빈 문자열', cpoll.lookupRequester('없는모델-zzz', {}) === '');
+
+// 동기화가 실제로 의뢰자를 채우는지 (upsertEvent는 동기 함수라 여기서 바로 확인한다)
+const evReq = {
+  id: 'evt-req-1', title: '[xTS][3PL] KM-100 5차 > Passed', invitees: '이은경',
+  start: '2026-09-11', end: '2026-09-11', relatedPage: '', created: '2026-09-11',
+};
+const upReq = csync.upsertEvent(evReq, { lookupRequester: (m) => cpoll.lookupRequester(m, {}) });
+ok('신규 생성 시 의뢰자를 이력에서 채운다', repo.get(upReq.id).requester === kmLatest, repo.get(upReq.id).requester);
+const evUnknown = { id: 'evt-req-2', title: '[xTS][3PL] 처음보는모델 > Passed', invitees: '이은경', start: '', end: '', relatedPage: '', created: '' };
+const upUnknown = csync.upsertEvent(evUnknown, { lookupRequester: (m) => cpoll.lookupRequester(m, {}) });
+ok('찾지 못한 모델은 경고를 남긴다', upUnknown.warnings.some((w) => w.includes('모델명-의뢰자 매핑에 없는')), upUnknown.warnings.join(' | '));
+ok('찾지 못해도 의뢰는 만든다', repo.get(upUnknown.id) && !repo.get(upUnknown.id).requester);
+
+// 섹션 정리 — 아래 보고 본문 비교가 앞서 떠 둔 스냅숏과 어긋나지 않게 한다.
+for (const row of repo.confluenceRowsInRange({})) repo.remove(row.id, 'smoke 정리');
+ok('룩업 섹션 레코드 정리 완료', repo.confluenceRowsInRange({}).length === 0);
 (async () => {
   // ---------- Confluence 조회·폴링 (비동기) ----------
   head('Confluence 조회 (fetch 스텁 — 사내망을 부르지 않는다)');

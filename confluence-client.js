@@ -38,6 +38,8 @@ function config() {
     rangeBackDays: num(cfg.rangeBackDays, 30),
     rangeAheadDays: num(cfg.rangeAheadDays, 60),
     fields: { ...DEFAULT_FIELDS, ...(cfg.fields || {}) },
+    // 지시서의 [모델명-의뢰자 DB]. 여기 없는 모델은 대시보드 이력에서 찾는다(confluence-poll).
+    requesterByModel: cfg.requesterByModel || {},
     // PAT는 지시서대로 .env(환경변수)에만 둔다. config.json·코드·로그에 값을 남기지 않는다.
     token: process.env.CONFLUENCE_PAT || '',
   };

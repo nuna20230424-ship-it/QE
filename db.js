@@ -264,6 +264,17 @@ module.exports = {
     return db.prepare('SELECT * FROM requests WHERE id = ?').get(id);
   },
 
+  // 그 모델의 가장 최근 의뢰자. 의뢰자가 빈 건은 건너뛴다.
+  // 지시서가 말하는 [모델명-의뢰자 DB]를 별도로 두지 않고 대시보드 이력을 쓴다 — 근거는 context-notes.
+  requesterOfModel(modelName) {
+    const model = String(modelName ?? '').trim();
+    if (!model) return '';
+    const row = db.prepare(
+      "SELECT requester FROM requests WHERE model_name = ? AND COALESCE(requester,'') <> '' ORDER BY id DESC LIMIT 1"
+    ).get(model);
+    return row ? row.requester : '';
+  },
+
   // Confluence 이벤트 id로 이미 동기화된 의뢰를 찾는다. 없으면 undefined.
   getByConfluenceEventId(eventId) {
     const id = String(eventId ?? '').trim();

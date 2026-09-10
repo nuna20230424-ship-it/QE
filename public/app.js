@@ -843,6 +843,9 @@ function utilizationPanel(u, compact) {
   const scale = u.demand_pct > 100 ? Math.min(200, u.demand_pct) : 100;
   const bar = (p) => Math.max(0, Math.min(100, (p / scale) * 100));
   const over = u.demand_pct > 100;
+  // 기준 인원(4명)을 넘겨 기타 풀 인원까지 오늘 함께 뛰고 있는 경우 — slot 집계는 안 섞지만
+  // "실제로 몇 명이 일하고 있나"는 기준 대비 초과로 알린다.
+  const headcountOver = u.total_over > 0;
   return `
     <div class="util ${compact ? 'util-compact' : ''} util-${lvl}">
       <div class="util-main">
@@ -852,6 +855,7 @@ function utilizationPanel(u, compact) {
           ${u.as_of_is_business_day ? '' : `<span class="util-note">오늘은 휴무${
             u.as_of_holiday ? `(${esc(u.as_of_holiday)})` : ''} — 다음 영업일 기준</span>`}
           ${over ? `<span class="util-tag">계획 과부하 ${u.demand_pct}%</span>` : ''}
+          ${headcountOver ? `<span class="util-tag">실인원 초과 ${u.total_pct}%</span>` : ''}
         </div>
         ${u.no_plan_date.count ? `<div class="util-caveat">⚠ 계획 일정이 비어 있는 확정 업무
           <b>${u.no_plan_date.count}건 (${u.no_plan_date.slots} slot)</b>이 기준일로 계상됐습니다 —
@@ -866,6 +870,8 @@ function utilizationPanel(u, compact) {
           ${u.busy.length ? `<span class="util-names">${u.busy.map(esc).join(' · ')}</span>` : ''}
           ${over ? `<span class="util-over-t">계획상 ${u.demand} slot 필요 — ${u.demand_over} slot 초과${
             u.doubled.length ? ` (${u.doubled.map(esc).join(' · ')} 중복 배정)` : ''}</span>` : ''}
+          ${headcountOver ? `<span class="util-over-t">오늘 실인원 ${u.total_used}명 근무 중 —
+            기준 ${u.capacity}명보다 ${u.total_over}명 초과 (기타 ${u.other_busy.map(esc).join(' · ')})</span>` : ''}
           ${u.waiting ? `<span class="util-wait">예약대기 ${u.waiting}건 대기</span>` : ''}
         </div>
       </div>

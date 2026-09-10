@@ -527,26 +527,37 @@ function summarize(openRows, asOf, horizon = 20) {
   // 확정 업무(진행중·예약확정)의 비율. 예약대기는 아직 확정 전이라 가동률에서 뺀다.
   const today = daily.days[0] || null;
   const thisWeek = daily.weeks[0] || null;
+  // 기타 풀도 오늘 확정 업무로 바쁠 수 있다(인증 담당 4명 기준선은 그대로 두고,
+  // 그날 실제로 일하는 사람 수가 기준선을 넘었는지만 별도로 알린다).
+  const othersToday = othersDaily ? othersDaily.days[0] : null;
+  const otherBusyToday = othersToday ? othersToday.busy_committed : [];
+  const totalUsed = (today ? today.committed : 0) + otherBusyToday.length;
   const utilization = {
     date: today ? today.date : asOf,
-    capacity: MEMBERS.length,                              // 1일 총 가용 slot
-    used: today ? today.committed : 0,                     // 오늘 점유 중인 확정 업무
+    capacity: MEMBERS.length,                              // 1일 총 가용 slot(기준 인원)
+    used: today ? today.committed : 0,                     // 오늘 점유 중인 확정 업무(인증 담당 4명 기준)
     free: today ? today.free_committed : MEMBERS.length,   // 즉시 수용 가능한 잔여 slot
     usage_pct: today ? today.committed_pct : 0,
     waiting: today ? today.waiting : 0,                    // 오늘 일정에 걸린 예약대기 건
     busy: today ? today.busy_committed : [],
     idle: today ? today.idle : MEMBERS.slice(),
+    // 기타 풀에서 오늘 함께 일하는 인원 — slot·가동률 집계는 풀을 안 섞지만,
+    // 기준 인원(4명)을 넘겨 실제로 몇 명이 뛰고 있는지는 여기서 합쳐 보여준다.
+    other_busy: otherBusyToday,
+    total_used: totalUsed,                                 // 오늘 실제로 일하는 총 인원(기타 포함)
+    total_pct: pct(totalUsed, MEMBERS.length),
+    total_over: Math.max(0, totalUsed - MEMBERS.length),
     // 계획 기준 수요. 배치 가동률(usage_pct)은 하루 1인 1slot 규칙 때문에 100%를 넘을 수 없어
     // 초과는 이 값으로만 드러난다. demand_pct > 100 이면 계획이 가용을 넘긴 과부하다.
     demand: today ? today.demand : 0,
     demand_pct: today ? today.demand_pct : 0,
     demand_over: today ? today.demand_over : 0,
     doubled: today ? today.doubled : [],                   // 오늘 계획이 겹친 담당자
-    // 빨강 조건 — 계획이 가용을 넘겼거나(과부하), 여유가 0이라 신규를 못 받는 경우
+    // 빨강 조건 — 계획이 가용을 넘겼거나(과부하), 실인원이 기준을 넘겼거나, 여유가 0이라 신규를 못 받는 경우
     level: (() => {
       const d = today ? today.demand_pct : 0;
       const uUsed = today ? today.committed_pct : 0;
-      if (d > 100 || uUsed >= 100) return 'over';
+      if (d > 100 || uUsed >= 100 || totalUsed > MEMBERS.length) return 'over';
       if (uUsed >= 80) return 'warn';
       return 'safe';
     })(),

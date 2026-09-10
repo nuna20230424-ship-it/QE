@@ -1149,6 +1149,114 @@ ok('ISO 날짜는 그대로', cparse.parseDate('2026-09-07').date === '2026-09-0
 ok('ISO 날짜시각은 로컬 날짜로 환산', cparse.parseDate('2026-09-07T15:00:00Z').date === ymd(new Date('2026-09-07T15:00:00Z')));
 ok('빈 날짜는 경고 없이 빈 값', (() => { const r = cparse.parseDate(''); return r.date === '' && r.warnings.length === 0; })());
 ok('해석 불가 날짜는 경고', (() => { const r = cparse.parseDate('내일'); return r.date === '' && r.warnings.length === 1; })());
+
+// ---------- Confluence 필드 매핑 · 동기화 Upsert ----------
+// 주의: 이 섹션은 공용 임시 DB에 레코드를 만든다. 위쪽 보고 본문 비교 테스트는 앞서 떠 둔
+// 스냅숏(dRep 등)과 재생성 본문을 문자열로 맞춰 보므로, 섹션 끝에서 만든 레코드를 전부 지운다.
+head('Confluence 필드 매핑 (지시서 §3)');
+const csync = require('../confluence-sync');
+
+const ev1 = {
+  id: 'evt-1001',
+  title: '[xTS][IR][Pre-test] O2_KSTB7268 > In-Progress',
+  invitees: 'Haechan.lee 이해찬 (haechan)',
+  start: '2026. 9. 7.',
+  end: '2026. 9. 9.',
+  relatedPage: 'https://jira.kaonmedia.com/browse/KG25040-492',
+  created: '2026-09-07',
+};
+const RANGE = { from: '2026-09-01', to: '2026-09-30' };
+
+const m1 = csync.mapEvent(ev1);
+ok('인증종류 매핑', m1.fields.cert_type === 'Google xTS', m1.fields.cert_type);
+ok('모델명 매핑', m1.fields.model_name === 'O2_KSTB7268', m1.fields.model_name);
+ok('담당 테스터는 한글 성명', m1.fields.tester === '이해찬', m1.fields.tester);
+ok('시작 → 시작일', m1.fields.started_date === '2026-09-07', m1.fields.started_date);
+ok('종료 → 완료일', m1.fields.completed_date === '2026-09-09', m1.fields.completed_date);
+ok('관련 페이지 → 비고', m1.fields.note === 'https://jira.kaonmedia.com/browse/KG25040-492', m1.fields.note);
+ok('이벤트 생성일자 → 희망일정', m1.fields.desired_date === '2026-09-07', m1.fields.desired_date);
+ok('예약확정일은 아예 매핑하지 않는다', !('scheduled_date' in m1.fields));
+ok('매핑 경고 없음', m1.warnings.length === 0, m1.warnings.join(' | '));
+
+const withLookup = csync.mapEvent(ev1, { lookupRequester: (model) => (model === 'O2_KSTB7268' ? '김개발' : '') });
+ok('모델명-의뢰자 룩업 적용', withLookup.fields.requester === '김개발', withLookup.fields.requester);
+const noLookup = csync.mapEvent(ev1, { lookupRequester: () => '' });
+ok('룩업 미등록 모델은 경고', noLookup.warnings.some((w) => w.includes('모델명-의뢰자 매핑에 없는')));
+ok('룩업 미등록이면 의뢰자를 비운다', !noLookup.fields.requester);
+
+head('Confluence 동기화 Upsert (빈 칸만 채우기)');
+const s1 = csync.syncEvents([ev1], { range: RANGE });
+ok('신규 이벤트는 생성', s1.created === 1 && s1.updated === 0, JSON.stringify(s1));
+const r1 = repo.getByConfluenceEventId('evt-1001');
+ok('이벤트 id가 레코드에 남는다', r1 && r1.confluence_event_id === 'evt-1001');
+ok('생성 시 상태는 제목에서 온다', r1.status === '진행중', r1.status);
+ok('생성 시 담당 테스터가 들어간다', r1.tester === '이해찬', r1.tester);
+ok('생성 이력의 작업자는 동기화', repo.history(r1.id).some((h) => h.actor === csync.ACTOR));
+
+const s2 = csync.syncEvents([ev1], { range: RANGE });
+ok('같은 이벤트 재동기화는 변경 없음', s2.unchanged === 1 && s2.created === 0, JSON.stringify(s2));
+
+// 사람이 고친 칸은 덮지 않는다
+repo.update(r1.id, { tester: '조아라', scheduled_date: '2026-09-08', progress: '1차 확인 완료' }, '테스터');
+const s3 = csync.syncEvents([ev1], { range: RANGE });
+const r1b = repo.getByConfluenceEventId('evt-1001');
+ok('사람이 바꾼 담당 테스터를 유지', r1b.tester === '조아라', r1b.tester);
+ok('사람이 넣은 예약확정일을 유지', r1b.scheduled_date === '2026-09-08', r1b.scheduled_date);
+ok('사람이 쓴 진행사항을 유지', r1b.progress === '1차 확인 완료', r1b.progress);
+ok('덮을 게 없으면 변경 없음으로 집계', s3.unchanged === 1, JSON.stringify(s3));
+
+// 비어 있던 칸은 채운다 — In-Progress → Passed 로 바뀌면 판정이 들어온다
+const ev1pass = { ...ev1, title: '[xTS][IR][Pre-test] O2_KSTB7268 3차 > Passed' };
+const s4 = csync.syncEvents([ev1pass], { range: RANGE });
+const r1c = repo.getByConfluenceEventId('evt-1001');
+ok('비어 있던 판정은 채운다', r1c.verdict === 'Pass', r1c.verdict);
+ok('비어 있던 회차는 채운다', r1c.round === '3', r1c.round);
+ok('이미 값이 있는 상태는 그대로 (결정의 결과)', r1c.status === '진행중', r1c.status);
+ok('채운 건은 수정으로 집계', s4.updated === 1, JSON.stringify(s4));
+
+// 상태 기본값 '예약대기'는 사람이 고른 값이 아니므로 빈 칸으로 본다
+const ev2 = { id: 'evt-1002', title: '[NTS][MR] KM-900', invitees: '이은경', start: '', end: '', relatedPage: '', created: '2026-09-08' };
+csync.syncEvents([ev2]);
+const r2 = repo.getByConfluenceEventId('evt-1002');
+ok("'>' 없는 제목은 기본 상태로 생성", r2.status === '예약대기', r2.status);
+csync.syncEvents([{ ...ev2, title: '[NTS][MR] KM-900 > Passed' }]);
+const r2b = repo.getByConfluenceEventId('evt-1002');
+ok('기본 상태는 동기화가 덮는다', r2b.status === '완료', r2b.status);
+ok('덮을 때 판정도 함께 들어온다', r2b.verdict === 'Pass', r2b.verdict);
+
+// 파싱 실패 건은 빈 의뢰를 만들지 않고 건너뛴다
+const bad = csync.syncEvents([{ id: 'evt-1003', title: '[ZZZ] > Passed' }]);
+ok('인증종류·모델명을 못 읽으면 건너뛴다', bad.skipped === 1 && bad.created === 0, JSON.stringify(bad));
+ok('건너뛴 이유를 경고로 남긴다', bad.warnings.some((w) => w.includes('파싱하지 못했습니다')));
+ok('건너뛴 이벤트는 레코드가 없다', !repo.getByConfluenceEventId('evt-1003'));
+const noId = csync.syncEvents([{ title: '[xTS][Pre] KM-901 > Passed' }]);
+ok('이벤트 id가 없으면 건너뛴다', noId.skipped === 1 && noId.created === 0, JSON.stringify(noId));
+
+head('Confluence 삭제 이벤트 → 중단 보관');
+// 완료된 건은 되돌리지 않는다
+const ev3 = { id: 'evt-1004', title: '[AVTS][양산] KM-902 > Passed', invitees: '문유림', start: '2026-09-10', end: '2026-09-10', relatedPage: '', created: '2026-09-10' };
+csync.syncEvents([ev3]);
+ok('완료 상태로 생성', repo.getByConfluenceEventId('evt-1004').status === '완료');
+
+const s5 = csync.syncEvents([], { range: RANGE });
+ok('사라진 이벤트는 중단으로 보관', repo.getByConfluenceEventId('evt-1001').status === '중단');
+ok('레코드를 지우지는 않는다', !!repo.getByConfluenceEventId('evt-1001'));
+ok('완료 건은 중단으로 바꾸지 않는다', repo.getByConfluenceEventId('evt-1004').status === '완료');
+ok('중단 처리 건수를 집계', s5.cancelled === 1, String(s5.cancelled));
+ok('중단 이력의 작업자는 동기화', repo.history(repo.getByConfluenceEventId('evt-1001').id).some((h) => h.actor === csync.ACTOR && String(h.detail).includes('중단')));
+
+const s6 = csync.syncEvents([], { range: RANGE });
+ok('이미 중단된 건은 다시 건드리지 않는다', s6.cancelled === 0, String(s6.cancelled));
+
+const s7 = csync.syncEvents([ev1]);
+ok('조회 기간이 없으면 삭제 반영을 건너뛴다', s7.cancelled === 0 && s7.warnings.some((w) => w.includes('조회 기간이 없어')));
+let threw = '';
+try { csync.cancelMissing([], {}); } catch (e) { threw = e.message; }
+ok('기간 없이 삭제 반영을 직접 호출하면 거부', threw.includes('조회 기간'), threw);
+
+// 섹션 정리 — 위 보고 본문 스냅숏 비교가 깨지지 않게 동기화로 만든 레코드를 전부 지운다.
+for (const row of repo.confluenceRowsInRange({})) repo.remove(row.id, 'smoke 정리');
+ok('동기화 레코드 정리 완료', repo.confluenceRowsInRange({}).length === 0, String(repo.confluenceRowsInRange({}).length));
 (async () => {
   for (const k of ['daily', 'weekly', 'certstats']) await sched.sendNow(k);
   notify.sendReportMail = origSend;

@@ -33,6 +33,7 @@ db.exec(`
     confirmed_at   TEXT,                     -- 예약확정 시각
     started_at     TEXT,                     -- 진행시작 시각
     completed_at   TEXT,                     -- 완료 시각
+    confluence_event_id TEXT,                 -- Confluence QE Schedule 이벤트 id (동기화로 들어온 건만)
     created_at     TEXT NOT NULL,
     updated_at     TEXT NOT NULL
   )
@@ -60,13 +61,16 @@ db.exec(`
 
 // 기존 DB 호환: 신규 컬럼 누락 시 보강 (request_item 컬럼은 미사용 처리)
 const existingCols = db.prepare('PRAGMA table_info(requests)').all().map((c) => c.name);
-for (const name of ['test_type', 'test_purpose', 'round', 'verdict', 'started_date', 'completed_date', 'remaining_slots', 'confirmed_at', 'started_at', 'completed_at', 'tester_sub']) {
+for (const name of ['test_type', 'test_purpose', 'round', 'verdict', 'started_date', 'completed_date', 'remaining_slots', 'confirmed_at', 'started_at', 'completed_at', 'tester_sub', 'confluence_event_id']) {
   if (!existingCols.includes(name)) db.exec(`ALTER TABLE requests ADD COLUMN ${name} TEXT`);
 }
 
 // 모델별 통계 집계(GROUP BY)와 모델명 목록(DISTINCT)이 전체 스캔을 타지 않도록 인덱스 보강
 db.exec('CREATE INDEX IF NOT EXISTS idx_requests_model_cert ON requests (model_name, cert_type)');
 db.exec('CREATE INDEX IF NOT EXISTS idx_requests_completed_date ON requests (completed_date)');
+// Confluence 이벤트 한 건이 의뢰 두 건으로 갈라지지 않게 막는다.
+// 수동 등록 건은 이 칸이 비어 있으므로 부분 인덱스로 제외한다(SQLite는 부분 유니크 인덱스를 지원한다).
+db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_requests_confluence_event ON requests (confluence_event_id) WHERE confluence_event_id IS NOT NULL AND confluence_event_id <> ''");
 
 const nowIso = () => new Date().toISOString();
 
@@ -260,6 +264,23 @@ module.exports = {
     return db.prepare('SELECT * FROM requests WHERE id = ?').get(id);
   },
 
+  // Confluence 이벤트 id로 이미 동기화된 의뢰를 찾는다. 없으면 undefined.
+  getByConfluenceEventId(eventId) {
+    const id = String(eventId ?? '').trim();
+    if (!id) return undefined;
+    return db.prepare('SELECT * FROM requests WHERE confluence_event_id = ?').get(id);
+  },
+
+  // 동기화로 들어온 의뢰 중 조회 기간에 걸친 것들. Confluence에서 사라진 이벤트를 찾는 데 쓴다.
+  // 기간을 넘기지 않으면 동기화 건 전체를 돌려준다.
+  confluenceRowsInRange({ from, to } = {}) {
+    let sql = "SELECT * FROM requests WHERE confluence_event_id IS NOT NULL AND confluence_event_id <> ''";
+    const params = {};
+    if (from) { sql += ` AND ${ACT_DATE} >= @from`; params.from = from; }
+    if (to)   { sql += ` AND ${ACT_DATE} <= @to`;   params.to = to; }
+    return db.prepare(sql).all(params);
+  },
+
   create(d, actor) {
     const ts = nowIso();
     const row = {
@@ -283,14 +304,15 @@ module.exports = {
       completed_date: d.completed_date || '',
       remaining_slots: d.remaining_slots || '',
       confirmed_at: '', started_at: '', completed_at: '',
+      confluence_event_id: d.confluence_event_id || '',
       created_at: ts, updated_at: ts,
     };
     const info = db.prepare(`INSERT INTO requests
       (cert_type, test_type, test_purpose, round, model_name, fw_version, requester, note, desired_date,
-       scheduled_date, tester, tester_sub, status, progress, result, verdict, started_date, completed_date, remaining_slots, confirmed_at, started_at, completed_at, created_at, updated_at)
+       scheduled_date, tester, tester_sub, status, progress, result, verdict, started_date, completed_date, remaining_slots, confirmed_at, started_at, completed_at, confluence_event_id, created_at, updated_at)
       VALUES
       (@cert_type, @test_type, @test_purpose, @round, @model_name, @fw_version, @requester, @note, @desired_date,
-       @scheduled_date, @tester, @tester_sub, @status, @progress, @result, @verdict, @started_date, @completed_date, @remaining_slots, @confirmed_at, @started_at, @completed_at, @created_at, @updated_at)`)
+       @scheduled_date, @tester, @tester_sub, @status, @progress, @result, @verdict, @started_date, @completed_date, @remaining_slots, @confirmed_at, @started_at, @completed_at, @confluence_event_id, @created_at, @updated_at)`)
       .run(row);
     logHistory(info.lastInsertRowid, actor, '등록', `${d.cert_type} / ${d.model_name}`);
     return this.get(info.lastInsertRowid);

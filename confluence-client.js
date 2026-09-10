@@ -171,20 +171,32 @@ async function fetchEvents(range, cfg) {
 }
 
 // 토큰이 이 인스턴스에서 먹는지만 확인한다. 캘린더 권한과 무관한 엔드포인트라
-// 여기서도 401 이면 '토큰 문제', 여기는 200 이면 '캘린더 쪽 문제'로 갈린다.
+// 여기서 인증이 안 붙으면 '토큰 문제', 붙었는데 캘린더만 막히면 '권한·id 문제'로 갈린다.
+// 200 이 곧 인증 성공은 아니다 — 익명 열람이 켜져 있으면 토큰을 무시하고도 200 에
+// Anonymous 를 돌려준다(2026-09-10 실제로 밟은 함정). 상태코드가 아니라 계정으로 가른다.
 async function checkAuth(cfg) {
   const c = cfg || config();
   if (!c.token || !c.baseUrl) throw new Error('토큰 또는 baseUrl 이 없습니다.');
   const url = `${c.baseUrl}/rest/api/user/current`;
   const res = await fetch(url, { headers: { Authorization: `Bearer ${c.token}`, Accept: 'application/json' } });
   let who = '';
+  let anonymous = false;
   try {
     const t = String(await res.text());
-    const m = t.match(/"username"\s*:\s*"([^"]+)"/) || t.match(/"displayName"\s*:\s*"([^"]+)"/);
-    if (m) who = m[1];
-    else if (t) who = t.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 120);
+    let j = null;
+    try { j = JSON.parse(t); } catch { /* HTML 로그인 페이지면 JSON 이 아니다 */ }
+    if (j && typeof j === 'object') {
+      who = String(j.username || j.displayName || j.name || '').trim();
+      anonymous = String(j.type || '').toLowerCase() === 'anonymous'
+        || !String(j.username || '').trim()
+        || who.toLowerCase() === 'anonymous';
+    } else if (t) {
+      who = t.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 120);
+    }
   } catch { /* 본문은 참고용이라 없어도 된다 */ }
-  return { status: res.status, ok: res.ok, who, url };
+  // authenticated: 토큰이 실제로 '누구'로 인식됐는가. ok 는 HTTP 성공 여부 그대로 둔다.
+  const authenticated = res.ok && !anonymous && Boolean(who);
+  return { status: res.status, ok: res.ok, authenticated, anonymous, who, url };
 }
 
 module.exports = { config, missing, configured, toInstant, checkAuth, dig, toText, normalizeEvent, normalizeBody, requestEvents, fetchEvents, DEFAULT_FIELDS, EVENTS_PATH };

@@ -1410,6 +1410,17 @@ ok('룩업 섹션 레코드 정리 완료', repo.confluenceRowsInRange({}).lengt
   const auth = await cclient.checkAuth(CFG);
   ok('토큰 점검은 user/current 를 부른다', authUrl.endsWith('/rest/api/user/current'), authUrl);
   ok('토큰 점검이 계정을 읽는다', auth.ok === true && auth.who === 'k251110', JSON.stringify(auth));
+  ok('계정이 잎히면 인증된 것으로 본다', auth.authenticated === true && auth.anonymous === false, JSON.stringify(auth));
+
+  // 익명 열람이 켜져 있으면 토큰을 무시하고도 200 이 온다.
+  // 상태코드만 보고 '토큰 정상'으로 오진했던 자리다 (2026-09-10).
+  global.fetch = async () => ({
+    ok: true, status: 200,
+    text: async () => '{"type":"anonymous","username":null,"displayName":"Anonymous"}',
+  });
+  const authAnon = await cclient.checkAuth(CFG);
+  ok('200 이어도 익명이면 인증 실패로 본다', authAnon.authenticated === false, JSON.stringify(authAnon));
+  ok('익명 여부를 따로 돌려준다', authAnon.anonymous === true && authAnon.ok === true, JSON.stringify(authAnon));
   global.fetch = async () => ({ ok: false, status: 401, statusText: '', text: async () => 'no' });
   const authBad = await cclient.checkAuth(CFG);
   ok('토큰 점검 실패는 상태코드로 돌려준다', authBad.ok === false && authBad.status === 401, JSON.stringify(authBad));

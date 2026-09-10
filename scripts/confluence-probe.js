@@ -55,9 +55,16 @@ function keysOf(obj, prefix = '', depth = 0, out = []) {
       try {
         const a = await client.checkAuth();
         console.error(`  GET /rest/api/user/current → ${a.status}`);
-        if (a.ok) {
-          console.error(`  토큰은 정상이다 (계정: ${a.who || '확인 못 함'}).`);
+        if (a.authenticated) {
+          console.error(`  토큰은 정상이다 (계정: ${a.who}).`);
           console.error('  → 토큰 문제가 아니다. 그 캘린더 열람 권한이나 subCalendarId 를 확인한다.');
+        } else if (a.anonymous) {
+          // 200 이지만 익명이다 — 토큰을 무시하고 익명 열람으로 붙은 것이다.
+          console.error(`  200 이지만 계정이 익명이다 (${a.who || 'Anonymous'}) → Bearer 토큰이 적용되지 않았다.`);
+          console.error('  익명 열람이 켜져 있어 인증 없이도 200 이 나온다. 상태코드만으로 판단하면 안 된다.');
+          console.error('  → 확인 순서: (1) Confluence 7.9 미만이면 PAT 미지원, (2) PAT 가 Jira 용으로 발급된 건 아닌지,');
+          console.error('     (3) 리버스프록시가 Authorization 헤더를 떼지 않는지, (4) 토큰 재발급.');
+          console.error('  → PAT 를 못 쓰면 개발자도구 Copy response 방식으로 진행한다 (가이드 3-B).');
         } else {
           console.error(`  여기서도 ${a.status} 다 → 토큰이 이 인스턴스에서 먹지 않는다.`);
           if (a.who) console.error(`  본문: ${a.who}`);

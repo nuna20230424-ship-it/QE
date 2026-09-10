@@ -323,12 +323,19 @@
 - [x] 스모크 43건 추가 — `npm test` 567건 통과
 - [ ] 브라우저 육안 확인 (P3의 동기화 버튼·결과 표시와 함께)
 
-### P3. Confluence 클라이언트 · 동기화 (사내망 + PAT 필요)
-- [ ] `.env` 로더 (의존성 추가 없이 자체 파싱)
-- [ ] Team Calendar 이벤트 조회 클라이언트 (PAT Bearer)
-- [ ] 폴링 동기화 — webhook 미지원이라 폴링만 가능
-- [ ] 수동 동기화 API + 화면 버튼, 동기화 결과·경고 노출
-- [ ] 스모크 추가 (HTTP는 스텁으로)
+### P3. Confluence 클라이언트 · 동기화 (코드 완료 · 실 연동은 사내망 필요)
+- [x] `env.js` — `.env` 자체 파싱 (dotenv 의존성 추가 없이 15줄). `.gitignore`에 `.env` 추가
+- [x] `confluence-client.js` — 설정·PAT 확인, Team Calendars 조회, 응답 → 정규 이벤트 정규화
+- [x] 토큰은 Authorization 헤더로만 — URL·로그에 싣지 않는다 (스모크로 고정)
+- [x] `confluence-poll.js` — 5분 폴링 + `runOnce()`, 겹침 방지, 실패 격리
+- [x] `server.js` — `GET /api/confluence/status`, `POST /api/confluence/sync`
+- [x] 화면 — 상단 **⟳ Confluence 동기화** 버튼 + 상태·결과·경고 바 (미설정 시 부족한 값 표시)
+- [x] `config.example.json`·README·DEPLOY 갱신
+- [x] 스모크 42건 추가 (HTTP는 fetch 스텁) — `npm test` 609건 통과
+- [ ] **`scripts/confluence-probe.js` 사내망 실행** — 실제 응답 키 확인 (**사용자 필요**)
+- [ ] `config.json` `confluence.fields`의 `relatedPage`·`created` 확정 (probe 결과로)
+- [ ] 맥미니 `node -v` 확인 — 내장 fetch를 쓰므로 **Node 18 이상** 필요
+- [ ] 브라우저 육안 확인 (버튼·상태 바·경고 펼침)
 
 ### P4. 모델명-의뢰자 룩업 (매핑표 데이터 필요)
 - [ ] 룩업 구조 + 미등록 모델 처리
@@ -336,7 +343,7 @@
 
 ### 막힌 것 — 착수 전 사용자 확인 필요
 - [ ] **사내망 접근** — `confluence.kaonmedia.com`·`jira.kaonmedia.com`·맥미니 모두 무응답(000). 실제 Team Calendar JSON 응답 형태 확인 불가, 실 연동 왕복 검증 불가
-- [ ] **Confluence PAT** — `.env` 없음. 발급·전달 필요 (대화·코드에 붙이지 않고 `.env`에만)
+- [ ] **Confluence PAT** — 발급·전달 필요. 보관 경로는 준비됨(`.env`의 `CONFLUENCE_PAT`, `.gitignore` 처리 완료)
 - [ ] **[모델명-의뢰자 DB]** — 지시서가 참조하는 매핑표 실체 없음
 - [ ] **지시서 누락** — 문서가 46행 정규식 블록 중간에서 끊김(코드펜스 미닫힘). §4 이후 내용 확인 필요
 - [x] **결정 4건** — 2026-09-10 확인 완료 (P2 항목에 반영)

@@ -197,6 +197,58 @@
 
 계산 결과가 상수에 없는 연도로 넘어가면 화면에 **주말만 제외한 값이라는 경고**가 뜬다. 그 연도 공휴일을 `holidays.add`에 넣으면 사라진다.
 
+## Confluence QE Schedule 동기화
+
+사내 Confluence의 **QE Schedule** Team Calendar 이벤트를 읽어 **인증 현황**에 반영한다.
+방향은 **Confluence → 대시보드 단방향**이고, 대시보드가 Confluence를 고치는 일은 없다.
+
+| 항목 | 내용 |
+|------|------|
+| 주기 | `config.json` `confluence.pollMinutes` (기본 5분) + 화면 상단 **⟳ Confluence 동기화** 버튼 |
+| 조회 범위 | 오늘 기준 과거 `rangeBackDays`(기본 30일) ~ 미래 `rangeAheadDays`(기본 60일) |
+| 인증 | Confluence Personal Access Token. **`.env`의 `CONFLUENCE_PAT`에만** 둔다 (`.env`는 커밋 대상 아님) |
+| 미설정 시 | 동기화만 생략하고 앱은 그대로 동작. 화면 상단 바에 **무엇이 없어서 안 도는지** 표시 |
+
+> Confluence Team Calendars는 캘린더 이벤트용 webhook을 제공하지 않아 **폴링**으로 동기화한다.
+
+### 제목 파싱
+`무엇을`(제목) 한 줄에서 5개 칸을 뽑는다. 예: `[xTS][IR][Pre-test] O2_KSTB7268 3차 > Passed`
+
+| 위치 | 대시보드 칸 |
+|------|------|
+| 첫 번째 `[..]` | 인증종류 (`xTS`→Google xTS, `NTS`→Netflix NTS, `AVTS`→Amazon AVTS) |
+| 두 번째 이후 `[..]` | Test type(IR/LR/MR/파생)이면 Test type, 아니면 Test 목적 |
+| `>` 앞 첫 토큰 | 모델명 (`1st`·`3차` 같은 회차 표기는 진행차수로) |
+| `>` 뒤 | 상태·판정 (`Passed`→완료·Pass, `Failed`→완료·Fail, `In-Progress`→진행중, `Dropped`→중단·Drop) |
+
+해석하지 못한 조각은 **칸을 비우고 경고로 남긴다**. 인증종류나 모델명을 못 읽은 이벤트는
+빈 의뢰를 만들지 않고 건너뛴다. 경고는 화면 상단 바의 `경고 N건`을 펼쳐 확인한다.
+
+### 사람이 입력한 값은 덮지 않는다
+대시보드에 **이미 값이 있는 칸은 사람 입력으로 보고 건드리지 않는다.** 동기화는 빈 칸만 채운다.
+- **예약 확정일**은 아예 매핑하지 않는다 — 덮어쓸 경로 자체가 없다.
+- **상태**만 예외다. 기본값 `예약대기` 그대로면 사람이 고른 값이 아니므로 빈 칸으로 본다.
+  사람이 상태를 한 번 바꾼 뒤에는 Confluence 제목이 바뀌어도 상태는 유지된다(판정·회차 등
+  비어 있던 칸은 계속 채워진다).
+- Confluence에서 일정이 **삭제되면 레코드를 지우지 않고 상태를 `중단`으로 돌려 보관**한다.
+  완료된 건은 되돌리지 않는다.
+
+### 설정
+`config.json`에 `confluence` 섹션을 넣고(예시는 `config.example.json`), PAT는 `.env`에 둔다.
+
+```
+CONFLUENCE_PAT=발급받은-토큰
+```
+
+`fields`는 Confluence 응답의 어느 키에서 각 칸을 가져올지 정한다. **`relatedPage`(관련 페이지 →
+비고)와 `created`(이벤트 생성일자 → 희망일정)는 Team Calendars 커스텀 필드라 실제 키 이름을
+확인해야 한다.** 사내망에서 아래를 한 번 실행하면 응답의 키 구조를 찍어 준다(읽기만 하고 DB는
+건드리지 않는다).
+
+```
+node scripts/confluence-probe.js
+```
+
 ## 로컬 실행
 ```bash
 npm install

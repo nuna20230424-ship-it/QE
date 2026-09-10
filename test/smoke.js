@@ -1257,7 +1257,118 @@ ok('기간 없이 삭제 반영을 직접 호출하면 거부', threw.includes('
 // 섹션 정리 — 위 보고 본문 스냅숏 비교가 깨지지 않게 동기화로 만든 레코드를 전부 지운다.
 for (const row of repo.confluenceRowsInRange({})) repo.remove(row.id, 'smoke 정리');
 ok('동기화 레코드 정리 완료', repo.confluenceRowsInRange({}).length === 0, String(repo.confluenceRowsInRange({}).length));
+
+// ---------- .env 로더 · Confluence 클라이언트 · 폴링 ----------
+head('.env 로더 (의존성 없는 최소 구현)');
+const cenv = require('../env');
+const envFile = path.join(TMP, 'env-test');
+fs.writeFileSync(envFile, [
+  '# 주석은 건너뛴다',
+  '',
+  'QE_TEST_PAT="abc123"',
+  'QE_TEST_QUOTED=xyz',
+  'QE_TEST_EMPTY=',
+  '잘못된줄',
+  'QE_TEST_PRESET=fromfile',
+].join('\n'), 'utf8');
+process.env.QE_TEST_PRESET = 'fromenv';
+const envKeys = cenv.load(envFile);
+ok('따옴표를 벗긴다', process.env.QE_TEST_PAT === 'abc123', process.env.QE_TEST_PAT);
+ok('따옴표 없는 값도 읽는다', process.env.QE_TEST_QUOTED === 'xyz', process.env.QE_TEST_QUOTED);
+ok('빈 값도 읽는다', process.env.QE_TEST_EMPTY === '', JSON.stringify(process.env.QE_TEST_EMPTY));
+ok('= 없는 줄은 건너뛴다', !envKeys.includes('잘못된줄'));
+ok('주석·빈 줄은 키가 되지 않는다', !envKeys.some((k) => k.startsWith('#') || k === ''));
+ok('기존 환경변수가 파일보다 우선', process.env.QE_TEST_PRESET === 'fromenv', process.env.QE_TEST_PRESET);
+ok('덮지 않은 키는 결과에 없다', !envKeys.includes('QE_TEST_PRESET'));
+ok('값이 아니라 키 이름만 돌려준다', envKeys.every((k) => !String(k).includes('abc123')));
+ok('없는 파일은 빈 배열', cenv.load(path.join(TMP, 'no-such-env')).length === 0);
+
+head('Confluence 클라이언트 (정규화)');
+const cclient = require('../confluence-client');
+// 실 config.json·환경변수에 의존하지 않도록 설정을 직접 만들어 넘긴다.
+// 나중에 실제 설정이 채워져도 이 테스트의 기대값이 뒤집히지 않게 하려는 것이다.
+const CFG = {
+  baseUrl: 'https://confluence.example.invalid', subCalendarId: 'cal-1', timeZone: 'Asia/Seoul',
+  pollMinutes: 5, rangeBackDays: 30, rangeAheadDays: 60,
+  fields: { ...cclient.DEFAULT_FIELDS }, token: 'test-token',
+};
+
+ok('dig 중첩 값', cclient.dig({ a: { b: 'v' } }, 'a.b') === 'v');
+ok('dig 배열 인덱스', cclient.dig({ a: [{ b: 'v' }] }, 'a.0.b') === 'v');
+ok('dig 없는 키는 undefined', cclient.dig({ a: 1 }, 'a.b.c') === undefined);
+ok('dig 빈 경로는 undefined', cclient.dig({ a: 1 }, '') === undefined);
+ok('toText 문자열은 트림', cclient.toText('  x  ') === 'x');
+ok('toText 객체는 displayName', cclient.toText({ displayName: '이해찬', name: 'haechan' }) === '이해찬');
+ok('toText 객체 fallback은 name', cclient.toText({ name: 'haechan' }) === 'haechan');
+ok('toText 배열은 콤마로 잇는다', cclient.toText([{ displayName: '이해찬' }, { name: '이은경' }]) === '이해찬, 이은경');
+ok('toText null은 빈 문자열', cclient.toText(null) === '');
+
+const nev = cclient.normalizeEvent({ id: 'e1', title: 't', invitees: '이해찬', start: '2026-09-07', end: '2026-09-07' }, CFG.fields);
+ok('매핑이 빈 칸은 채우지 않는다', nev.event.relatedPage === '' && nev.event.created === '');
+ok('매핑이 빈 칸은 경고로 남는다', nev.warnings.filter((w) => w.includes('매핑이 비어 있어')).length === 2, nev.warnings.join(' | '));
+const missKey = cclient.normalizeEvent({ id: 'e1' }, { id: 'id', title: 'title' });
+ok('응답에 없는 키는 경고', missKey.warnings.some((w) => w.includes('키가 없습니다')), missKey.warnings.join(' | '));
+ok('루트가 배열인 응답도 받는다', cclient.normalizeBody([{ id: 'e1', title: 't' }], { id: 'id', title: 'title' }).events.length === 1);
+let bodyErr = '';
+try { cclient.normalizeBody({ nope: 1 }, CFG.fields); } catch (e) { bodyErr = e.message; }
+ok('events 배열이 없으면 예외', bodyErr.includes('events 배열'), bodyErr);
+const dupWarn = cclient.normalizeBody({ events: [{ id: 'a' }, { id: 'b' }, { id: 'c' }] }, { id: 'id', title: 'title' });
+ok('같은 경고는 이벤트 수만큼 쌓지 않는다', dupWarn.warnings.length === 1, String(dupWarn.warnings.length));
+
+head('Confluence 폴링 러너 (설정·기간)');
+const cpoll = require('../confluence-poll');
+const pr = cpoll.rangeOf(new Date(2026, 8, 10, 12, 0, 0));
+ok('조회 기간은 YYYY-MM-DD', /^\d{4}-\d{2}-\d{2}$/.test(pr.from) && /^\d{4}-\d{2}-\d{2}$/.test(pr.to), `${pr.from}~${pr.to}`);
+ok('조회 기간은 과거→미래 순', pr.from < pr.to, `${pr.from}~${pr.to}`);
+const pst = cpoll.status();
+ok('상태에 설정 여부가 있다', typeof pst.configured === 'boolean');
+ok('상태에 부족한 설정 목록이 있다', Array.isArray(pst.missing));
+ok('상태에 폴링 주기가 있다', Number(pst.pollMinutes) > 0, String(pst.pollMinutes));
 (async () => {
+  // ---------- Confluence 조회·폴링 (비동기) ----------
+  head('Confluence 조회 (fetch 스텁 — 사내망을 부르지 않는다)');
+  const realFetch = global.fetch;
+  let seen = { url: '', headers: {} };
+  global.fetch = async (url, opt) => {
+    seen = { url, headers: (opt || {}).headers || {} };
+    return {
+      ok: true, status: 200,
+      json: async () => ({ events: [{ id: 'e1', title: '[NTS][3PL] KM-950 > Passed', invitees: [{ displayName: '이은경' }], start: '2026-09-05', end: '2026-09-05' }] }),
+    };
+  };
+  const fx = await cclient.fetchEvents({ from: '2026-09-01', to: '2026-09-30' }, CFG);
+  ok('주입 설정으로 이벤트를 정규화한다', fx.events.length === 1 && fx.events[0].invitees === '이은경', JSON.stringify(fx.events[0]));
+  ok('토큰은 URL에 실리지 않는다', !seen.url.includes('test-token'), seen.url);
+  ok('토큰은 Authorization 헤더로 간다', String(seen.headers.Authorization || '').includes('test-token'));
+  ok('조회 기간이 쿼리에 실린다', seen.url.includes('start=2026-09-01') && seen.url.includes('end=2026-09-30'), seen.url);
+  ok('캘린더 id가 쿼리에 실린다', seen.url.includes('subCalendarId=cal-1'), seen.url);
+
+  global.fetch = async () => ({ ok: false, status: 401, statusText: 'Unauthorized' });
+  let httpErr = '';
+  try { await cclient.fetchEvents({}, CFG); } catch (e) { httpErr = e.message; }
+  ok('실패 응답은 상태코드를 담아 던진다', httpErr.includes('401'), httpErr);
+  global.fetch = realFetch;
+
+  let cfgErr = '';
+  try { await cclient.requestEvents({}, { token: '', baseUrl: '', subCalendarId: '' }); } catch (e) { cfgErr = e.message; }
+  ok('설정이 없으면 조회하지 않는다', cfgErr.includes('설정이 없습니다'), cfgErr);
+
+  head('Confluence 폴링 (조회 주입)');
+  const pRange = { from: '2026-09-01', to: '2026-09-30' };
+  const pEvent = { id: 'poll-1', title: '[NTS][3PL] KM-951 > Passed', invitees: '이은경', start: '2026-09-05', end: '2026-09-05', relatedPage: '', created: '2026-09-05' };
+  const okRun = await cpoll.runOnce({ range: pRange, fetchEvents: async () => ({ events: [pEvent], warnings: ['조회 경고 1건'] }) });
+  ok('주입 조회로 동기화가 돈다', okRun.ok === true && okRun.created === 1, JSON.stringify(okRun));
+  ok('조회 건수를 집계한다', okRun.fetched === 1, String(okRun.fetched));
+  ok('조회 경고와 동기화 경고를 합친다', okRun.warnings.includes('조회 경고 1건'), okRun.warnings.join(' | '));
+
+  const failRun = await cpoll.runOnce({ range: pRange, fetchEvents: async () => { throw new Error('조회 실패'); } });
+  ok('조회 실패는 그 회차만 실패로 남긴다', failRun.ok === false && failRun.reason === '조회 실패', JSON.stringify(failRun));
+  ok('실패 후에도 상태를 읽을 수 있다', !!(cpoll.status().last && cpoll.status().last.ok === false));
+
+  // 폴링 테스트가 만든 레코드 정리 — 아래 보고 본문 비교가 앞서 떠 둔 스냅숏과 어긋나지 않게 한다.
+  for (const row of repo.confluenceRowsInRange({})) repo.remove(row.id, 'smoke 정리');
+  ok('폴링 레코드 정리 완료', repo.confluenceRowsInRange({}).length === 0);
+
   for (const k of ['daily', 'weekly', 'certstats']) await sched.sendNow(k);
   notify.sendReportMail = origSend;
 

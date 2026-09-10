@@ -11,6 +11,25 @@
   "reportTo": ["keonhee.cho@kaongroup.com"],
   "baseUrl": "http://172.16.3.136:3001",
 
+  "_confluence 설명": "Confluence QE Schedule 캘린더 동기화 설정. PAT는 여기 두지 않고 .env 의 CONFLUENCE_PAT 에 둡니다(.env 는 커밋 대상이 아닙니다). subCalendarId 는 QE Schedule 캘린더의 id 이고, fields 는 응답 필드명 매핑입니다 — relatedPage·created 는 Team Calendars 커스텀 필드라 실제 키 이름을 확인해야 하며, scripts/confluence-probe.js 를 사내망에서 한 번 실행하면 키 목록을 찍어 줍니다. 비워 두면 그 칸은 채우지 않고 경고만 남습니다. 이 항목이 없으면 동기화는 자동으로 생략됩니다.",
+  "confluence": {
+    "baseUrl": "https://confluence.kaonmedia.com",
+    "subCalendarId": "",
+    "timeZone": "Asia/Seoul",
+    "pollMinutes": 5,
+    "rangeBackDays": 30,
+    "rangeAheadDays": 60,
+    "fields": {
+      "id": "id",
+      "title": "title",
+      "invitees": "invitees",
+      "start": "start",
+      "end": "end",
+      "relatedPage": "",
+      "created": ""
+    }
+  },
+
   "_holidays 설명": "QE 리소스 현황의 영업일 계산용. 기본 공휴일 목록은 holidays.js 상수이고 여기서 덮어씁니다. add=사내 지정 휴일 추가, remove=공휴일이지만 정상 근무하는 날 제외. 이 항목이 없어도 앱은 정상 동작합니다(상수만 사용).",
   "holidays": {
     "add": [],

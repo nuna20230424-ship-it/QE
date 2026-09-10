@@ -51,8 +51,12 @@
         <option value="보류">보류</option>
       </select>
       <input id="filter-q" type="search" placeholder="모델명 · 의뢰자 · 항목 검색" />
+      <button id="btn-confluence-sync" class="btn-sync" type="button" title="Confluence QE Schedule 일정을 지금 가져온다">⟳ Confluence 동기화</button>
     </div>
   </section>
+
+  <!-- Confluence 동기화 상태·결과. 설정이 없으면 무엇이 없어서 안 도는지 보여 준다 -->
+  <div id="confluence-bar" class="confluence-bar hidden"></div>
 
   <div id="summary" class="summary"></div>
 

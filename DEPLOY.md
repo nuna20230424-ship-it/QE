@@ -98,6 +98,29 @@ npm install
 
 ---
 
+## 4-B. Confluence 동기화 설정 (이 기능을 쓸 때만)
+
+설정이 없으면 동기화만 생략되고 앱은 그대로 뜬다. 켜려면 배포 폴더에서 두 가지를 채운다.
+
+```bash
+# 1) PAT — .env 에만 둔다 (git 추적 대상 아님)
+cd ~/cert-dashboard   # 실제 배포 폴더로
+printf 'CONFLUENCE_PAT=발급받은-토큰
+' > .env
+chmod 600 .env
+
+# 2) config.json 에 confluence 섹션 추가 (config.example.json 의 예시를 복사)
+#    baseUrl · subCalendarId · fields 를 채운다
+```
+
+`fields.relatedPage`·`fields.created`는 실제 응답 키를 확인해야 한다.
+
+```bash
+node scripts/confluence-probe.js   # 응답 키 구조를 찍는다 (읽기 전용)
+```
+
+> ⚠️ **Node 18 이상이 필요하다.** 동기화는 내장 `fetch`를 쓴다. `node -v`로 확인한다.
+
 ## 5. 서버 재기동
 
 ### launchd로 상시 구동 중이라면

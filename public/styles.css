@@ -600,3 +600,29 @@ fieldset:disabled legend::after { content: " · 읽기 전용"; color: var(--mut
 .multi-select option { padding: 3px 6px; border-radius: 4px; }
 /* 일정표·건별 상세에서 메인 뒤에 붙는 서브 담당자 표기 */
 .sub-tester { color: var(--muted); font-weight: 600; }
+
+/* ---- Confluence QE Schedule 동기화 상태 바 ---- */
+.btn-sync {
+  padding: 7px 12px; border: 1px solid var(--line); border-radius: 8px;
+  background: var(--panel); color: var(--text); font: inherit; font-weight: 600; cursor: pointer;
+}
+.btn-sync:hover:not(:disabled) { border-color: var(--primary); color: var(--primary); }
+.btn-sync:disabled { color: var(--muted); cursor: default; }
+
+.confluence-bar {
+  margin: 0 22px 14px; padding: 10px 14px;
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  background: var(--panel); border: 1px solid var(--line);
+  border-left: 4px solid var(--s-wait);
+  border-radius: var(--radius); box-shadow: var(--shadow);
+  font-size: 13px; color: var(--muted);
+}
+.confluence-bar .cf-off { color: var(--s-wait); font-weight: 700; }
+.confluence-bar .cf-on { color: var(--primary); font-weight: 700; }
+.confluence-bar .cf-miss { color: var(--muted); }
+.confluence-bar .cf-ok { color: var(--text); }
+.confluence-bar .cf-fail { color: var(--danger); font-weight: 600; }
+/* 경고는 접어 둔다 — 매핑 미설정처럼 같은 문장이 여러 건 쌓이는 경우가 많다 */
+.confluence-bar .cf-warn summary { cursor: pointer; color: var(--s-prog); font-weight: 600; }
+.confluence-bar .cf-warn ul { margin: 6px 0 0; padding-left: 18px; color: var(--text); }
+.confluence-bar .cf-warn li { margin: 2px 0; }

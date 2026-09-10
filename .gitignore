@@ -6,3 +6,5 @@ server.log
 server.err.log
 config.json
 backups/
+.env
+confluence-probe-sample.json

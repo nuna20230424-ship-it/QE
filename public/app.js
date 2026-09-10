@@ -61,6 +61,60 @@ async function load() {
   renderSummary();
 }
 
+// ---- Confluence QE Schedule 동기화 ----
+// 설정이 없으면 '미설정 + 필요한 값'을, 있으면 주기와 최근 결과를 한 줄로 보여 준다.
+function renderConfluence(st) {
+  const el = $('#confluence-bar');
+  if (!el || !st) return;
+  const parts = [];
+  if (!st.configured) {
+    parts.push('<span class="cf-off">Confluence 동기화 미설정</span>');
+    parts.push(`<span class="cf-miss">필요: ${esc((st.missing || []).join(', '))}</span>`);
+  } else {
+    parts.push(`<span class="cf-on">${esc(String(st.pollMinutes))}분 주기 동기화${st.polling ? '' : ' (대기)'}</span>`);
+  }
+
+  const l = st.last;
+  if (l) {
+    const when = l.at ? new Date(l.at).toLocaleString('ko-KR') : '';
+    if (l.ok) {
+      parts.push(`<span class="cf-ok">${esc(when)} · 조회 ${l.fetched}건 → 신규 ${l.created} · 갱신 ${l.updated} · 유지 ${l.unchanged} · 건너뜀 ${l.skipped} · 중단 ${l.cancelled}</span>`);
+    } else {
+      parts.push(`<span class="cf-fail">${esc(when)} · 실패: ${esc(l.reason || '')}</span>`);
+    }
+    const notes = [...(l.warnings || []), ...(l.errors || [])];
+    if (notes.length) {
+      parts.push(`<details class="cf-warn"><summary>경고 ${notes.length}건</summary><ul>${notes.map((w) => `<li>${esc(w)}</li>`).join('')}</ul></details>`);
+    }
+  }
+  el.innerHTML = parts.join(' ');
+  el.classList.remove('hidden');
+}
+
+async function loadConfluence() {
+  try { renderConfluence(await api('/api/confluence/status')); }
+  catch { /* 상태를 못 받아도 나머지 화면은 그대로 */ }
+}
+
+async function syncConfluence() {
+  const btn = $('#btn-confluence-sync');
+  const label = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '동기화 중…';
+  try {
+    const r = await api('/api/confluence/sync', { method: 'POST', body: JSON.stringify({ actor: actor() }) });
+    if (r && r.busy) alert('이미 동기화가 돌고 있습니다. 잠시 뒤 상태를 다시 확인해 주세요.');
+    else if (r && !r.ok) alert(`동기화 실패: ${r.reason || '알 수 없는 오류'}`);
+    await loadConfluence();
+    await load();
+  } catch (err) {
+    alert(err.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = label;
+  }
+}
+
 // 모델명 자동목록: 한 번이라도 입력된 값 전체를 서버에서 받는다.
 // state.items는 필터가 걸린 목록이므로 여기서 쓰면 값이 누락된다.
 async function loadOptions() {
@@ -1571,6 +1625,7 @@ function bind() {
   });
   // 사용자가 직접 고친 차수는 이후 자동값이 덮어쓰지 않는다
   $(F.round).addEventListener('input', () => { roundAuto.touched = true; });
+  $('#btn-confluence-sync').addEventListener('click', syncConfluence);
   $('#btn-round-info').addEventListener('click', openRoundModal);
   $('#round-modal-close').addEventListener('click', closeRoundModal);
   $('#round-modal').addEventListener('click', (e) => { if (e.target.id === 'round-modal') closeRoundModal(); });
@@ -1707,12 +1762,14 @@ function bind() {
 
 bind();
 loadHiddenRequesters();
+loadConfluence();
 load().catch((err) => alert(err.message));
 
 // 1분마다 자동 새로고침 (편집 중 모달이 열려 있으면 건너뜀)
 setInterval(() => {
   if (!$('#modal').classList.contains('hidden')) return;
   load().catch(() => {});
+  loadConfluence();
 }, 60000);
 
 // 현황 보드 상단 실시간 시계 (1초 단위)

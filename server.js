@@ -6,6 +6,7 @@ const notify = require('./notify');
 const backup = require('./backup');
 const report = require('./report');
 const scheduler = require('./scheduler');
+const confluence = require('./confluence-poll');
 const resources = require('./resources');
 const holidays = require('./holidays');
 
@@ -196,10 +197,26 @@ app.delete('/api/requests/:id', (req, res) => {
   res.status(204).end();
 });
 
+// ---- Confluence QE Schedule 동기화 ----
+app.get('/api/confluence/status', (req, res) => {
+  res.json(confluence.status());
+});
+
+// 수동 동기화. 폴링 회차와 겹치면 busy 로 돌아온다.
+app.post('/api/confluence/sync', async (req, res) => {
+  try {
+    const who = actorOf(req);
+    res.json(await confluence.runOnce({ actor: who ? `Confluence 동기화 (${who})` : undefined }));
+  } catch (err) {
+    res.status(500).json({ ok: false, reason: err.message });
+  }
+});
+
 const PORT = process.env.PORT || 3000;
 const HOST = process.env.HOST || '0.0.0.0';
 app.listen(PORT, HOST, () => {
   console.log(`인증 일정 대시보드 실행 중: http://${HOST}:${PORT}`);
   backup.start();
   scheduler.start();
+  confluence.start();
 });

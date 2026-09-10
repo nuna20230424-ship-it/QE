@@ -102,6 +102,18 @@ PAT 메뉴가 없거나 발급이 막혀 있으면 스크립트 없이도 진행
 > `notepad config.json     # 설명...` 을 그대로 붙이면 notepad가 `#`·`설명...` 을 각각
 > 파일 이름으로 알고 열려고 한다. **명령 부분만** 붙여넣는다.
 
+### 파일을 안 만들고 한 번만 돌리려면 (가장 간단)
+
+probe 한 번 실행에는 `.env` 파일이 필요 없다. **그 창에서만 유효한 환경변수**로 넣으면 되고,
+토큰이 디스크에 남지 않아 일회성 확인에는 더 안전하다.
+
+```powershell
+$env:CONFLUENCE_PAT = 'PASTE_YOUR_TOKEN_HERE'
+node scripts\confluence-probe.js
+```
+
+`.env` 파일은 **서버를 상시 구동할 때** 필요하다(창을 닫으면 환경변수는 사라진다).
+
 ### 개발 PC — cmd (명령 프롬프트)
 
 `.env` 만들기. **셋 중 하나**만 하면 된다.
@@ -111,13 +123,13 @@ REM (권장) 메모장으로 만든다 — 토큰에 특수문자가 있어도 �
 notepad .env
 REM   "찾을 수 없습니다. 새 파일을 만들까요?" → 예
 REM   아래 한 줄만 넣고 저장한다
-REM       CONFLUENCE_PAT=발급받은-토큰
+REM       CONFLUENCE_PAT=PASTE_YOUR_TOKEN_HERE
 ```
 
 ```bat
 REM (한 줄로) > 바로 앞에 공백을 두지 않는다 (공백까지 파일에 들어간다.
 REM  로더가 trim 으로 벗기니 치명적이진 않지만 깔끔하게 둔다)
-echo CONFLUENCE_PAT=발급받은-토큰>.env
+echo CONFLUENCE_PAT=PASTE_YOUR_TOKEN_HERE>.env
 ```
 
 ```bat
@@ -140,7 +152,7 @@ cd C:\Users\k251110\Desktop\QE
 
 # PAT 를 .env 에 넣는다. 홑따옴표 안은 그대로 저장되므로 토큰에 특수문자가 있어도 안전하다.
 # .env 는 .gitignore 대상이라 커밋되지 않는다.
-Set-Content -Path .env -Value 'CONFLUENCE_PAT=발급받은-토큰' -Encoding utf8
+Set-Content -Path .env -Value 'CONFLUENCE_PAT=PASTE_YOUR_TOKEN_HERE' -Encoding utf8
 
 # 채워졌는지 확인 — 토큰 값은 찍지 않고 부족한 것만 알려 준다.
 node -e "const c=require('./confluence-client'); console.log(c.missing().length ? '부족: '+c.missing().join(' / ') : '설정 완료 — 실행 가능')"
@@ -177,7 +189,7 @@ notepad .env      # 없으면 "새 파일을 만들까요?" → 예 → CONFLUEN
 
 ```bash
 cd ~/배포폴더            # 실제 경로로
-printf 'CONFLUENCE_PAT=발급받은-토큰\n' > .env
+printf 'CONFLUENCE_PAT=PASTE_YOUR_TOKEN_HERE\n' > .env
 chmod 600 .env
 ```
 
@@ -240,6 +252,7 @@ subCalendarId  : abc123-...
 | `설정이 없어 실행할 수 없습니다` + 목록 | `.env`·`config.json` 이 덜 채워짐 | 목록에 적힌 값을 4단계대로 채운다 |
 | `요청 실패: Confluence 응답 401 Unauthorized` | PAT가 틀렸거나 만료 | 토큰 재발급, `.env` 오타 확인 |
 | `... 403 Forbidden` | 계정에 그 캘린더 열람 권한이 없음 | 캘린더 소유자에게 열람 권한 요청 |
+| `CONFLUENCE_PAT 에 토큰으로 쓸 수 없는 문자가 있습니다` | **자리표시자를 그대로 넣었다** (한글 등 비ASCII) | 발급받은 실제 토큰으로 다시 넣는다 |
 | `... 404 Not Found` | **엔드포인트 경로가 실제와 다름** | 3단계의 Request URL을 알려 주세요 |
 | `fetch failed` / `ETIMEDOUT` | 사내망 밖이거나 프록시에 막힘 | VPN·사내망 연결 확인 |
 | `응답에서 events 배열을 찾지 못했다` | 응답 구조가 예상과 다름 | 3-B로 응답 원문을 전달해 주세요 |

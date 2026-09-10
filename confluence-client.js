@@ -41,7 +41,7 @@ function config() {
     // 지시서의 [모델명-의뢰자 DB]. 여기 없는 모델은 대시보드 이력에서 찾는다(confluence-poll).
     requesterByModel: cfg.requesterByModel || {},
     // PAT는 지시서대로 .env(환경변수)에만 둔다. config.json·코드·로그에 값을 남기지 않는다.
-    token: process.env.CONFLUENCE_PAT || '',
+    token: String(process.env.CONFLUENCE_PAT || '').trim(),
   };
 }
 
@@ -121,6 +121,18 @@ async function requestEvents({ from, to } = {}, cfg) {
     from ? `start=${encodeURIComponent(toInstant(from))}` : '',
     to ? `end=${encodeURIComponent(toInstant(to, { endOfDay: true }))}` : '',
   ].filter(Boolean).join('&');
+  // 토큰을 미리 검사한다. 비ASCII 문자가 있으면 fetch가 'Cannot convert argument to a
+  // ByteString...' 이라는 알아보기 힘든 오류를 낸다 — 실제 원인은 대개 자리표시자를
+  // 그대로 넣은 것이다. 무엇이 문제인지 한국어로 먼저 알려 준다.
+  const bad = [...c.token].findIndex((ch) => ch.charCodeAt(0) < 33 || ch.charCodeAt(0) > 126);
+  if (bad >= 0) {
+    const ch = c.token[bad];
+    throw new Error(
+      `CONFLUENCE_PAT 에 토큰으로 쓸 수 없는 문자가 있습니다 (${bad + 1}번째 글자 '${ch}'). `
+      + '자리표시자(PASTE_YOUR_TOKEN_HERE 등)를 그대로 넣지 않았는지, 발급받은 토큰을 붙여넣었는지 확인해 주세요.'
+    );
+  }
+
   const url = `${c.baseUrl}${EVENTS_PATH}?${q}`;
   // 토큰은 헤더에만 넣는다. url은 로그·오류 메시지에 실릴 수 있어 비밀을 태우지 않는다.
   const res = await fetch(url, { headers: { Authorization: `Bearer ${c.token}`, Accept: 'application/json' } });

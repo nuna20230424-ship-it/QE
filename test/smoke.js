@@ -1395,6 +1395,23 @@ ok('룩업 섹션 레코드 정리 완료', repo.confluenceRowsInRange({}).lengt
   try { await cclient.requestEvents({}, { token: '', baseUrl: '', subCalendarId: '' }); } catch (e) { cfgErr = e.message; }
   ok('설정이 없으면 조회하지 않는다', cfgErr.includes('설정이 없습니다'), cfgErr);
 
+  // 토큰에 비ASCII가 있으면 fetch가 'Cannot convert argument to a ByteString' 이라는
+  // 알아보기 힘든 오류를 낸다. 그 전에 한국어로 잡아 준다 (2026-09-10 실제로 밟은 함정).
+  let phErr = '';
+  try { await cclient.requestEvents({}, { ...CFG, token: '실제토큰값' }); } catch (e) { phErr = e.message; }
+  ok('한글 자리표시자는 요청 전에 잡는다', phErr.includes('쓸 수 없는 문자'), phErr);
+  ok('몇 번째 글자인지 알려 준다', phErr.includes("1번째 글자 '실'"), phErr);
+  ok('ByteString 원문 오류를 노출하지 않는다', !phErr.includes('ByteString'), phErr);
+  let spErr = '';
+  try { await cclient.requestEvents({}, { ...CFG, token: 'abc def' }); } catch (e) { spErr = e.message; }
+  ok('토큰 중간 공백도 잡는다', spErr.includes('쓸 수 없는 문자'), spErr);
+
+  // 붙여넣기에 따라오는 앞뒤 공백은 config 단계에서 벗긴다
+  const savedPat = process.env.CONFLUENCE_PAT;
+  process.env.CONFLUENCE_PAT = '  MDk4NzY1NDMyMQ==  ';
+  ok('토큰 앞뒤 공백은 벗긴다', cclient.config().token === 'MDk4NzY1NDMyMQ==', JSON.stringify(cclient.config().token));
+  if (savedPat === undefined) delete process.env.CONFLUENCE_PAT; else process.env.CONFLUENCE_PAT = savedPat;
+
   head('Confluence 폴링 (조회 주입)');
   const pRange = { from: '2026-09-01', to: '2026-09-30' };
   const pEvent = { id: 'poll-1', title: '[NTS][3PL] KM-951 > Passed', invitees: '이은경', start: '2026-09-05', end: '2026-09-05', relatedPage: '', created: '2026-09-05' };

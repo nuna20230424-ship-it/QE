@@ -57,6 +57,22 @@ function missing() {
 
 const configured = () => missing().length === 0;
 
+// 'YYYY-MM-DD' → 그 날짜의 로컬(KST) 자정을 가리키는 ISO 인스턴트.
+// 개발자도구로 확인한 실제 요청이 start·end 를 'YYYY-MM-DDTHH:mm:ssZ' 로 보낸다.
+// 날짜만 보내면 서버가 어떻게 해석하는지 알 수 없으므로 관측한 형식에 맞춘다.
+// UTC 자정이 아니라 '로컬 자정의 인스턴트'를 쓴다 — KST 기준 하루가 밀리지 않게.
+function toInstant(v, { endOfDay = false } = {}) {
+  const s = String(v ?? '').trim();
+  if (!s) return '';
+  if (s.includes('T')) return s;   // 이미 인스턴트면 그대로 보낸다
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return s;
+  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  // 종료일은 그 날 전체를 포함해야 하므로 다음 날 자정까지 잡는다.
+  if (endOfDay) d.setDate(d.getDate() + 1);
+  return d.toISOString().replace(/\.\d{3}Z$/, 'Z');
+}
+
 // 'a.0.b' 같은 점 표기로 중첩 값을 꺼낸다. 중간이 비면 undefined.
 function dig(obj, keyPath) {
   if (!keyPath) return undefined;
@@ -102,8 +118,8 @@ async function requestEvents({ from, to } = {}, cfg) {
   const q = [
     `subCalendarId=${encodeURIComponent(c.subCalendarId)}`,
     `userTimeZoneId=${encodeURIComponent(c.timeZone)}`,
-    from ? `start=${encodeURIComponent(from)}` : '',
-    to ? `end=${encodeURIComponent(to)}` : '',
+    from ? `start=${encodeURIComponent(toInstant(from))}` : '',
+    to ? `end=${encodeURIComponent(toInstant(to, { endOfDay: true }))}` : '',
   ].filter(Boolean).join('&');
   const url = `${c.baseUrl}${EVENTS_PATH}?${q}`;
   // 토큰은 헤더에만 넣는다. url은 로그·오류 메시지에 실릴 수 있어 비밀을 태우지 않는다.
@@ -133,4 +149,4 @@ async function fetchEvents(range, cfg) {
   return normalizeBody(body, c.fields);
 }
 
-module.exports = { config, missing, configured, dig, toText, normalizeEvent, normalizeBody, requestEvents, fetchEvents, DEFAULT_FIELDS, EVENTS_PATH };
+module.exports = { config, missing, configured, toInstant, dig, toText, normalizeEvent, normalizeBody, requestEvents, fetchEvents, DEFAULT_FIELDS, EVENTS_PATH };

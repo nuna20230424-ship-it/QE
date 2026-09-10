@@ -1315,6 +1315,16 @@ ok('events 배열이 없으면 예외', bodyErr.includes('events 배열'), bodyE
 const dupWarn = cclient.normalizeBody({ events: [{ id: 'a' }, { id: 'b' }, { id: 'c' }] }, { id: 'id', title: 'title' });
 ok('같은 경고는 이벤트 수만큼 쌓지 않는다', dupWarn.warnings.length === 1, String(dupWarn.warnings.length));
 
+// 'YYYY-MM-DD' → 로컬 자정의 ISO 인스턴트. 기대값을 하드코딩하면 머신 타임존에 묶이므로
+// 테스트 쪽에서도 같은 방식으로 계산해 비교한다.
+const noMs = (d) => d.toISOString().replace(/\.\d{3}Z$/, 'Z');
+ok('날짜는 로컬 자정 인스턴트로 바뀐다', cclient.toInstant('2026-09-01') === noMs(new Date(2026, 8, 1)), cclient.toInstant('2026-09-01'));
+ok('종료일은 다음 날 자정까지 잡는다', cclient.toInstant('2026-09-30', { endOfDay: true }) === noMs(new Date(2026, 8, 31)), cclient.toInstant('2026-09-30', { endOfDay: true }));
+ok('밀리초는 붙이지 않는다', /T\d{2}:\d{2}:\d{2}Z$/.test(cclient.toInstant('2026-09-01')), cclient.toInstant('2026-09-01'));
+ok('이미 인스턴트면 그대로 보낸다', cclient.toInstant('2026-06-26T00:00:00Z') === '2026-06-26T00:00:00Z');
+ok('빈 값은 빈 문자열', cclient.toInstant('') === '');
+ok('해석 못 하는 값은 그대로 둔다', cclient.toInstant('내일') === '내일');
+
 head('Confluence 폴링 러너 (설정·기간)');
 const cpoll = require('../confluence-poll');
 const pr = cpoll.rangeOf(new Date(2026, 8, 10, 12, 0, 0));
@@ -1368,7 +1378,11 @@ ok('룩업 섹션 레코드 정리 완료', repo.confluenceRowsInRange({}).lengt
   ok('주입 설정으로 이벤트를 정규화한다', fx.events.length === 1 && fx.events[0].invitees === '이은경', JSON.stringify(fx.events[0]));
   ok('토큰은 URL에 실리지 않는다', !seen.url.includes('test-token'), seen.url);
   ok('토큰은 Authorization 헤더로 간다', String(seen.headers.Authorization || '').includes('test-token'));
-  ok('조회 기간이 쿼리에 실린다', seen.url.includes('start=2026-09-01') && seen.url.includes('end=2026-09-30'), seen.url);
+  // 실제 Confluence 요청은 start·end 를 ISO 인스턴트로 보낸다 (2026-09-10 개발자도구 확인).
+  const expStart = encodeURIComponent(cclient.toInstant('2026-09-01'));
+  const expEnd = encodeURIComponent(cclient.toInstant('2026-09-30', { endOfDay: true }));
+  ok('조회 기간은 ISO 인스턴트로 실린다', seen.url.includes(`start=${expStart}`) && seen.url.includes(`end=${expEnd}`), seen.url);
+  ok('날짜만 보내지 않는다', !seen.url.includes('start=2026-09-01&'), seen.url);
   ok('캘린더 id가 쿼리에 실린다', seen.url.includes('subCalendarId=cal-1'), seen.url);
 
   global.fetch = async () => ({ ok: false, status: 401, statusText: 'Unauthorized' });

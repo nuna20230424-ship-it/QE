@@ -20,13 +20,24 @@
 
 ---
 
-## 1. 준비물은 세 가지
+## 1. 준비물은 세 가지 — 이제 PAT 하나만 남았다
 
-| 값 | 넣는 곳 | 구하는 방법 |
+| 값 | 넣는 곳 | 상태 |
 |---|---|---|
-| Confluence PAT | `.env` 의 `CONFLUENCE_PAT` | **2단계** |
-| baseUrl | `config.json` 의 `confluence.baseUrl` | `https://confluence.kaonmedia.com` (지시서 §2) |
-| subCalendarId | `config.json` 의 `confluence.subCalendarId` | **3단계** |
+| Confluence PAT | `.env` 의 `CONFLUENCE_PAT` | ❌ **남은 것** → 2단계 |
+| baseUrl | `config.json` 의 `confluence.baseUrl` | ✅ 반영됨 |
+| subCalendarId | `config.json` 의 `confluence.subCalendarId` | ✅ 반영됨 (2026-09-10 개발자도구 확인) |
+
+> **2026-09-10 확인 결과** — 실제 요청의 쿼리 파라미터는
+> `subCalendarId` · `userTimeZoneId=Asia/Seoul` · `start` · `end` · `_`(캐시 방지용 타임스탬프)였다.
+> `start`·`end`는 날짜가 아니라 **ISO 인스턴트**(`2026-06-26T00:00:00Z`)로 보내므로 클라이언트를 그 형식에 맞췄다.
+> `_`는 브라우저 캐시 방지용이라 서버 동작에 필요하지 않아 넣지 않았다.
+>
+> **아직 확인 못 한 것은 경로(path)뿐이다.** 스크립트는
+> `/rest/calendar-services/1.0/calendar/events.json` 을 쓴다 — 실행해서 404가 나면 그 경로가 다른 것이고,
+> 그때 개발자도구 Request URL의 `?` 앞부분을 알려 주면 맞춘다.
+
+3단계(subCalendarId 찾기)는 이미 끝났으므로 **2 → 4 → 5 순서로 진행하면 된다.**
 
 ---
 

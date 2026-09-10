@@ -93,9 +93,45 @@ PAT 메뉴가 없거나 발급이 막혀 있으면 스크립트 없이도 진행
 
 ---
 
-## 4. 설정 파일 두 개 채우기
+## 4. 설정 파일 채우기
 
-### 개발 PC (PowerShell)
+> ⚠️ **먼저 어느 창인지 확인한다.** 프롬프트가 `C:\...>` 면 **cmd(명령 프롬프트)**,
+> `PS C:\...>` 면 **PowerShell**이다. **명령이 서로 다르다.**
+>
+> ⚠️ **`#` 뒤 주석을 붙여넣지 않는다.** cmd·PowerShell 모두 `#`을 주석으로 보지 않는다.
+> `notepad config.json     # 설명...` 을 그대로 붙이면 notepad가 `#`·`설명...` 을 각각
+> 파일 이름으로 알고 열려고 한다. **명령 부분만** 붙여넣는다.
+
+### 개발 PC — cmd (명령 프롬프트)
+
+`.env` 만들기. **셋 중 하나**만 하면 된다.
+
+```bat
+REM (권장) 메모장으로 만든다 — 토큰에 특수문자가 있어도 안전하다
+notepad .env
+REM   "찾을 수 없습니다. 새 파일을 만들까요?" → 예
+REM   아래 한 줄만 넣고 저장한다
+REM       CONFLUENCE_PAT=발급받은-토큰
+```
+
+```bat
+REM (한 줄로) > 바로 앞에 공백을 두지 않는다 (공백까지 파일에 들어간다.
+REM  로더가 trim 으로 벗기니 치명적이진 않지만 깔끔하게 둔다)
+echo CONFLUENCE_PAT=발급받은-토큰>.env
+```
+
+```bat
+REM (PowerShell로 넘어가서 아래 "개발 PC — PowerShell" 항목대로 하기)
+powershell
+```
+
+채워졌는지 확인한다. **토큰 값은 찍지 않고 부족한 것만 알려 준다.**
+
+```bat
+node -e "const c=require('./confluence-client'); console.log(c.missing().length ? '부족: '+c.missing().join(' / ') : '설정 완료 — 실행 가능')"
+```
+
+### 개발 PC — PowerShell
 
 ```powershell
 cd C:\Users\k251110\Desktop\QE
@@ -138,9 +174,11 @@ chmod 600 .env
 
 ## 5. 실행
 
-```powershell
+cmd·PowerShell 어느 쪽이든 같다.
+
+```bat
 cd C:\Users\k251110\Desktop\QE
-node scripts/confluence-probe.js
+node scripts\confluence-probe.js
 ```
 
 어느 폴더에서 실행해도 동작한다(설정 파일은 스크립트 위치 기준으로 찾는다).

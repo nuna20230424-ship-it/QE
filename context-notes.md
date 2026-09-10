@@ -836,3 +836,46 @@ Assertion failed: !(handle->flags & UV_HANDLE_CLOSING), file src\win\async.c, li
 fetch(undici)가 정리되는 중에 `process.exit()` 을 부르면 Windows 에서 나는 것이다.
 기능상 문제는 없지만 **사용자에게는 크래시처럼 보인다.** `process.exitCode = 1` + `return` 으로
 바꿔 이벤트 루프가 스스로 끝나게 했다. 종료코드는 그대로 1이다.
+
+### 200 + Anonymous 는 "토큰 정상"이 아니다 (2026-09-10)
+바로 위에서 만든 `/rest/api/user/current` 분기가 **틀린 결론을 냈다.** 사용자 실행에서
+`GET /rest/api/user/current → 200`, 계정 `Anonymous` 가 나왔고 probe 는 "토큰은 정상이다,
+캘린더 권한을 확인하라"고 안내했다. 반대다.
+
+`confluence.kaonmedia.com` 은 익명 열람이 켜져 있다. 그래서 Authorization 헤더가 없거나
+거부돼도 이 엔드포인트는 200 에 `{"type":"anonymous","displayName":"Anonymous"}` 를 준다.
+Seraph 는 인증 실패를 401 로 끊지 않고 **익명으로 떨어뜨린 채 요청을 계속 태운다.**
+`res.ok` 로 가르면 항상 "정상"이 나온다.
+
+→ `checkAuth` 가 본문을 JSON 으로 읽어 `authenticated`(누구로 인식됐는가)와 `anonymous` 를
+따로 돌려주게 했다. `ok` 는 HTTP 성공 여부로 남겨 뒀다. probe 에 익명 분기를 넣었다.
+**교훈: 익명 접근이 열린 인스턴스에서는 상태코드로 인증을 판정하지 않는다. 계정으로 판정한다.**
+
+### 진짜 1차 원인은 .env 형식이었다
+검증하려고 만든 PowerShell 한 줄이 먼저 틀렸다. `Select-String` 결과는 MatchInfo 배열이라
+`-replace` 를 걸어도 문자열이 안 되고 `.Trim()` 이 없다는 오류가 난다. `$t` 가 할당되지 않은 채
+`Bearer ` (빈 토큰)로 요청이 나갔다 — 아무것도 증명하지 못한 테스트였다.
+PowerShell 인용 싸움 대신 **프로젝트의 `env.js` 로더를 그대로 태워** 확인하는 쪽이 맞다.
+
+그렇게 보니 `CONFLUENCE_PAT` 길이가 0이었다. `.env` 48바이트 안에 **토큰 값만 있고
+`CONFLUENCE_PAT=` 접두어가 없었다** (UTF-8 BOM + 43자, `=` 문자 0개). 로더는 `KEY=VALUE`
+줄만 읽으므로 통째로 건너뛴다. 접두어를 붙여 고쳤다 (값은 그대로, BOM 제거).
+
+`scripts/env-check.js` 는 이 케이스를 이미 잡도록 돼 있었다(`줄 1: 형식 이상`).
+**만들어 둔 진단 스크립트를 안 돌리고 손으로 curl 을 친 게 시간을 잡아먹었다.**
+다음엔 `env-check.js` → `confluence-probe.js` 순서로 먼저 돌린다.
+
+### 토큰을 제대로 실어도 서버가 거부한다 (미해결)
+접두어를 고친 뒤 43자 토큰이 정상으로 실린다. 그런데 응답이 그대로 익명이다.
+같은 요청을 **엉터리 토큰**(`Bearer AAAA...`)으로 보내도 응답이 **한 글자도 다르지 않다.**
+즉 서버가 이 토큰을 받아들이지 않고 익명으로 떨어뜨린다.
+
+- Confluence 버전은 `/rest/applinks/1.0/manifest` 로 확인해 **8.5.2** — PAT 는 7.9+ 지원이라
+  버전 때문은 아니다.
+- 패딩 `=` 을 붙여 봐도 같다. 길이 43·`=` 0개라 base64 끝자리 누락을 의심했는데 아니다.
+- **바깥에서는 '토큰이 무효'인지 '관리자가 PAT 를 꺼 뒀는지' 구분이 안 된다.** 둘 다 똑같이
+  조용한 익명 폴백으로 나온다. 사람이 브라우저로 확인해야 하는 지점이다.
+
+남은 확인 — 프로필 → 개인 액세스 토큰 페이지에서 (a) 메뉴가 있는지(없으면 관리자가 끈 것),
+(b) 그 토큰이 살아 있는지·만료됐는지. 재발급해도 익명이면 리버스프록시가 Authorization 을
+떼는지 관리자에게 묻는다. 그래도 안 되면 가이드 3-B(개발자도구 Copy response)로 간다.

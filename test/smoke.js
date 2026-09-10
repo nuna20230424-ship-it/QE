@@ -1091,6 +1091,64 @@ const origSend = notify.sendReportMail;
 const sent = [];
 notify.sendReportMail = async (subject, html) => { sent.push({ subject, html }); };
 
+
+// ---------- Confluence 제목·담당자·날짜 파싱 ----------
+head('Confluence 제목 파싱 (지시서 §4)');
+const cparse = require('../confluence-parse');
+
+const ex1 = cparse.parseTitle('[xTS][Pre] O2_KSTB7268] 1st > Passed');
+ok('예시1 인증종류 Google xTS', ex1.cert_type === 'Google xTS', ex1.cert_type);
+ok('예시1 Test 목적 Pre-Test', ex1.test_purpose === 'Pre-Test', ex1.test_purpose);
+ok('예시1 Test type 없음', ex1.test_type === '', ex1.test_type);
+ok('예시1 모델명 O2_KSTB7268 (짝 없는 ] 제거)', ex1.model_name === 'O2_KSTB7268', ex1.model_name);
+ok('예시1 회차 1 (1st → 1)', ex1.round === '1', ex1.round);
+ok('예시1 상태 완료 · 판정 Pass', ex1.status === '완료' && ex1.verdict === 'Pass', `${ex1.status}/${ex1.verdict}`);
+ok('예시1 경고 없음', ex1.warnings.length === 0, ex1.warnings.join(' | '));
+
+const ex2 = cparse.parseTitle('[xTS][IR][Pre-test] O2_KSTB7268 > In-Progress');
+ok('예시2 Test type IR', ex2.test_type === 'IR', ex2.test_type);
+ok('예시2 Test 목적 Pre-Test', ex2.test_purpose === 'Pre-Test', ex2.test_purpose);
+ok('예시2 회차 없음', ex2.round === '', ex2.round);
+ok('예시2 상태 진행중 · 판정 없음', ex2.status === '진행중' && ex2.verdict === '', `${ex2.status}/${ex2.verdict}`);
+ok('예시2 경고 없음', ex2.warnings.length === 0, ex2.warnings.join(' | '));
+
+ok('NTS → Netflix NTS', cparse.parseTitle('[NTS][MR] KM-100 2nd > Failed').cert_type === 'Netflix NTS');
+ok('AVTS → Amazon AVTS', cparse.parseTitle('[AVTS][양산] KM-300 > Passed').cert_type === 'Amazon AVTS');
+ok('소문자 인증종류도 받는다', cparse.parseTitle('[nts] KM-100 > Passed').cert_type === 'Netflix NTS');
+ok('Failed → 완료 · Fail', (() => { const r = cparse.parseTitle('[NTS] KM-100 > Failed'); return r.status === '완료' && r.verdict === 'Fail'; })());
+ok('Dropped → 중단 · Drop', (() => { const r = cparse.parseTitle('[NTS] KM-100 > Dropped'); return r.status === '중단' && r.verdict === 'Drop'; })());
+ok('3차 표기도 회차로 읽는다', cparse.parseTitle('[NTS][3PL] KM-100 3차 > Passed').round === '3');
+ok('[MR] 단독은 Test type', cparse.parseTitle('[xTS][MR] KM-100 > Passed').test_type === 'MR');
+ok('[IR][MR]이면 MR은 Test 목적으로 내려간다', (() => { const r = cparse.parseTitle('[xTS][IR][MR] KM-100 > Passed'); return r.test_type === 'IR' && r.test_purpose === 'MR'; })());
+
+// 해석 못한 값은 경고로 남기고 필드를 비운다 (조용히 틀린 값을 넣지 않는다)
+const unknownCert = cparse.parseTitle('[ZZZ][Pre] KM-100 > Passed');
+ok('알 수 없는 인증종류는 비우고 경고', unknownCert.cert_type === '' && unknownCert.warnings.some((w) => w.includes('인증종류')));
+const noGt = cparse.parseTitle('[xTS][Pre] KM-100 1st');
+ok("'>' 없으면 상태 비우고 경고", noGt.status === '' && noGt.warnings.some((w) => w.includes("'>'")));
+ok("'>' 없어도 모델명·회차는 읽는다", noGt.model_name === 'KM-100' && noGt.round === '1');
+const badStatus = cparse.parseTitle('[xTS] KM-100 > 어쩌구');
+ok('모르는 상태는 비우고 경고', badStatus.status === '' && badStatus.warnings.some((w) => w.includes('상태를 알 수 없습니다')));
+const badTag = cparse.parseTitle('[xTS][이상한값] KM-100 > Passed');
+ok('분류 못한 대괄호는 경고', badTag.warnings.some((w) => w.includes('분류하지 못한')));
+const junk = cparse.parseTitle('[xTS] KM-100 1st 잡토큰 > Passed');
+ok('모델명 뒤 잡토큰은 경고', junk.warnings.some((w) => w.includes('해석하지 못한')));
+ok('빈 제목은 경고', cparse.parseTitle('').warnings.length > 0);
+ok('대괄호 없는 제목은 경고', cparse.parseTitle('KM-100 > Passed').warnings.some((w) => w.includes('대괄호')));
+
+head('Confluence 담당자·날짜 파싱 (지시서 §3)');
+ok('한글 성명 추출', cparse.parsePerson('Haechan.lee 이해찬 (haechan)').name === '이해찬');
+const idOnly = cparse.parsePerson('Haechan.lee (haechan)');
+ok('한글 없으면 괄호 ID + 경고', idOnly.name === 'haechan' && idOnly.warnings.length === 1, idOnly.name);
+ok('괄호도 없으면 첫 토큰 + 경고', cparse.parsePerson('haechan.lee').name === 'haechan.lee');
+ok('빈 담당자는 경고', cparse.parsePerson('').warnings.length === 1);
+
+ok("'2026. 9. 7.' → 2026-09-07", cparse.parseDate('2026. 9. 7.').date === '2026-09-07');
+ok("'2026.09.07' → 2026-09-07", cparse.parseDate('2026.09.07').date === '2026-09-07');
+ok('ISO 날짜는 그대로', cparse.parseDate('2026-09-07').date === '2026-09-07');
+ok('ISO 날짜시각은 로컬 날짜로 환산', cparse.parseDate('2026-09-07T15:00:00Z').date === ymd(new Date('2026-09-07T15:00:00Z')));
+ok('빈 날짜는 경고 없이 빈 값', (() => { const r = cparse.parseDate(''); return r.date === '' && r.warnings.length === 0; })());
+ok('해석 불가 날짜는 경고', (() => { const r = cparse.parseDate('내일'); return r.date === '' && r.warnings.length === 1; })());
 (async () => {
   for (const k of ['daily', 'weekly', 'certstats']) await sched.sendNow(k);
   notify.sendReportMail = origSend;

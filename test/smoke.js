@@ -1389,6 +1389,30 @@ ok('룩업 섹션 레코드 정리 완료', repo.confluenceRowsInRange({}).lengt
   let httpErr = '';
   try { await cclient.fetchEvents({}, CFG); } catch (e) { httpErr = e.message; }
   ok('실패 응답은 상태코드를 담아 던진다', httpErr.includes('401'), httpErr);
+  ok('본문을 못 읽어도 상태코드는 보고한다', httpErr.includes('Confluence 응답 401'), httpErr);
+
+  // 401 의 실제 이유는 대개 본문에 있다. HTML 로그인 페이지가 오는 경우가 많아 태그를 지운다.
+  global.fetch = async () => ({
+    ok: false, status: 401, statusText: '',
+    text: async () => '<html><body><h1>Login required</h1>  <p>PAT is disabled</p></body></html>',
+  });
+  let bodyHint = '';
+  try { await cclient.fetchEvents({}, CFG); } catch (e) { bodyHint = e.message; }
+  ok('오류 본문 앞부분을 함께 알려 준다', bodyHint.includes('본문: Login required PAT is disabled'), bodyHint);
+  ok('본문의 HTML 태그는 지운다', !bodyHint.includes('<html>'), bodyHint);
+
+  // 토큰이 이 인스턴스에서 먹는지 가르는 최소 호출
+  let authUrl = '';
+  global.fetch = async (url) => {
+    authUrl = url;
+    return { ok: true, status: 200, text: async () => '{"username":"k251110","displayName":"조건희"}' };
+  };
+  const auth = await cclient.checkAuth(CFG);
+  ok('토큰 점검은 user/current 를 부른다', authUrl.endsWith('/rest/api/user/current'), authUrl);
+  ok('토큰 점검이 계정을 읽는다', auth.ok === true && auth.who === 'k251110', JSON.stringify(auth));
+  global.fetch = async () => ({ ok: false, status: 401, statusText: '', text: async () => 'no' });
+  const authBad = await cclient.checkAuth(CFG);
+  ok('토큰 점검 실패는 상태코드로 돌려준다', authBad.ok === false && authBad.status === 401, JSON.stringify(authBad));
   global.fetch = realFetch;
 
   let cfgErr = '';

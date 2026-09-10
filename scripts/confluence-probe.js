@@ -25,7 +25,8 @@ function keysOf(obj, prefix = '', depth = 0, out = []) {
   if (missing.length) {
     console.error('설정이 없어 실행할 수 없습니다:');
     for (const m of missing) console.error(`  - ${m}`);
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
 
   const c = client.config();
@@ -47,7 +48,28 @@ function keysOf(obj, prefix = '', depth = 0, out = []) {
     console.log(`요청 성공: ${r.url}`);
   } catch (err) {
     console.error(`요청 실패: ${err.message}`);
-    process.exit(1);
+
+    // 401·403 이면 토큰이 아예 안 먹는 것인지, 캘린더만 막힌 것인지 갈라 준다.
+    if (/응답 (401|403)/.test(err.message)) {
+      console.error('\n토큰 자체가 먹는지 확인한다 (캘린더와 무관한 엔드포인트)');
+      try {
+        const a = await client.checkAuth();
+        console.error(`  GET /rest/api/user/current → ${a.status}`);
+        if (a.ok) {
+          console.error(`  토큰은 정상이다 (계정: ${a.who || '확인 못 함'}).`);
+          console.error('  → 토큰 문제가 아니다. 그 캘린더 열람 권한이나 subCalendarId 를 확인한다.');
+        } else {
+          console.error(`  여기서도 ${a.status} 다 → 토큰이 이 인스턴스에서 먹지 않는다.`);
+          if (a.who) console.error(`  본문: ${a.who}`);
+          console.error('  → 토큰을 다시 발급하거나(만료·복사 누락), PAT 가 켜져 있는지 관리자에게 확인한다.');
+          console.error('  → PAT 를 못 쓰면 개발자도구 Copy response 방식으로 진행한다 (가이드 3-B).');
+        }
+      } catch (e2) {
+        console.error(`  확인 실패: ${e2.message}`);
+      }
+    }
+    process.exitCode = 1;
+    return;
   }
 
   console.log(`\n최상위 키: ${Object.keys(body || {}).join(', ') || '(배열)'}`);

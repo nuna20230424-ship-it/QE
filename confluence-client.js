@@ -136,7 +136,16 @@ async function requestEvents({ from, to } = {}, cfg) {
   const url = `${c.baseUrl}${EVENTS_PATH}?${q}`;
   // 토큰은 헤더에만 넣는다. url은 로그·오류 메시지에 실릴 수 있어 비밀을 태우지 않는다.
   const res = await fetch(url, { headers: { Authorization: `Bearer ${c.token}`, Accept: 'application/json' } });
-  if (!res.ok) throw new Error(`Confluence 응답 ${res.status} ${res.statusText} (${url})`);
+  if (!res.ok) {
+    // 상태코드만으로는 이유를 알 수 없다. 본문에 'PAT 미지원'·'로그인 필요' 같은 단서가 들어 있다.
+    // HTML 로그인 페이지가 오는 경우가 많아 태그를 지우고 앞부분만 싣는다.
+    let hint = '';
+    try {
+      const text = String(await res.text()).replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+      if (text) hint = ` · 본문: ${text.slice(0, 200)}`;
+    } catch { /* 본문을 못 읽어도 상태코드만으로 보고한다 */ }
+    throw new Error(`Confluence 응답 ${res.status} ${res.statusText}${hint} (${url})`);
+  }
   return { url, body: await res.json() };
 }
 
@@ -161,4 +170,21 @@ async function fetchEvents(range, cfg) {
   return normalizeBody(body, c.fields);
 }
 
-module.exports = { config, missing, configured, toInstant, dig, toText, normalizeEvent, normalizeBody, requestEvents, fetchEvents, DEFAULT_FIELDS, EVENTS_PATH };
+// 토큰이 이 인스턴스에서 먹는지만 확인한다. 캘린더 권한과 무관한 엔드포인트라
+// 여기서도 401 이면 '토큰 문제', 여기는 200 이면 '캘린더 쪽 문제'로 갈린다.
+async function checkAuth(cfg) {
+  const c = cfg || config();
+  if (!c.token || !c.baseUrl) throw new Error('토큰 또는 baseUrl 이 없습니다.');
+  const url = `${c.baseUrl}/rest/api/user/current`;
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${c.token}`, Accept: 'application/json' } });
+  let who = '';
+  try {
+    const t = String(await res.text());
+    const m = t.match(/"username"\s*:\s*"([^"]+)"/) || t.match(/"displayName"\s*:\s*"([^"]+)"/);
+    if (m) who = m[1];
+    else if (t) who = t.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 120);
+  } catch { /* 본문은 참고용이라 없어도 된다 */ }
+  return { status: res.status, ok: res.ok, who, url };
+}
+
+module.exports = { config, missing, configured, toInstant, checkAuth, dig, toText, normalizeEvent, normalizeBody, requestEvents, fetchEvents, DEFAULT_FIELDS, EVENTS_PATH };

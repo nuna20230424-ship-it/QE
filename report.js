@@ -183,8 +183,8 @@ const tdResult = (v) => (
       + `<b><font color="#ffffff" style="color:#ffffff;">Fail</font></b></td>`
 );
 
-// 한 조합에서 차수가 여러 번 돌면 행이 합쳐지고 결과·진행차수·인증완료일은 최신 판정 건의 값으로
-// 덮인다. 메일은 클릭해 펼칠 수 없으므로 합쳐진 차수 내역을 진행차수 칸 아래에 그대로 한 줄 적는다.
+// 차수마다 행이 따로 서지만, 같은 차수를 두 번 이상 판정한 건이 있으면 그 행은 여전히 합쳐진다.
+// 메일은 클릭해 펼칠 수 없으므로 그 판정 내역을 진행차수 칸 아래에 한 줄 적는다.
 // Word 렌더러가 흘리지 않도록 중첩 표가 아닌 <div> + 인라인 스타일로 둔다.
 function roundTrail(rounds) {
   if (!rounds || rounds.length < 2) return '';
@@ -219,8 +219,8 @@ function statsBlock(s, label) {
   const head = `<p style="color:#6b7686;font-size:12px;margin:6px 0 10px;">
     대상 ${esc(label)} · 모델 ${t.models}건 · 판정 ${t.judged}건 ·
     Pass ${t.pass} / Fail ${t.fail} · Pass율 ${t.pass_rate}% · Fail율 ${t.fail_rate}%
-    <br>판정 완료(Pass/Fail) 건만 집계하며 미판정 건은 제외합니다. 진행차수는 최신 판정 건의 Round입니다.
-    한 모델의 같은 인증이 이 기간에 여러 차수를 돌았으면 한 줄로 합치고, 차수별 판정은 진행차수 아래에 적습니다.
+    <br>판정 완료(Pass/Fail) 건만 집계하며 미판정 건은 제외합니다.
+    같은 모델이라도 진행차수마다 행이 따로 서고, 결과·인증완료일·Pass율·Fail율은 그 차수의 값입니다.
   </p>`;
   return section('모델별 인증 현황 (진행차수 · Pass/Fail 통계)', head + certStatsTable(s.rows));
 }

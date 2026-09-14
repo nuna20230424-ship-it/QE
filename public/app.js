@@ -530,9 +530,8 @@ const resultCell = (v) => (v ? `<span class="res res-${v.toLowerCase()}">${esc(v
 
 const roundLabel = (n) => (n ? `${n}차` : '차수 미입력');
 
-// 한 조합에서 차수가 여러 번 돌면 표는 한 줄로 합쳐지고 결과·진행차수·인증완료일은 최신 판정 건의
-// 값으로 덮인다. 그래서 이전 차수(예: 2차 Fail)가 표에서 사라진 것처럼 보인다. 합쳐진 차수가 둘 이상일
-// 때만 진행차수 옆에 ⓘ를 달아, 그 기간에 들어간 차수별 판정을 아래 행으로 펼쳐 보여준다.
+// 차수마다 행이 따로 서지만, 같은 차수를 두 번 이상 판정한 건이 있으면 그 행은 여전히 합쳐지고
+// 결과·인증완료일이 최신 판정 값으로 덮인다. 그 경우에만 ⓘ를 달아 판정 내역을 아래 행으로 펼친다.
 function roundTrail(rows, i) {
   const trail = rows[i].rounds || [];
   const items = trail.map((h) => `
@@ -548,7 +547,7 @@ function certStatsTable(rows) {
   const body = rows.map((r, i) => {
     const merged = (r.rounds || []).length > 1;
     const more = merged
-      ? ` <button type="button" class="info-btn trail-btn" data-trail="${i}" title="이 기간에 합쳐진 차수 내역 보기">ⓘ</button>`
+      ? ` <button type="button" class="info-btn trail-btn" data-trail="${i}" title="같은 차수의 판정 내역 보기">ⓘ</button>`
       : '';
     return `
     <tr>
@@ -597,8 +596,8 @@ function downloadCertStatsCsv() {
     ['Fail', (r) => r.fail],
     ['Pass율(%)', (r) => r.pass_rate],
     ['Fail율(%)', (r) => r.fail_rate],
-    // 화면의 ⓘ 펼침과 같은 내용. 엑셀에서 필터·합계가 깨지지 않도록 행을 나누지 않고 한 칸에 담는다.
-    ['차수 이력', (r) => (r.rounds || []).map((h) => `${roundLabel(h.round)} ${h.verdict} ${h.date}`).join(' · ')],
+    // 화면의 ⓘ 펼침과 같은 내용. 보통 비어 있고, 같은 차수를 여러 번 판정한 행에만 값이 찬다.
+    ['동일 차수 판정 내역', (r) => (r.rounds || []).map((h) => `${roundLabel(h.round)} ${h.verdict} ${h.date}`).join(' · ')],
   ];
   const t = cs.data.totals;
   const lines = [
@@ -675,8 +674,8 @@ async function renderCertStats() {
       </span>
     </div>
     <p class="report-hint stats-period">대상 기간 · ${isWeek ? `${wk.from} ~ ${wk.to} (월~금)` : '전체 기간 누적'}
-      · 판정 완료(Pass/Fail) 건만 집계하며 미판정 건은 제외합니다. 진행차수는 최신 판정 건의 Round입니다.
-      한 모델의 같은 인증이 이 기간에 여러 차수를 돌았으면 한 줄로 합칩니다 — 진행차수 옆 ⓘ로 차수별 판정을 펼쳐 보세요.</p>
+      · 판정 완료(Pass/Fail) 건만 집계하며 미판정 건은 제외합니다.
+      같은 모델이라도 진행차수마다 행이 따로 서고, 결과·인증완료일·Pass율·Fail율은 그 차수의 값입니다.</p>
     <div class="summary stats-summary">${chips}</div>
     ${certStatsTable(s.rows)}`;
 }

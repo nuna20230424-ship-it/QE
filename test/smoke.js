@@ -79,38 +79,44 @@ ok('빈 목적은 제외', !purposes.some((v) => !v));
 // ---------- Task 4-1. 미판정 제외 + 누적 통계 ----------
 head('Task 4-1. 미판정 제외 · 누적 통계');
 const all = repo.certStats(null);
-const row = (m, c, p) => all.rows.find((r) => r.model_name === m && r.cert_type === c && r.test_purpose === p);
-const x = row('KM-100', 'Google xTS', '3PL');
-ok('미판정 4차 제외 → 판정 2건', x.judged === 2, String(x.judged));
-ok('Fail 횟수 = 1', x.fail === 1, String(x.fail));
-ok('Pass율 = 50% (1/2)', x.pass_rate === 50, String(x.pass_rate));
-ok('Pass율 + Fail율 = 100%', x.pass_rate + x.fail_rate === 100, `${x.pass_rate}+${x.fail_rate}`);
+// 진행차수도 그룹 키다. 같은 모델·인증종류·목적이라도 차수가 다르면 다른 행이다.
+const row = (m, c, p, rd) => all.rows.find((r) => r.model_name === m && r.cert_type === c && r.test_purpose === p
+  && (rd === undefined || r.round === rd));
+const x1 = row('KM-100', 'Google xTS', '3PL', 1);
+const x3 = row('KM-100', 'Google xTS', '3PL', 3);
+ok('미판정 4차는 행 자체가 없음', !row('KM-100', 'Google xTS', '3PL', 4));
+ok('1차 행 판정 1건', x1.judged === 1, String(x1.judged));
+ok('3차 행 Fail 횟수 = 1', x3.fail === 1, String(x3.fail));
+ok('Pass율 + Fail율 = 100%', x3.pass_rate + x3.fail_rate === 100, `${x3.pass_rate}+${x3.fail_rate}`);
 ok('미판정 전용 건은 행 자체가 없음 (KM-300)', !all.rows.some((r) => r.model_name === 'KM-300'));
-ok('max_round(최근 Round 입력) 필드 제거', x.max_round === undefined);
-ok('pending(미판정) 필드 제거', x.pending === undefined);
-ok('총계 판정 건수 = 7', all.totals.judged === 7, String(all.totals.judged));
+ok('max_round(최근 Round 입력) 필드 제거', x3.max_round === undefined);
+ok('pending(미판정) 필드 제거', x3.pending === undefined);
+ok('총계 판정 건수 = 7 (행을 갈라도 합계는 그대로)', all.totals.judged === 7, String(all.totals.judged));
 ok('총계 모델 수 = 3 (판정 있는 모델만)', all.totals.models === 3, String(all.totals.models));
 ok('빈 DB가 아니어도 0 나눗셈 없음', Number.isFinite(all.totals.pass_rate));
 
 // ---------- Task 4-2. 결과 · Test 목적 컬럼 ----------
 head('Task 4-2. 결과 · Test 목적 분리');
-ok('결과 = 최신 판정 (3차 Fail이 최신)', x.result === 'Fail', String(x.result));
-ok('진행차수 = 최신 판정 건의 Round', x.round === 3, String(x.round));
 ok('Test 목적으로 행 분리 (3PL vs MR)', !!row('KM-100', 'Google xTS', 'MR'));
 ok('MR 행은 1차 Pass', row('KM-100', 'Google xTS', 'MR').result === 'Pass' && row('KM-100', 'Google xTS', 'MR').round === 1);
 ok('인증종류로도 행 분리 유지', row('KM-100', 'Netflix NTS', '3PL').round === 2);
 ok('Fail만 있는 조합은 Fail율 100%', row('KM-200', 'Google xTS', '3PL').fail_rate === 100);
-ok('인증완료일 = 최신 판정 건의 completed_date', x.completed_date === thisWeek(2), x.completed_date);
-
-// 합쳐진 차수 내역 — 결과·진행차수가 최신 판정으로 덮이면서 이전 차수(1차 Pass)가 표에서 사라지는 문제
-head('Task 4-2. 합쳐진 차수 내역 (rounds)');
-ok('판정 2건이 한 줄로 합쳐진 행 → rounds 2개', x.rounds.length === 2, JSON.stringify(x.rounds));
-ok('오래된 차수가 먼저', x.rounds[0].round === 1 && x.rounds[1].round === 3, JSON.stringify(x.rounds));
-ok('사라졌던 이전 차수의 판정이 남아 있음', x.rounds[0].verdict === 'Pass' && x.rounds[0].date === thisWeek(1), JSON.stringify(x.rounds[0]));
-ok('미판정 4차는 이력에도 없음', !x.rounds.some((h) => h.round === 4), JSON.stringify(x.rounds));
-ok('합쳐진 게 없는 행은 rounds 1개', row('KM-100', 'Google xTS', 'MR').rounds.length === 1);
-ok('차수별 행 분리가 아니라 집계 1행 유지', all.rows.filter((r) => r.model_name === 'KM-100' && r.cert_type === 'Google xTS' && r.test_purpose === '3PL').length === 1);
 ok('MR 행 인증완료일도 그 건의 completed_date', row('KM-100', 'Google xTS', 'MR').completed_date === thisWeek(1));
+
+// 차수별 행 분리 — 이전 차수의 결과·인증완료일이 최신 판정 값으로 덮이던 문제
+head('Task 4-2. 진행차수별 행 분리');
+ok('같은 모델·인증·목적이 차수만큼 행으로 갈림', all.rows.filter((r) => r.model_name === 'KM-100'
+  && r.cert_type === 'Google xTS' && r.test_purpose === '3PL').length === 2);
+ok('1차 행 결과 = Pass (최신 3차 Fail에 덮이지 않음)', x1.result === 'Pass', String(x1.result));
+ok('3차 행 결과 = Fail', x3.result === 'Fail', String(x3.result));
+ok('1차 행 인증완료일 = 그 차수의 completed_date', x1.completed_date === thisWeek(1), x1.completed_date);
+ok('3차 행 인증완료일 = 그 차수의 completed_date', x3.completed_date === thisWeek(2), x3.completed_date);
+ok('1차 행 비율 = 100% / 0%', x1.pass_rate === 100 && x1.fail_rate === 0, `${x1.pass_rate}/${x1.fail_rate}`);
+ok('3차 행 비율 = 0% / 100%', x3.pass_rate === 0 && x3.fail_rate === 100, `${x3.pass_rate}/${x3.fail_rate}`);
+ok('차수 오름차순 정렬', all.rows.filter((r) => r.model_name === 'KM-100'
+  && r.cert_type === 'Google xTS' && r.test_purpose === '3PL').map((r) => r.round).join() === '1,3');
+ok('합쳐진 게 없으면 rounds 1건', x1.rounds.length === 1 && x3.rounds.length === 1);
+ok('미판정 4차는 rounds에도 없음', !all.rows.some((r) => r.rounds.some((h) => h.round === 4)));
 
 // ---------- Task 4-3 / 주차(월~금) 필터 ----------
 head('Task 4. 주차 월~금 필터');
@@ -120,7 +126,9 @@ ok('금요일 종료', new Date(`${wk.to}T00:00:00`).getDay() === 5, wk.to);
 const wkStats = repo.certStats(wk);
 ok('지난주 건(KM-200) 제외', !wkStats.rows.some((r) => r.model_name === 'KM-200'));
 ok('3주 전 건(KM-500) 제외', !wkStats.rows.some((r) => r.model_name === 'KM-500'));
-ok('이번주 KM-100/xTS/3PL 판정 2건', wkStats.rows.find((r) => r.model_name === 'KM-100' && r.cert_type === 'Google xTS' && r.test_purpose === '3PL').judged === 2);
+ok('이번주 KM-100/xTS/3PL 판정 2건이 1차·3차 두 행으로', wkStats.rows
+  .filter((r) => r.model_name === 'KM-100' && r.cert_type === 'Google xTS' && r.test_purpose === '3PL')
+  .map((r) => r.round).join() === '1,3');
 ok('이번주 판정 건수 = 4', wkStats.totals.judged === 4, String(wkStats.totals.judged));
 
 // ---------- Task 5. 진행차수 자동 산출 ----------

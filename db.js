@@ -100,6 +100,9 @@ const ACT_DATE = `substr(COALESCE(NULLIF(completed_date,''), NULLIF(started_date
 const SORT_KEY = `(${ACT_DATE} || '#' || printf('%010d', id))`;
 // Test 목적 미입력 건도 한 그룹으로 묶이도록 정규화한다.
 const PURPOSE = `COALESCE(NULLIF(TRIM(test_purpose),''), '(미지정)')`;
+// 진행차수. TEXT 컬럼이라 문자열로 정렬하면 '10차'가 '2차'보다 앞서므로 정수로 맞춘다.
+// 미입력 건은 0으로 묶어 한 행이 되게 한다.
+const ROUND = `CAST(COALESCE(NULLIF(TRIM(round),''), '0') AS INTEGER)`;
 // 통계 대상: 판정이 끝난 건(Pass/Fail)만. '미판정'과 Drop은 지시서 4-1에 따라 산출에서 제외한다.
 const JUDGED = `verdict IN ('Pass','Fail')`;
 // 비율(%) 계산. 분모가 0이면 0으로 반환해 0 나눗셈을 차단한다.
@@ -110,45 +113,44 @@ function logHistory(requestId, actor, action, detail) {
     .run(requestId, nowIso(), actor || '알수없음', action, detail || '');
 }
 
-// 모델(프로젝트) × 인증종류 × Test 목적별 통계.
+// 모델(프로젝트) × 인증종류 × Test 목적 × 진행차수별 통계.
 // 미판정·Drop 건은 집계에서 빠지므로 분모는 판정 완료 건수이고 Pass율 + Fail율 = 100%가 된다.
-// `결과`와 `진행차수`는 그 조합의 가장 최근 판정 건에서 함께 가져와 두 값이 같은 의뢰를 가리킨다.
-// MAX(SORT_KEY)와 함께 쓴 bare column(verdict·round)은 최댓값을 만든 행의 값을 돌려주는 SQLite 규칙에 기댄다.
+// 차수를 그룹 키에 넣어 같은 모델이라도 차수마다 행이 따로 선다 — 2차 Fail과 3차 Pass가 한 줄로
+// 합쳐지면서 이전 차수의 결과·인증완료일이 최신 판정 값으로 덮이던 문제를 없앤다.
+// MAX(SORT_KEY)와 함께 쓴 bare column(verdict 등)은 최댓값을 만든 행의 값을 돌려주는 SQLite 규칙에 기댄다.
 function certStatsOf(range) {
   const cond = [JUDGED];
   if (range) cond.push(`${ACT_START} IS NOT NULL`, `${ACT_START} <= @to`, `MAX(${ACT_END}, ${ACT_START}) >= @from`);
   const rows = db.prepare(`
-    SELECT model_name, cert_type, ${PURPOSE} AS test_purpose,
+    SELECT model_name, cert_type, ${PURPOSE} AS test_purpose, ${ROUND} AS round_no,
            COUNT(*)                                          AS judged,
            SUM(CASE WHEN verdict = 'Pass' THEN 1 ELSE 0 END) AS pass,
            SUM(CASE WHEN verdict = 'Fail' THEN 1 ELSE 0 END) AS fail,
            MAX(${SORT_KEY})                                  AS latest_key,
            verdict                                           AS result,
-           round                                             AS last_round,
            ${ACT_DATE}                                       AS last_date,
            completed_date                                    AS raw_completed_date,
            completed_at                                      AS raw_completed_at
     FROM requests
     WHERE ${cond.join(' AND ')}
-    GROUP BY model_name, cert_type, ${PURPOSE}
-    ORDER BY model_name COLLATE NOCASE, cert_type, test_purpose
+    GROUP BY model_name, cert_type, ${PURPOSE}, ${ROUND}
+    ORDER BY model_name COLLATE NOCASE, cert_type, test_purpose, round_no
   `).all(range || {});
 
-  // 같은 조합에서 차수가 여러 번 돌면 집계는 한 줄로 합쳐지고, 어느 차수가 언제 어떤 판정을 받았는지는
-  // 그 줄에서 사라진다 (결과·진행차수·인증완료일이 최신 판정 건의 값으로 덮이기 때문). 기간 안에 든
-  // 판정 이력을 따로 모아 행에 붙여, 화면·CSV·보고서가 합쳐진 내역을 펼쳐 보일 수 있게 한다.
-  const trailKey = (r) => `${r.model_name} ${r.cert_type} ${r.test_purpose}`;
+  // 차수까지 갈랐어도 같은 차수를 두 번 이상 판정한 건이 있으면 그 행은 여전히 합쳐진다
+  // (결과·인증완료일이 최신 판정 값으로 덮인다). 그런 행만 판정 내역을 따로 달아 펼쳐 볼 수 있게 한다.
+  const trailKey = (r) => JSON.stringify([r.model_name, r.cert_type, r.test_purpose, r.round_no]);
   const trails = new Map();
   for (const t of db.prepare(`
-    SELECT model_name, cert_type, ${PURPOSE} AS test_purpose,
-           round, verdict, ${ACT_DATE} AS on_date
+    SELECT model_name, cert_type, ${PURPOSE} AS test_purpose, ${ROUND} AS round_no,
+           verdict, ${ACT_DATE} AS on_date
     FROM requests
     WHERE ${cond.join(' AND ')}
     ORDER BY ${SORT_KEY}
   `).all(range || {})) {
     const key = trailKey(t);
     const list = trails.get(key) || [];
-    list.push({ round: Number(t.round) || null, verdict: t.verdict, date: t.on_date });
+    list.push({ round: t.round_no || null, verdict: t.verdict, date: t.on_date });
     trails.set(key, list);
   }
 
@@ -156,8 +158,8 @@ function certStatsOf(range) {
     model_name: r.model_name,
     cert_type: r.cert_type,
     test_purpose: r.test_purpose,
-    result: r.result,                            // 최신 판정 (Pass | Fail)
-    round: Number(r.last_round) || r.judged,     // 진행차수 = 최신 판정 건의 Round (미입력 시 판정 횟수로 대체)
+    result: r.result,                            // 이 차수의 판정 (같은 차수를 여러 번 돌았으면 최신 건)
+    round: r.round_no || r.judged,               // 진행차수 = 그룹 키 (미입력 시 판정 횟수로 대체)
     last_date: r.last_date,
     // 인증완료일 = 최신 판정 건의 완료일(테스터 입력 completed_date, 없으면 상태 전환 시각 completed_at)
     completed_date: r.raw_completed_date || (r.raw_completed_at ? r.raw_completed_at.slice(0, 10) : ''),
@@ -166,7 +168,7 @@ function certStatsOf(range) {
     fail: r.fail,
     pass_rate: pct(r.pass, r.judged),
     fail_rate: pct(r.fail, r.judged),
-    // 이 기간에 든 차수별 판정 이력 (오래된 차수 → 최신 차수). 길이가 1이면 합쳐진 게 없다.
+    // 이 행에 합쳐진 판정 내역. 보통 1건이고, 같은 차수를 두 번 이상 판정했을 때만 2건 이상이 된다.
     rounds: trails.get(trailKey(r)) || [],
   }));
 

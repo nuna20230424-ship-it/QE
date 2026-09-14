@@ -14,14 +14,28 @@ QE 인증 일정 대시보드 운영 서버(Mac Mini)를 최신 코드로 업데
 
 ---
 
-## 0. 배포 전 판단이 필요한 것 — 어느 브랜치를 배포할지
+## 0. 배포 전 — 개발 PC에서 `main`을 먼저 올린다 (사용자가 직접)
 
-지금 배포해야 할 변경사항은 전부 `feat/cert-stats-and-round-display` 브랜치에 있고, `main`으로 합치는 **PR #2가 아직 미병합(OPEN)** 상태다. 운영 서버는 현재 옛날 `main`(PR #2 이전)을 돌리고 있다.
+작업은 전부 로컬 `main`에 있고, 2026-09-14 기준 **`origin/main`보다 16개 커밋 앞서 있다.** 운영 서버는 `origin/main`을 pull하므로 **push하지 않으면 배포해도 아무것도 바뀌지 않는다.**
 
-- **A안 (권장) — PR을 먼저 병합하고 `main`을 배포한다.** 운영 서버가 항상 `main`만 보면 되므로 이후 재배포가 단순해진다. GitHub에서 PR #2를 병합한 뒤 아래 3번에서 `main`을 pull한다.
-- **B안 — PR 병합 전에 `feat/cert-stats-and-round-display`를 바로 배포한다.** 병합 검토가 더 필요하거나 먼저 운영 데이터로 확인해보고 싶을 때. 아래 3번에서 이 브랜치를 checkout한다.
+> **push는 Claude가 실행하지 않는다.** 개발 PC PowerShell에서 사용자가 직접 친다.
 
-이 문서는 두 경우 모두의 명령을 적어뒀다. **어느 쪽으로 할지 먼저 정하고 시작할 것.**
+```powershell
+cd C:\Users\k251110\Desktop\QE
+git log origin/main..HEAD --oneline   # 올라갈 16개 커밋 확인
+git push origin main
+```
+
+### 이번에 함께 올라가는 것 — 확인하고 push할 것
+16개 커밋에는 인증 통계 수정 말고도 **Confluence 실시간 연동(P1~P4)** 이 들어 있다. 이 기능은 `config.json`에 `confluence` 섹션이 없으면 `[confluence] 설정 없음 → 동기화 생략`만 찍고 **아무것도 하지 않는다**(`confluence-poll.js:76`). Mac Mini의 `config.json`은 서버별로 따로 만들어 쓰고 Confluence 설정을 넣은 적이 없으므로, 배포해도 동작이 켜지지 않는다. PAT 인증 문제(`context-notes.md` 2026-09-10)가 미해결인 채로 운영에 올라가도 무해한 이유다.
+
+그래도 껄끄러우면 이번 인증 통계 수정만 따로 올리는 방법이 있다 — 이때는 3번에서 `main` 대신 이 브랜치를 checkout한다.
+
+```powershell
+git checkout -b hotfix/cert-stats-round-trail 9d07261
+git push origin hotfix/cert-stats-round-trail
+git checkout main
+```
 
 ---
 
@@ -70,16 +84,18 @@ git status                     # 로컬에 손댄 파일이 없는지 확인 (�
 git fetch origin
 ```
 
-### A안 — `main` 배포 (PR #2 병합 후)
+### `main` 배포 (기본)
 ```bash
 git checkout main
 git pull origin main
+git log --oneline -1           # 9d07261 인증 통계에서 한 줄로 합쳐진 차수 내역을 펼쳐 본다
 ```
 
-### B안 — 기능 브랜치 직접 배포 (PR #2 병합 전)
+### 인증 통계 수정만 올린 경우 (0번의 hotfix 브랜치)
 ```bash
-git checkout feat/cert-stats-and-round-display
-git pull origin feat/cert-stats-and-round-display
+git fetch origin
+git checkout hotfix/cert-stats-round-trail
+git pull origin hotfix/cert-stats-round-trail
 ```
 
 ### 로컬에 손댄 파일이 있어 `git pull`이 막히면
@@ -158,12 +174,21 @@ GET http://172.16.3.136:3001/api/bottlenecks
 ```
 `next-round`는 `model_name`·`cert_type` 없이 호출하면 400이 정상이다(이번 Task 0 수정으로 `cert_type`도 필수가 됐다).
 
+이번(2026-09-14) 인증 통계 수정이 올라갔는지는 응답에 `rounds` 필드가 생겼는지로 본다. 배포 전에는 없다.
+```powershell
+$r = Invoke-WebRequest "http://172.16.3.136:3001/api/cert-stats?from=2026-09-07&to=2026-09-11" -UseBasicParsing
+$r.Content.Contains('"rounds"')     # True 면 반영됨
+```
+
 ### 6-2. 브라우저 육안 확인 (사람이 직접, `checklist.md` 10차 항목)
 `http://172.16.3.136:3001` 접속 후:
 - [ ] 의뢰요청 모달에서 모델명 입력 시 과거 이력이 드롭다운으로 뜨는지
 - [ ] 인증종류·Test type·Test 목적·모델명을 바꿀 때마다 진행차수가 다시 자동 산출되는지 (스피너 → 값 채워짐)
 - [ ] 진행차수 옆 ⓘ 클릭 시 이전 차수 타임라인이 뜨는지
 - [ ] 인증 통계 탭의 `결과` 컬럼이 Pass=파란 볼드 / Fail=빨간 음영으로 보이는지
+- [ ] (2026-09-14) 인증 통계 주간 `9/7~9/11` → `LG U+_UHD5KG / Netflix NTS` 행의 진행차수 `3차` 옆 ⓘ 클릭 시 `2차 Fail 2026-09-07` · `3차 Pass 2026-09-11`이 아래로 펼쳐지는지
+- [ ] (2026-09-14) 같은 화면에서 `⤓ 엑셀 다운로드` → CSV 마지막 `차수 이력` 컬럼에 같은 내용이 들어갔는지
+- [ ] (2026-09-14) `📋 본문 복사` → **Outlook 데스크톱** 본문에 붙여넣어 진행차수 아래 이력 줄이 살아 있는지 (Word 렌더러라 사내망 http + Outlook 조합으로만 검증된다)
 - [ ] 현황 보드 상단에 병목 경고 위젯이 뜨는지(대상 없으면 안 뜨는 게 정상)
 - [ ] 기존 의뢰 등록·조회·일일보고·주간보고가 평소대로 동작하는지 (회귀 확인)
 
@@ -171,7 +196,7 @@ GET http://172.16.3.136:3001/api/bottlenecks
 ```bash
 npm test
 ```
-121건 전부 PASS면 정상. `data.db`가 아니라 임시 DB를 쓰므로 운영 데이터에 영향 없다.
+646건 전부 PASS면 정상. `data.db`가 아니라 임시 DB를 쓰므로 운영 데이터에 영향 없다.
 
 ---
 

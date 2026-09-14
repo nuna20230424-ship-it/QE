@@ -528,22 +528,43 @@ function weekRangeOf(offset) {
 // 결과 셀: Pass는 파란 볼드, Fail은 빨간 음영 + 흰 볼드 (지시서 4-3)
 const resultCell = (v) => (v ? `<span class="res res-${v.toLowerCase()}">${esc(v)}</span>` : '—');
 
+const roundLabel = (n) => (n ? `${n}차` : '차수 미입력');
+
+// 한 조합에서 차수가 여러 번 돌면 표는 한 줄로 합쳐지고 결과·진행차수·인증완료일은 최신 판정 건의
+// 값으로 덮인다. 그래서 이전 차수(예: 2차 Fail)가 표에서 사라진 것처럼 보인다. 합쳐진 차수가 둘 이상일
+// 때만 진행차수 옆에 ⓘ를 달아, 그 기간에 들어간 차수별 판정을 아래 행으로 펼쳐 보여준다.
+function roundTrail(rows, i) {
+  const trail = rows[i].rounds || [];
+  const items = trail.map((h) => `
+    <li><b>${roundLabel(h.round)}</b>${resultCell(h.verdict)}<span class="tl-date">${esc(h.date)}</span></li>`).join('');
+  return `
+    <tr class="trail-row hidden" data-trail-row="${i}">
+      <td colspan="11"><ul class="trail">${items}</ul></td>
+    </tr>`;
+}
+
 function certStatsTable(rows) {
   if (!rows.length) return '<p class="col-empty">집계할 판정 완료 의뢰가 없습니다.</p>';
-  const body = rows.map((r) => `
+  const body = rows.map((r, i) => {
+    const merged = (r.rounds || []).length > 1;
+    const more = merged
+      ? ` <button type="button" class="info-btn trail-btn" data-trail="${i}" title="이 기간에 합쳐진 차수 내역 보기">ⓘ</button>`
+      : '';
+    return `
     <tr>
       <td><strong>${esc(r.model_name)}</strong></td>
       <td><span class="badge badge-${certClass(r.cert_type)}">${esc(r.cert_type)}</span></td>
       <td>${resultCell(r.result)}</td>
       <td>${esc(r.completed_date) || '-'}</td>
       <td>${esc(r.test_purpose)}</td>
-      <td class="num">${r.round}차</td>
+      <td class="num">${r.round}차${more}</td>
       <td class="num">${r.pass}</td>
       <td class="num ${r.fail ? 'em-fail' : ''}">${r.fail}</td>
       <td class="num">${r.pass_rate}%</td>
       <td class="num ${r.fail ? 'em-fail' : ''}">${r.fail_rate}%</td>
       <td>${rateBar(r.pass_rate, r.fail_rate)}</td>
-    </tr>`).join('');
+    </tr>${merged ? roundTrail(rows, i) : ''}`;
+  }).join('');
   return `
     <div class="table-wrap">
     <table class="stats-table">
@@ -576,6 +597,8 @@ function downloadCertStatsCsv() {
     ['Fail', (r) => r.fail],
     ['Pass율(%)', (r) => r.pass_rate],
     ['Fail율(%)', (r) => r.fail_rate],
+    // 화면의 ⓘ 펼침과 같은 내용. 엑셀에서 필터·합계가 깨지지 않도록 행을 나누지 않고 한 칸에 담는다.
+    ['차수 이력', (r) => (r.rounds || []).map((h) => `${roundLabel(h.round)} ${h.verdict} ${h.date}`).join(' · ')],
   ];
   const t = cs.data.totals;
   const lines = [
@@ -652,7 +675,8 @@ async function renderCertStats() {
       </span>
     </div>
     <p class="report-hint stats-period">대상 기간 · ${isWeek ? `${wk.from} ~ ${wk.to} (월~금)` : '전체 기간 누적'}
-      · 판정 완료(Pass/Fail) 건만 집계하며 미판정 건은 제외합니다. 진행차수는 최신 판정 건의 Round입니다.</p>
+      · 판정 완료(Pass/Fail) 건만 집계하며 미판정 건은 제외합니다. 진행차수는 최신 판정 건의 Round입니다.
+      한 모델의 같은 인증이 이 기간에 여러 차수를 돌았으면 한 줄로 합칩니다 — 진행차수 옆 ⓘ로 차수별 판정을 펼쳐 보세요.</p>
     <div class="summary stats-summary">${chips}</div>
     ${certStatsTable(s.rows)}`;
 }
@@ -1716,6 +1740,15 @@ function bind() {
     if (copy) {
       const r = state.certStats.range;
       copyReport(copy, 'certstats', r ? `?from=${r.from}&to=${r.to}` : '');
+      return;
+    }
+    const trail = e.target.closest('[data-trail]');
+    if (trail) {
+      const row = e.currentTarget.querySelector(`[data-trail-row="${trail.dataset.trail}"]`);
+      if (row) {
+        row.classList.toggle('hidden');
+        trail.classList.toggle('on', !row.classList.contains('hidden'));
+      }
       return;
     }
     if (e.target.closest('[data-stats-excel]')) { downloadCertStatsCsv(); return; }

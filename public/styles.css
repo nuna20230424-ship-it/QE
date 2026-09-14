@@ -279,6 +279,14 @@ fieldset:disabled legend::after { content: " · 읽기 전용"; color: var(--mut
 .tl-meta { color: var(--muted); font-size: 11px; font-weight: 600; margin-top: 2px; }
 .tl-note { font-size: 12px; margin-top: 4px; color: var(--text); line-height: 1.5; }
 
+/* ---- 인증 통계: 한 줄로 합쳐진 차수 내역 펼침 ---- */
+.trail-btn { width: 18px; height: 18px; font-size: 11px; margin-left: 4px; vertical-align: middle; }
+.trail-btn.on { background: #eef3fe; }
+.trail-row > td { background: #f7f9fc; padding: 8px 12px; }
+.trail { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px 20px; }
+.trail li { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.trail .tl-date { margin-left: 0; }
+
 /* ---- 병목 경고 위젯 ---- */
 .bottlenecks {
   margin: 0 22px 14px; padding: 12px 16px; background: #fff8f0;

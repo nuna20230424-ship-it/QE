@@ -183,6 +183,17 @@ const tdResult = (v) => (
       + `<b><font color="#ffffff" style="color:#ffffff;">Fail</font></b></td>`
 );
 
+// 한 조합에서 차수가 여러 번 돌면 행이 합쳐지고 결과·진행차수·인증완료일은 최신 판정 건의 값으로
+// 덮인다. 메일은 클릭해 펼칠 수 없으므로 합쳐진 차수 내역을 진행차수 칸 아래에 그대로 한 줄 적는다.
+// Word 렌더러가 흘리지 않도록 중첩 표가 아닌 <div> + 인라인 스타일로 둔다.
+function roundTrail(rounds) {
+  if (!rounds || rounds.length < 2) return '';
+  const items = rounds
+    .map((h) => `${h.round ? h.round + '차' : '차수 미입력'} ${h.verdict} ${h.date}`)
+    .join(' · ');
+  return `<div style="color:#6b7686;font-size:11px;font-weight:600;margin-top:3px;white-space:nowrap;">${esc(items)}</div>`;
+}
+
 function certStatsTable(rows) {
   if (!rows.length) return emptyLine('해당 주차에 판정이 끝난 인증 의뢰가 없습니다.');
   const body = rows.map((r) => `<tr>
@@ -191,7 +202,7 @@ function certStatsTable(rows) {
     ${tdResult(r.result)}
     ${td(esc(r.completed_date) || '-')}
     ${td(esc(r.test_purpose))}
-    ${tdNum(r.round + '차')}
+    ${tdNum(r.round + '차' + roundTrail(r.rounds))}
     ${tdNum(r.pass)}
     ${tdNum(r.fail ? `<b style="color:#d23227;">${fontColor(r.fail, '#d23227')}</b>` : 0)}
     ${tdNum(r.pass_rate + '%')}
@@ -209,6 +220,7 @@ function statsBlock(s, label) {
     대상 ${esc(label)} · 모델 ${t.models}건 · 판정 ${t.judged}건 ·
     Pass ${t.pass} / Fail ${t.fail} · Pass율 ${t.pass_rate}% · Fail율 ${t.fail_rate}%
     <br>판정 완료(Pass/Fail) 건만 집계하며 미판정 건은 제외합니다. 진행차수는 최신 판정 건의 Round입니다.
+    한 모델의 같은 인증이 이 기간에 여러 차수를 돌았으면 한 줄로 합치고, 차수별 판정은 진행차수 아래에 적습니다.
   </p>`;
   return section('모델별 인증 현황 (진행차수 · Pass/Fail 통계)', head + certStatsTable(s.rows));
 }

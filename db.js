@@ -134,6 +134,24 @@ function certStatsOf(range) {
     ORDER BY model_name COLLATE NOCASE, cert_type, test_purpose
   `).all(range || {});
 
+  // 같은 조합에서 차수가 여러 번 돌면 집계는 한 줄로 합쳐지고, 어느 차수가 언제 어떤 판정을 받았는지는
+  // 그 줄에서 사라진다 (결과·진행차수·인증완료일이 최신 판정 건의 값으로 덮이기 때문). 기간 안에 든
+  // 판정 이력을 따로 모아 행에 붙여, 화면·CSV·보고서가 합쳐진 내역을 펼쳐 보일 수 있게 한다.
+  const trailKey = (r) => `${r.model_name} ${r.cert_type} ${r.test_purpose}`;
+  const trails = new Map();
+  for (const t of db.prepare(`
+    SELECT model_name, cert_type, ${PURPOSE} AS test_purpose,
+           round, verdict, ${ACT_DATE} AS on_date
+    FROM requests
+    WHERE ${cond.join(' AND ')}
+    ORDER BY ${SORT_KEY}
+  `).all(range || {})) {
+    const key = trailKey(t);
+    const list = trails.get(key) || [];
+    list.push({ round: Number(t.round) || null, verdict: t.verdict, date: t.on_date });
+    trails.set(key, list);
+  }
+
   const out = rows.map((r) => ({
     model_name: r.model_name,
     cert_type: r.cert_type,
@@ -148,6 +166,8 @@ function certStatsOf(range) {
     fail: r.fail,
     pass_rate: pct(r.pass, r.judged),
     fail_rate: pct(r.fail, r.judged),
+    // 이 기간에 든 차수별 판정 이력 (오래된 차수 → 최신 차수). 길이가 1이면 합쳐진 게 없다.
+    rounds: trails.get(trailKey(r)) || [],
   }));
 
   const sum = (k) => out.reduce((a, r) => a + r[k], 0);

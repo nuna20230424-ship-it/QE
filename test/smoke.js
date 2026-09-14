@@ -101,6 +101,15 @@ ok('MR 행은 1차 Pass', row('KM-100', 'Google xTS', 'MR').result === 'Pass' &&
 ok('인증종류로도 행 분리 유지', row('KM-100', 'Netflix NTS', '3PL').round === 2);
 ok('Fail만 있는 조합은 Fail율 100%', row('KM-200', 'Google xTS', '3PL').fail_rate === 100);
 ok('인증완료일 = 최신 판정 건의 completed_date', x.completed_date === thisWeek(2), x.completed_date);
+
+// 합쳐진 차수 내역 — 결과·진행차수가 최신 판정으로 덮이면서 이전 차수(1차 Pass)가 표에서 사라지는 문제
+head('Task 4-2. 합쳐진 차수 내역 (rounds)');
+ok('판정 2건이 한 줄로 합쳐진 행 → rounds 2개', x.rounds.length === 2, JSON.stringify(x.rounds));
+ok('오래된 차수가 먼저', x.rounds[0].round === 1 && x.rounds[1].round === 3, JSON.stringify(x.rounds));
+ok('사라졌던 이전 차수의 판정이 남아 있음', x.rounds[0].verdict === 'Pass' && x.rounds[0].date === thisWeek(1), JSON.stringify(x.rounds[0]));
+ok('미판정 4차는 이력에도 없음', !x.rounds.some((h) => h.round === 4), JSON.stringify(x.rounds));
+ok('합쳐진 게 없는 행은 rounds 1개', row('KM-100', 'Google xTS', 'MR').rounds.length === 1);
+ok('차수별 행 분리가 아니라 집계 1행 유지', all.rows.filter((r) => r.model_name === 'KM-100' && r.cert_type === 'Google xTS' && r.test_purpose === '3PL').length === 1);
 ok('MR 행 인증완료일도 그 건의 completed_date', row('KM-100', 'Google xTS', 'MR').completed_date === thisWeek(1));
 
 // ---------- Task 4-3 / 주차(월~금) 필터 ----------

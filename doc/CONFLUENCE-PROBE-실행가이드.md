@@ -148,28 +148,102 @@ set CONFLUENCE_PAT=
 
 ---
 
-## 3. subCalendarId 찾기 — 브라우저 개발자도구가 가장 확실
+## 3. subCalendarId 다시 뜨기 — 개발자도구 (2026-09-16 갱신)
 
-이 방법은 subCalendarId와 **엔드포인트 경로를 동시에** 확인해 준다.
-스크립트가 쓰는 경로(`/rest/calendar-services/1.0/calendar/events.json`)는 **문서로만 확인한 것이라
-실제 서버와 다를 수 있다.** 여기서 실물을 보고 맞춘다.
+**언제 필요한가** — 지금 `config.json`에 있는 `7d8fff49-…`는 QE Schedule 캘린더가 맞지만
+**2026-06-04 이후 일정이 없다.** 팀이 다른 캘린더로 옮겼다면 여기서 새 id를 떠야 한다.
 
-1. 브라우저에서 QE Team 페이지를 연다.
-   `https://confluence.kaonmedia.com/display/GQE/[G]+QE+Team`
-2. **F12** → **Network(네트워크)** 탭 → 필터 입력창에 `calendar` 입력
-3. **QE Schedule 캘린더가 보이도록 스크롤**하거나 **월 이동(‹ ›) 버튼을 한 번 클릭**한다
-   → 요청 목록에 `events.json...` 같은 항목이 나타난다
-4. 그 요청을 클릭 → **Headers** 탭의 **Request URL** 을 본다
+> ⚠️ **어느 페이지에서 뜨는지가 핵심이다.** 예전 문서에 적힌 GQE 페이지가 아니라,
+> **지금 실제로 QE 일정을 보고 등록하는 그 캘린더 페이지**를 열어야 한다.
+> 엉뚱한 페이지를 열면 엉뚱한 id가 나온다 (이번에 `개발QA파트` 캘린더들이 그랬다).
+
+### 1) 캘린더 페이지를 연다
+
+브라우저에서 **팀이 지금 쓰는 QE 일정 캘린더**를 연다. 화면에 `[NTS]`·`[xTS]`로 시작하는
+일정이 보이는 그 페이지가 맞다.
+
+### 2) F12 → Network
+
+- **F12**로 개발자도구를 열고 **Network(네트워크)** 탭으로 간다.
+- 필터 입력창에 **`events.json`** 을 친다. (`calendar`로 필터하면 다른 요청까지 섞인다)
+
+### 3) 요청을 발생시킨다
+
+개발자도구를 연 뒤에는 요청이 이미 끝나 있어 목록이 비어 있을 수 있다.
+**월 이동(‹ ›) 버튼을 한 번 누르거나 F5로 새로고침**하면 `events.json…` 항목이 뜬다.
+
+### 4) Request URL에서 id를 집는다
+
+그 항목을 클릭 → **Headers** 탭 → **Request URL**.
 
 ```
 https://confluence.kaonmedia.com/rest/calendar-services/1.0/calendar/events.json
-    ?subCalendarId=XXXXXXXXXXXX&userTimeZoneId=Asia%2FSeoul&start=...&end=...
+    ?subCalendarId=7d8fff49-26c9-4ae6-bb74-bce57adf38b2&userTimeZoneId=Asia%2FSeoul&start=...
 ```
 
-- `subCalendarId=` **뒤의 값**이 필요한 것이다.
-- **경로가 위와 다르면 그 URL을 알려 주세요.** `confluence-client.js` 의 `EVENTS_PATH` 를 맞춰야 한다.
-- 캘린더가 여러 개면 요청도 여러 개 뜬다 → **Response** 탭을 열어 QE 일정 제목
-  (`[xTS]...`, `[NTS]...`)이 들어 있는 요청을 고른다.
+- `subCalendarId=` 뒤부터 **다음 `&` 전까지**가 필요한 값이다. UUID 형태(36자)다.
+- **경로(`?` 앞부분)가 위와 다르면 그것도 알려 주세요.** `confluence-client.js`의 `EVENTS_PATH`를 맞춰야 한다.
+- **`events.json` 요청이 여러 개 뜨면** 캘린더가 여러 개 겹쳐 있는 것이다. 하나씩 5)로 확인하면 된다.
+
+### 5) 그 id가 맞는지 먼저 확인한다 — `config.json`은 아직 건드리지 않는다
+
+이번에 겪은 함정이 **id는 유효한데 일정이 없는 경우**다. 바꾸기 전에 확인한다.
+
+```bat
+cd /d C:\Users\k251110\Desktop\QE
+node scripts\calendar-check.js 여기에_뜬_id_붙여넣기
+```
+
+일정 제목 원문은 찍지 않는다. 건수·기간·제목 앞 대괄호 분포만 본다.
+
+**맞는 캘린더**
+
+```
+전체 이벤트   : 55건 (과거 800일 ~ 향후 400일)
+기간          : 2024-07-04 ~ 2026-06-04
+최근 창       : 12건  (2026-08-17 ~ 2026-11-15)
+제목 첫 대괄호:
+  nts : 38건
+  xts : 4건
+
+판정: ✅ QE Schedule 캘린더로 보인다 ([xTS]·[NTS]·[AVTS] 42건).
+```
+
+**아닌 캘린더** — 첫 대괄호가 모델명(`kbro-kg4101`, `home+` 등)이면 QE 일정 캘린더가 아니다.
+
+```
+판정: ❌ QE Schedule 캘린더가 아니다.
+      제목이 [xTS]·[NTS]·[AVTS] 로 시작하는 일정이 하나도 없다.
+```
+
+**QE 캘린더는 맞는데 `최근 창 : 0건`** 이면 id가 아니라 **그 캘린더를 안 쓰는 것**이다.
+지금 `7d8fff49-…`가 이 상태다. 다른 페이지에서 다시 떠야 한다.
+
+### 6) 확정되면 교체한다
+
+```bat
+notepad config.json
+```
+
+`confluence` 안의 `subCalendarId` 값만 새 id로 바꾸고 저장한다. 다른 줄은 건드리지 않는다.
+
+```json
+"confluence": {
+  "baseUrl": "https://confluence.kaonmedia.com",
+  "subCalendarId": "새-id-여기",
+```
+
+바꾼 뒤 확인.
+
+```bat
+node scripts\confluence-diag.js
+```
+
+`[3] 기본(-30/+60)`에 건수가 잡히면 동기화 준비가 끝난 것이다.
+
+> 맥미니에도 같은 값을 넣어야 한다. `config.json`은 서버마다 따로 만들어 쓰므로
+> git으로 따라가지 않는다.
+
 
 ### 3-B. PAT를 못 쓰는 경우 (대안)
 

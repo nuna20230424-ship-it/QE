@@ -60,9 +60,10 @@ async function get(c, path) {
   if (Array.isArray(list) && list.length) {
     // 이름은 찍지 않는다. 우리 id 가 그 안에 있는지만 본다.
     const ids = list.map((s) => String((s.subCalendar && s.subCalendar.id) || s.id || ''));
+    // 구독하지 않은 캘린더도 id 만 알면 읽힌다. 목록에 없다고 실패가 아니다 —
+    // QE Schedule 은 이 계정이 구독한 space 밖에 있어 실제로 목록에 안 뜬다(2026-09-16 확인).
     const hit = ids.includes(c.subCalendarId);
-    console.log(`    subCalendarId 일치: ${hit ? '✅ 목록에 있다' : '❌ 목록에 없다'}`);
-    if (!hit) console.log(`    → 이 계정에 보이는 캘린더가 ${ids.length}개인데 그중에 없다. id 를 다시 확인한다.`);
+    console.log(`    subCalendarId: ${hit ? '✅ 구독 목록에 있다' : '구독 목록에는 없다 (읽기는 가능 — 실패 아님)'}`);
   } else if (Array.isArray(list)) {
     console.log('    → 0개다. 토큰이 Team Calendars 플러그인에는 적용되지 않는 것으로 보인다.');
   }
@@ -82,7 +83,7 @@ async function get(c, path) {
   console.log('');
   console.log('읽는 법');
   console.log('  [2]가 0개  → 토큰이 플러그인에 안 먹는다. 가이드 3-B(개발자도구 Copy response)로 우회한다.');
-  console.log('  [2]에 없음 → subCalendarId 가 틀렸다. 가이드 3단계에서 다시 확인한다.');
+  console.log('  [3] 0건    → id 는 유효하나 그 기간에 일정이 없다. scripts/calendar-check.js 로 캘린더를 확인한다.');
   console.log('  [3] success=false → 서버가 요청을 거부한 것이다. 같이 찍힌 키를 알려 주면 맞춘다.');
   console.log('  넓게도 0건    → 정말 그 캘린더에 일정이 없다. 캘린더를 잘못 고른 것일 수 있다.');
 })();

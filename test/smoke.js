@@ -1329,6 +1329,12 @@ ok('루트가 배열인 응답도 받는다', cclient.normalizeBody([{ id: 'e1',
 let bodyErr = '';
 try { cclient.normalizeBody({ nope: 1 }, CFG.fields); } catch (e) { bodyErr = e.message; }
 ok('events 배열이 없으면 예외', bodyErr.includes('events 배열'), bodyErr);
+// 일정이 하나도 없는 기간은 {"success":true} 만 온다 (2026-09-16 실물 확인). 오류가 아니라 0건이다.
+const emptyOk = cclient.normalizeBody({ success: true }, CFG.fields);
+ok('일정 0건 응답은 빈 목록으로 받는다', emptyOk.events.length === 0 && emptyOk.warnings.length === 0);
+let falseErr = '';
+try { cclient.normalizeBody({ success: false }, CFG.fields); } catch (e) { falseErr = e.message; }
+ok('success=false 는 여전히 예외', falseErr.includes('events 배열'), falseErr);
 const dupWarn = cclient.normalizeBody({ events: [{ id: 'a' }, { id: 'b' }, { id: 'c' }] }, { id: 'id', title: 'title' });
 ok('같은 경고는 이벤트 수만큼 쌓지 않는다', dupWarn.warnings.length === 1, String(dupWarn.warnings.length));
 

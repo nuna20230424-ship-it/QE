@@ -151,7 +151,11 @@ async function requestEvents({ from, to } = {}, cfg) {
 
 // 응답 → 정규 이벤트 배열. 같은 경고가 이벤트 수만큼 쌓이지 않게 중복을 접는다.
 function normalizeBody(body, fields = DEFAULT_FIELDS) {
-  const raws = Array.isArray(body) ? body : (body && Array.isArray(body.events) ? body.events : null);
+  let raws = Array.isArray(body) ? body : (body && Array.isArray(body.events) ? body.events : null);
+  // 조회 기간에 일정이 하나도 없으면 Team Calendars 는 events 키를 아예 빼고 {"success":true} 만
+  // 돌려준다 (2026-09-16 실물 확인). 이걸 오류로 보면 일정 없는 기간마다 5분 폴링이 계속 실패로
+  // 남으므로, success 가 true 인 응답에 한해 빈 목록으로 받는다. 그 외 모양은 그대로 오류다.
+  if (!raws && body && typeof body === 'object' && body.success === true) raws = [];
   if (!raws) throw new Error('응답에서 events 배열을 찾지 못했습니다.');
   const events = [];
   const seen = new Set();

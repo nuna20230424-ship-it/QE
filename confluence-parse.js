@@ -69,6 +69,10 @@ const isTail = (tk) => FW_VERSION.test(tk) || ROUND.test(tk)
   || TEST_TYPES.some((v) => v.toLowerCase() === key(tk))
   || Object.prototype.hasOwnProperty.call(TEST_PURPOSES, key(tk));
 
+// 영문 낱말뿐인 토큰(rollback · Auto · CVT · Regression). 모델명이 아니라 테스트 설명이다.
+// 모델명 조각은 `DOCOMO_KSTB6175`·`U+_UHD4K`처럼 숫자나 기호를 품는다.
+const isPlainWord = (tk) => /^[A-Za-z]+$/.test(tk);
+
 // '무엇을'(제목) 한 줄 → 인증종류·Test type·Test 목적·모델명·회차·상태·판정.
 // 해석하지 못한 조각은 값을 비우고 warnings에 남긴다 — 조용히 틀린 값을 넣지 않는다.
 function parseTitle(title) {
@@ -112,13 +116,16 @@ function parseTitle(title) {
   if (!tokens.length) {
     warnings.push('모델명을 찾지 못했습니다.');
   } else {
-    // 모델명 — 첫 토큰. 실제 제목에는 `NTT DOCOMO_KSTB6175`처럼 공백을 품은 모델명도 있어
-    // 14건이 잘리지만, 어디까지가 모델명인지는 규칙만으로 가려지지 않는다(2026-09-18 확인, 미결).
-    out.model_name = tokens[0];
+    // 모델명 — 제목에 쓰인 그대로 잡는다. `NTT DOCOMO_KSTB6175`처럼 공백을 품은 것이 있어
+    // 뒤 토큰도 붙이되, `rollback`·`Auto`·`CVT`처럼 영문 낱말뿐인 토큰에서 끊는다.
+    // 모델명 조각은 대개 숫자나 `_`·`+`·`/`를 품는다(2026-09-18 실제 제목 61건으로 확인).
+    let i = 1;
+    while (i < tokens.length && !isTail(tokens[i]) && !isPlainWord(tokens[i])) i += 1;
+    out.model_name = tokens.slice(0, i).join(' ');
 
     // 나머지는 알아볼 수 있는 칸만 채운다. 대괄호에서 이미 채운 칸은 덮지 않는다(대괄호가 우선).
     // 분류되지 않는 조각은 조용히 건너뛴다 — 제목 뒷부분은 자유 입력이라 경고로 남길 값이 아니다.
-    for (const tk of tokens.slice(1)) {
+    for (const tk of tokens.slice(i)) {
       const r = tk.match(ROUND);
       if (r && !out.round) { out.round = String(Number(r[1])); continue; }
       if (FW_VERSION.test(tk) && !out.fw_version) { out.fw_version = tk; continue; }

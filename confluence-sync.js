@@ -24,7 +24,9 @@ function mapEvent(event, { lookupRequester } = {}) {
   const person = push(parse.parsePerson(ev.invitees));
   const start = push(parse.parseDate(ev.start));
   const end = push(parse.parseDate(ev.end));
-  const created = push(parse.parseDate(ev.created));
+  // 희망일정 — Team Calendars 이벤트 응답에는 생성일자 키가 아예 없다(2026-09-16 실물 확인).
+  // 사용자 결정에 따라 이벤트 시작일로 대체한다. created 가 매핑돼 오면 그쪽을 우선한다.
+  const created = ev.created ? push(parse.parseDate(ev.created)) : start;
 
   const fields = {
     cert_type: title.cert_type,

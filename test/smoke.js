@@ -1192,6 +1192,10 @@ ok('시작 → 시작일', m1.fields.started_date === '2026-09-07', m1.fields.st
 ok('종료 → 완료일', m1.fields.completed_date === '2026-09-09', m1.fields.completed_date);
 ok('관련 페이지 → 비고', m1.fields.note === 'https://jira.kaonmedia.com/browse/KG25040-492', m1.fields.note);
 ok('이벤트 생성일자 → 희망일정', m1.fields.desired_date === '2026-09-07', m1.fields.desired_date);
+// 실제 응답에는 생성일자 키가 없다. 그때는 시작일로 대체한다 (2026-09-17 사용자 결정).
+const noCreated = csync.mapEvent({ ...ev1, created: undefined });
+ok('생성일자가 없으면 시작일이 희망일정', noCreated.fields.desired_date === '2026-09-07', noCreated.fields.desired_date);
+ok('생성일자 없어도 경고를 만들지 않는다', noCreated.warnings.length === 0, noCreated.warnings.join(' | '));
 ok('예약확정일은 아예 매핑하지 않는다', !('scheduled_date' in m1.fields));
 ok('매핑 경고 없음', m1.warnings.length === 0, m1.warnings.join(' | '));
 

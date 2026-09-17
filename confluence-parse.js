@@ -59,13 +59,23 @@ function splitBrackets(title) {
 // 회차 표기 — 1st / 2nd / 3차 / 4 를 모두 숫자만 남긴다.
 const ROUND = /^(\d{1,2})\s*(?:st|nd|rd|th|차)?$/i;
 
+// FW 버전 — v1.01.18 · v002.018.000. 점을 하나 이상 요구한다.
+// 점 없는 'V1'까지 버전으로 보면 `Telenor_KSTB7277 V1` 같은 모델명이 잘린다.
+const FW_VERSION = /^v\d+(?:\.\d+)+$/i;
+
+// 모델명 뒤에 붙는, 알아볼 수 있는 값. 모델명은 여기서 끝난다.
+// (제목에 모델명이 `NTT DOCOMO_KSTB6175`처럼 공백을 품고 들어오므로 경계가 필요하다)
+const isTail = (tk) => FW_VERSION.test(tk) || ROUND.test(tk)
+  || TEST_TYPES.some((v) => v.toLowerCase() === key(tk))
+  || Object.prototype.hasOwnProperty.call(TEST_PURPOSES, key(tk));
+
 // '무엇을'(제목) 한 줄 → 인증종류·Test type·Test 목적·모델명·회차·상태·판정.
 // 해석하지 못한 조각은 값을 비우고 warnings에 남긴다 — 조용히 틀린 값을 넣지 않는다.
 function parseTitle(title) {
   const warnings = [];
   const out = {
     cert_type: '', test_type: '', test_purpose: '', model_name: '',
-    round: '', status: '', verdict: '', title: norm(title),
+    round: '', fw_version: '', status: '', verdict: '', title: norm(title),
   };
   if (!out.title) {
     warnings.push('제목이 비어 있습니다.');
@@ -102,11 +112,20 @@ function parseTitle(title) {
   if (!tokens.length) {
     warnings.push('모델명을 찾지 못했습니다.');
   } else {
+    // 모델명 — 첫 토큰. 실제 제목에는 `NTT DOCOMO_KSTB6175`처럼 공백을 품은 모델명도 있어
+    // 14건이 잘리지만, 어디까지가 모델명인지는 규칙만으로 가려지지 않는다(2026-09-18 확인, 미결).
     out.model_name = tokens[0];
+
+    // 나머지는 알아볼 수 있는 칸만 채운다. 대괄호에서 이미 채운 칸은 덮지 않는다(대괄호가 우선).
+    // 분류되지 않는 조각은 조용히 건너뛴다 — 제목 뒷부분은 자유 입력이라 경고로 남길 값이 아니다.
     for (const tk of tokens.slice(1)) {
       const r = tk.match(ROUND);
-      if (r && !out.round) out.round = String(Number(r[1]));
-      else warnings.push(`모델명 뒤에 해석하지 못한 값: ${tk}`);
+      if (r && !out.round) { out.round = String(Number(r[1])); continue; }
+      if (FW_VERSION.test(tk) && !out.fw_version) { out.fw_version = tk; continue; }
+      const t = TEST_TYPES.find((v) => v.toLowerCase() === key(tk));
+      if (t && !out.test_type) { out.test_type = t; continue; }
+      const p = TEST_PURPOSES[key(tk)];
+      if (p && !out.test_purpose) { out.test_purpose = p; }
     }
   }
 

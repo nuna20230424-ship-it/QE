@@ -34,6 +34,7 @@ function mapEvent(event, { lookupRequester } = {}) {
     test_purpose: title.test_purpose,
     model_name: title.model_name,
     round: title.round,
+    fw_version: title.fw_version,
     status: title.status,
     verdict: title.verdict,
     tester: person.name,

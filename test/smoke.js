@@ -1148,8 +1148,18 @@ const badStatus = cparse.parseTitle('[xTS] KM-100 > 어쩌구');
 ok('모르는 상태는 비우고 경고', badStatus.status === '' && badStatus.warnings.some((w) => w.includes('상태를 알 수 없습니다')));
 const badTag = cparse.parseTitle('[xTS][이상한값] KM-100 > Passed');
 ok('분류 못한 대괄호는 경고', badTag.warnings.some((w) => w.includes('분류하지 못한')));
+// 제목 뒷부분은 자유 입력이라(`rollback`, `Auto`, `CVT` …) 경고로 남기지 않고 건너뛴다.
+// 2026-09-17 사용자 결정: "순서에 문구가 명시가 안 되어 있으면 skip하고 다음 컬럼으로".
 const junk = cparse.parseTitle('[xTS] KM-100 1st 잡토큰 > Passed');
-ok('모델명 뒤 잡토큰은 경고', junk.warnings.some((w) => w.includes('해석하지 못한')));
+ok('모델명 뒤 잡토큰은 조용히 건너뛴다', !junk.warnings.some((w) => w.includes('해석하지 못한')), junk.warnings.join(' | '));
+ok('잡토큰이 있어도 차수는 읽는다', junk.round === '1', junk.round);
+// 대괄호 밖 Test type·목적·FW 버전도 읽는다 (대괄호 값이 우선).
+const outside = cparse.parseTitle('[xTS] [3PL] Altibox_KSTB8299 IR 1st v1.00.00 > Failed');
+ok('대괄호 밖 Test type', outside.test_type === 'IR', outside.test_type);
+ok('대괄호 밖 FW 버전', outside.fw_version === 'v1.00.00', outside.fw_version);
+ok('대괄호 목적이 우선', outside.test_purpose === '3PL', outside.test_purpose);
+// 점 없는 V1 은 버전이 아니다 — `Telenor_KSTB7277 V1` 같은 모델명이 잘린다.
+ok('점 없는 V1 은 FW 버전이 아니다', cparse.parseTitle('[xTS] KM-100 V1 > Passed').fw_version === '');
 ok('빈 제목은 경고', cparse.parseTitle('').warnings.length > 0);
 ok('대괄호 없는 제목은 경고', cparse.parseTitle('KM-100 > Passed').warnings.some((w) => w.includes('대괄호')));
 

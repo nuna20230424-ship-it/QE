@@ -374,3 +374,21 @@
 - [x] 실 케이스 재현 — `Fail 2026-09-07 Pre-Test 2차 0 1 0% 100%` 행이 그대로 생성됨
 - [ ] 맥미니 재배포 — **사용자 필요** (push + Mac Mini 터미널)
 - [ ] 브라우저·Outlook 육안 확인 — **사용자 필요**
+
+### P7. Confluence 실시간 연동 — 설정 확정 (2026-09-18)
+- [x] PAT 재발급 → 인증 통과 (계정 `keonhee.cho`). `scripts/pat-check.js` 로 계정 이름 기준 판정
+- [x] subCalendarId 확정 — `eb1bca9b-…` (옛 캘린더 `7d8fff49-…` 는 2026-06-04 에서 멈춤)
+- [x] `fields.relatedPage = "where"` · `fields.created = "start"` (응답에 생성일자 키 없음)
+- [x] 제목 파싱 — 대괄호 밖 Test type·목적, FW 버전, 모델명 경계 규칙
+- [x] 일정 없는 기간을 오류로 보던 버그 수정 (`{"success":true}` 만 오는 응답)
+- [x] 로컬 `data.db` 에 실제 동기화 1회 — 8건 생성 · 4건 건너뜀 · 2회차 unchanged 8 (멱등)
+- [x] `DEPLOY.md` 4-B 를 확정값 기준으로 재작성, 0·3번 낡은 내용 정리
+- [ ] **push** — 커밋 7개가 로컬에만 있다 (**사용자 필요**)
+- [ ] **맥미니 `.env` + `config.json confluence` 블록** — 4-B 절차 (**사용자 필요**)
+- [ ] 맥미니 첫 동기화 회차 결과 확인 (Claude 가 HTTP 로 대신 가능)
+
+### 남은 판단 — 제목 파싱이 규칙으로 못 가르는 것
+- [ ] `Tivo TMIS KSTB4252` → `Tivo` (TMIS 가 영문 낱말이라 끊긴다)
+- [ ] `K1200UA ATV14` · `UHD5K 4.5th` → 설명이 모델명에 붙는다
+- [ ] `[NTS][Netflix_KSTB6277][ATV16][Ninja12] 1st >` → 모델명이 대괄호 안에 있어 `1st` 가 모델명이 된다
+- [ ] 자주 걸리면 규칙을 조인다. 지금은 "우선 작성된 기준으로 등록" 후 사람이 수정

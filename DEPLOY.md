@@ -16,26 +16,17 @@ QE 인증 일정 대시보드 운영 서버(Mac Mini)를 최신 코드로 업데
 
 ## 0. 배포 전 — 개발 PC에서 `main`을 먼저 올린다 (사용자가 직접)
 
-작업은 전부 로컬 `main`에 있고, 2026-09-14 기준 **`origin/main`보다 16개 커밋 앞서 있다.** 운영 서버는 `origin/main`을 pull하므로 **push하지 않으면 배포해도 아무것도 바뀌지 않는다.**
+운영 서버는 `origin/main`을 pull한다. **push하지 않으면 배포해도 아무것도 바뀌지 않는다.**
 
 > **push는 Claude가 실행하지 않는다.** 개발 PC PowerShell에서 사용자가 직접 친다.
 
 ```powershell
 cd C:\Users\k251110\Desktop\QE
-git log origin/main..HEAD --oneline   # 올라갈 16개 커밋 확인
+git log origin/main..HEAD --oneline   # 올라갈 커밋 확인
 git push origin main
 ```
 
-### 이번에 함께 올라가는 것 — 확인하고 push할 것
-16개 커밋에는 인증 통계 수정 말고도 **Confluence 실시간 연동(P1~P4)** 이 들어 있다. 이 기능은 `config.json`에 `confluence` 섹션이 없으면 `[confluence] 설정 없음 → 동기화 생략`만 찍고 **아무것도 하지 않는다**(`confluence-poll.js:76`). Mac Mini의 `config.json`은 서버별로 따로 만들어 쓰고 Confluence 설정을 넣은 적이 없으므로, 배포해도 동작이 켜지지 않는다. PAT 인증 문제(`context-notes.md` 2026-09-10)가 미해결인 채로 운영에 올라가도 무해한 이유다.
-
-그래도 껄끄러우면 이번 인증 통계 수정만 따로 올리는 방법이 있다 — 이때는 3번에서 `main` 대신 이 브랜치를 checkout한다.
-
-```powershell
-git checkout -b hotfix/cert-stats-round-trail 9d07261
-git push origin hotfix/cert-stats-round-trail
-git checkout main
-```
+올라갈 게 없으면 이 절은 건너뛴다.
 
 ---
 
@@ -77,29 +68,20 @@ curl -s http://localhost:3001/api/options
 
 ## 3. 코드 갱신
 
-### 공통
 ```bash
 cd ~/cert-schedule-dashboard   # 실제 배포 폴더로 변경
-git status                     # 로컬에 손댄 파일이 없는지 확인 (있으면 먼저 사용자에게 확인)
+git status                     # 로컬에 손댄 파일이 없는지 확인 (있으면 먼저 확인)
 git fetch origin
-```
-
-### `main` 배포 (기본)
-```bash
 git checkout main
 git pull origin main
-git log --oneline -1           # 9d07261 인증 통계에서 한 줄로 합쳐진 차수 내역을 펼쳐 본다
+git log --oneline -1           # 개발 PC의 최신 커밋과 같은지 대조
 ```
 
-### 인증 통계 수정만 올린 경우 (0번의 hotfix 브랜치)
-```bash
-git fetch origin
-git checkout hotfix/cert-stats-round-trail
-git pull origin hotfix/cert-stats-round-trail
-```
+`config.json`·`.env`·`data.db`는 `.gitignore` 대상이라 pull이 건드리지 않는다.
 
 ### 로컬에 손댄 파일이 있어 `git pull`이 막히면
-`git status`로 뭐가 걸리는지 먼저 확인한다. Mac Mini에서 직접 설정 파일(`config.json`)을 만들었다면 그건 `.gitignore` 대상이라 문제되지 않는다. 그 외 파일이 걸리면 왜 바뀌었는지 확인한 뒤 `git stash`로 잠시 치워두고 진행 — 함부로 `git checkout -- .`나 `git reset --hard`로 지우지 않는다.
+`git status`로 뭐가 걸리는지 먼저 확인한다. 왜 바뀌었는지 확인한 뒤 `git stash`로 잠시 치워두고
+진행 — 함부로 `git checkout -- .`나 `git reset --hard`로 지우지 않는다.
 
 ---
 
@@ -114,28 +96,121 @@ npm install
 
 ---
 
-## 4-B. Confluence 동기화 설정 (이 기능을 쓸 때만)
+## 4-B. Confluence 동기화 켜기 (2026-09-18 갱신 — 값 확정됨)
 
-설정이 없으면 동기화만 생략되고 앱은 그대로 뜬다. 켜려면 배포 폴더에서 두 가지를 채운다.
+**설정이 없으면 동기화만 생략되고 앱은 그대로 뜬다.** 코드를 먼저 올리고 여기서 한 번 멈춰
+화면을 확인한 뒤 켜는 것을 권한다 — 켜는 순간 운영 DB에 의뢰가 자동 생성되기 때문이다.
+
+> **`.env`와 `config.json`은 `.gitignore` 대상이라 push·pull로 따라가지 않는다.**
+> 서버마다 직접 넣어야 한다. Claude는 이 서버에 SSH로 못 들어가므로 이 절은 전부 사람이 실행한다.
+
+### 1) PAT
 
 ```bash
-# 1) PAT — .env 에만 둔다 (git 추적 대상 아님)
-cd ~/cert-dashboard   # 실제 배포 폴더로
-printf 'CONFLUENCE_PAT=발급받은-토큰
-' > .env
+cd ~/cert-schedule-dashboard      # 실제 배포 폴더
+nano .env
+#    CONFLUENCE_PAT=발급받은토큰   ← 한 줄만. Ctrl+O · Enter · Ctrl+X
 chmod 600 .env
-
-# 2) config.json 에 confluence 섹션 추가 (config.example.json 의 예시를 복사)
-#    baseUrl · subCalendarId · fields 를 채운다
 ```
 
-`fields.relatedPage`·`fields.created`는 실제 응답 키를 확인해야 한다.
+개발 PC와 같은 토큰을 써도 되고 운영용으로 새로 발급해도 된다. **토큰은 채팅·커밋·문서에 넣지 않는다.**
+
+### 2) config.json 에 confluence 블록 추가
+
+기존 내용은 그대로 두고 맨 바깥 `{ }` 안에 아래를 추가한다. 앞 항목 끝에 쉼표가 필요하다.
+
+```json
+  "confluence": {
+    "baseUrl": "https://confluence.kaonmedia.com",
+    "subCalendarId": "eb1bca9b-35c2-4c19-a9bf-1f9532b64b45",
+    "timeZone": "Asia/Seoul",
+    "pollMinutes": 5,
+    "rangeBackDays": 30,
+    "rangeAheadDays": 60,
+    "fields": {
+      "id": "id",
+      "title": "title",
+      "invitees": "invitees",
+      "start": "start",
+      "end": "end",
+      "relatedPage": "where",
+      "created": "start"
+    },
+    "requesterByModel": {}
+  }
+```
+
+값의 근거 (2026-09-18 실물 응답으로 확정).
+
+| 키 | 값 | 왜 |
+|---|---|---|
+| `subCalendarId` | `eb1bca9b-…` | QE 일정 페이지는 캘린더 **둘**을 겹쳐 보여준다. 옛 캘린더 `7d8fff49-…`는 2026-06-04에서 멈췄다 |
+| `fields.relatedPage` | `where` | '관련 페이지 / 어디서' → 비고. 63건 중 43건에 있다 |
+| `fields.created` | `start` | 이벤트 응답에 **생성일자 키가 없다.** 희망일정을 시작일로 대체(사용자 결정) |
+
+### 3) 쓰기 전에 확인 — 여기까지는 읽기만 한다
 
 ```bash
-node scripts/confluence-probe.js   # 응답 키 구조를 찍는다 (읽기 전용)
+node scripts/pat-check.js          # 계정 이름이 나와야 정상. 200 이어도 Anonymous 면 실패다
+node scripts/confluence-diag.js    # [3] 기본(-30/+60) 에 건수가 잡히는지
 ```
 
-> ⚠️ **Node 18 이상이 필요하다.** 동기화는 내장 `fetch`를 쓴다. `node -v`로 확인한다.
+`node -v`가 **18 이상**이어야 한다. 동기화는 내장 `fetch`를 쓴다.
+
+### 4) 운영 DB 백업 후 재기동
+
+```bash
+cp data.db ~/data.db.bak-$(date +%Y%m%d-%H%M%S)
+lsof -i :3001                      # PID
+kill <PID>
+PORT=3001 HOST=0.0.0.0 nohup npm start > server.log 2>&1 &
+disown
+tail -20 server.log
+```
+
+`[confluence] 5분 주기 동기화 시작`이 보이면 켜진 것이다.
+꺼져 있으면 `[confluence] 설정 없음 → 동기화 생략 (…)` 로 무엇이 빠졌는지 알려 준다.
+
+### 5) 켠 뒤 확인 (Claude가 HTTP로 대신 가능)
+
+```
+GET http://172.16.3.136:3001/api/confluence/status
+```
+
+`configured:true` · `polling:true` · `last` 에 첫 회차 결과(생성·갱신·건너뜀)가 찍힌다.
+
+### 되돌리기
+
+동기화만 끄려면 `.env`를 지우고 재기동한다. 코드는 그대로 두고 조용히 멈춘다.
+
+```bash
+rm .env
+kill <PID> && PORT=3001 HOST=0.0.0.0 nohup npm start > server.log 2>&1 & disown
+```
+
+자동 생성된 의뢰까지 되돌려야 하면 4)에서 뜬 `~/data.db.bak-…`로 복구한다.
+
+### 동기화가 데이터를 다루는 방식 — 미리 알아 둘 것
+
+- **빈 칸만 채운다.** 사람이 입력한 값은 덮지 않는다(`confluence-sync.js` `fillBlanks`).
+  예외는 `예약대기` 하나 — 기본값이라 사람이 고른 것으로 보지 않는다.
+- **인증종류나 모델명을 못 읽으면 의뢰를 만들지 않는다.** `연차` 같은 비QE 일정이 여기서 걸러진다.
+- **같은 이벤트는 다시 만들지 않는다**(`confluence_event_id` 기준). 2회차부터는 `unchanged`다.
+- 조회 기간에서 사라진 이벤트는 지우지 않고 `중단`으로 돌린다. 완료·중단 건은 건드리지 않는다.
+- 제목 파싱이 규칙으로 못 가르는 것이 남아 있다(`Tivo TMIS KSTB4252` → `Tivo` 등).
+  "우선 작성된 기준으로 등록"이 사용자 결정이며, 어긋난 건은 대시보드에서 손으로 고친다.
+
+### 로컬(개발 PC)에서 확인할 때 — 메일 발송 주의
+
+개발 PC에서 서버를 띄우면 `scheduler.start()`가 걸려 **예약 시각에 실제 보고 메일이 나간다.**
+차단 스위치는 없다. `config.json`의 `reportTo`를 비우는 것만으로는 부족하다 —
+비어 있으면 `notify.js`의 `DEFAULT_REPORT_TO`로 폴백한다.
+
+확실히 끄려면 `smtp` **키 이름을 바꾼다**(값은 그대로 둔다). `loadConfig()`가 `null`을 돌려
+발송 경로가 통째로 꺼지고, 기동 로그에 `[notify] config.json 미설정 → 이메일 알림 생략`이 찍힌다.
+확인이 끝나면 키 이름을 되돌린다.
+
+---
 
 ## 5. 서버 재기동
 
@@ -178,6 +253,11 @@ GET http://172.16.3.136:3001/api/bottlenecks
 ```powershell
 $r = Invoke-WebRequest "http://172.16.3.136:3001/api/cert-stats?from=2026-09-07&to=2026-09-11" -UseBasicParsing
 $r.Content.Contains('"rounds"')     # True 면 반영됨
+```
+
+Confluence 동기화를 켰다면 상태도 함께 본다 (4-B 5번).
+```
+GET http://172.16.3.136:3001/api/confluence/status
 ```
 
 ### 6-2. 브라우저 육안 확인 (사람이 직접, `checklist.md` 10차 항목)
@@ -230,4 +310,6 @@ cp ~/data.db.bak-<타임스탬프> data.db   # 1번 백업이 필요한 경우�
 ## 부록 — 자주 헷갈리는 점
 - **개발 PC도 포트 3001을 쓴다.** "3001 서버 재시작" 요청을 받으면 Mac Mini인지 개발 PC인지 먼저 확인한다.
 - **Claude는 이 서버에 SSH로 못 들어간다.** 배포 명령은 사람이 직접 실행하고, 결과(로그 출력, 에러 메시지)를 붙여넣어 주면 다음 단계를 안내할 수 있다.
-- **Bash 도구의 `curl`은 사내망(172.16.3.136)에 못 닿는다** (샌드박스가 외부 아웃바운드 차단). Claude가 운영 서버를 확인할 때는 PowerShell의 `Invoke-WebRequest`를 쓴다.
+- **Bash 도구는 맥미니(`172.16.3.136`)에 못 닿는다.** Claude가 운영 서버를 확인할 때는 PowerShell의 `Invoke-WebRequest`를 쓴다. 다만 `confluence.kaonmedia.com`은 Bash에서도 닿아서, Confluence 진단 스크립트(`scripts/pat-check.js` 등)는 개발 PC에서 Claude가 직접 돌릴 수 있다.
+- **`config.json`과 `.env`는 서버마다 따로다.** `.gitignore` 대상이라 push·pull로 옮겨지지 않는다. 맥미니에 새 설정이 필요하면 항상 4-B를 다시 본다.
+- **QE 일정 페이지는 캘린더가 두 개 겹쳐 있다.** 개발자도구에서 `events.json` 요청을 하나만 보고 판단하면 안 된다. 자세한 건 `doc/CONFLUENCE-PROBE-실행가이드.md` 3단계.

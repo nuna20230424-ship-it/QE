@@ -1402,8 +1402,50 @@ const upUnknown = csync.upsertEvent(evUnknown, { lookupRequester: (m) => cpoll.l
 ok('찾지 못한 모델은 경고를 남긴다', upUnknown.warnings.some((w) => w.includes('모델명-의뢰자 매핑에 없는')), upUnknown.warnings.join(' | '));
 ok('찾지 못해도 의뢰는 만든다', repo.get(upUnknown.id) && !repo.get(upUnknown.id).requester);
 
+// ---- 수기 의뢰와의 중복 방지 (2026-09-21) ----
+// 이벤트 id 로만 중복을 보면 사람이 먼저 입력해 둔 건과 겹쳐 또 만든다. 운영에서 8건 중 5건이 그랬다.
+head('Confluence 동기화 · 수기 의뢰와 중복 방지');
+const mk2 = (d) => repo.update(repo.create({
+  cert_type: d.cert_type, test_type: d.test_type || '', model_name: d.model_name,
+  test_purpose: d.purpose || '', round: d.round || '', requester: 'PL', desired_date: d.start,
+}, '수기').id, { started_date: d.start, completed_date: d.end || '', status: d.status || '완료', verdict: d.verdict || '' }, '수기');
+
+// 표기가 다른 같은 모델 — 시작일 동일
+const manual1 = mk2({ cert_type: 'Google xTS', model_name: 'HCN_KSTB1157', purpose: '3PL', round: '1', start: '2026-08-31', end: '2026-09-01', verdict: 'Pass' });
+const up1 = csync.upsertEvent({ id: 'evt-dup-1', title: '[xTS][3PL] HCN KSTB1157 1st > Passed', invitees: '이해찬', start: '2026-08-31', end: '2026-09-01' });
+ok('표기가 달라도 같은 건으로 이어 붙인다', up1.id === manual1.id, `${up1.action} id=${up1.id} (수기 ${manual1.id})`);
+ok('새로 만들지 않는다', up1.action !== 'created', up1.action);
+ok('이어 붙였다고 경고로 알린다', up1.warnings.some((w) => w.includes('이어 붙였습니다')), up1.warnings.join(' | '));
+ok('이벤트 id 가 그 행에 붙는다', repo.get(manual1.id).confluence_event_id === 'evt-dup-1');
+ok('두 번째 회차는 unchanged', csync.upsertEvent({ id: 'evt-dup-1', title: '[xTS][3PL] HCN KSTB1157 1st > Passed', invitees: '이해찬', start: '2026-08-31', end: '2026-09-01' }).action === 'unchanged');
+
+// ±1일까지 본다
+const manual2 = mk2({ cert_type: 'Netflix NTS', model_name: 'KM-880', purpose: '3PL', round: '1', start: '2026-08-10', end: '2026-08-12', verdict: 'Pass' });
+ok('시작일이 하루 어긋나도 같은 건', csync.upsertEvent({ id: 'evt-dup-2', title: '[NTS][3PL] KM-880 1st > Passed', invitees: '이해찬', start: '2026-08-11', end: '2026-08-12' }).id === manual2.id);
+
+// 이틀 벌어지면 다른 건
+const manual3 = mk2({ cert_type: 'Netflix NTS', model_name: 'KM-881', purpose: '3PL', round: '1', start: '2026-08-10', end: '2026-08-12', verdict: 'Pass' });
+ok('이틀 벌어지면 새로 만든다', csync.upsertEvent({ id: 'evt-dup-3', title: '[NTS][3PL] KM-881 1st > Passed', invitees: '이해찬', start: '2026-08-13', end: '2026-08-14' }).action === 'created');
+
+// 차수가 다르면 다른 회차다 — 날짜가 붙어 있어도 합치지 않는다
+const manual4 = mk2({ cert_type: 'Google xTS', model_name: 'KM-882', purpose: '3PL', round: '2', start: '2026-08-20', end: '2026-08-21', verdict: 'Fail' });
+ok('차수가 다르면 합치지 않는다', csync.upsertEvent({ id: 'evt-dup-4', title: '[xTS][3PL] KM-882 3rd > Passed', invitees: '이해찬', start: '2026-08-20', end: '2026-08-21' }).action === 'created');
+ok('원래 2차 건은 그대로', repo.get(manual4.id).verdict === 'Fail' && !repo.get(manual4.id).confluence_event_id);
+
+// 같은 거리에 후보가 둘이면 판정하지 않는다 — 엉뚱한 건에 붙이는 쪽이 더 위험하다
+mk2({ cert_type: 'Google xTS', model_name: 'KM-883 A', purpose: '3PL', round: '1', start: '2026-08-25', end: '2026-08-26', verdict: 'Pass' });
+mk2({ cert_type: 'Google xTS', model_name: 'KM-883 B', purpose: '3PL', round: '1', start: '2026-08-25', end: '2026-08-26', verdict: 'Pass' });
+const upTie = csync.upsertEvent({ id: 'evt-dup-5', title: '[xTS][3PL] KM-883 1st > Passed', invitees: '이해찬', start: '2026-08-25', end: '2026-08-26' });
+ok('후보가 여럿이면 새로 만들고 경고한다', upTie.action === 'created' && upTie.warnings.some((w) => w.includes('여럿이라')), upTie.warnings.join(' | '));
+
+// 이미 다른 이벤트가 붙은 행은 후보에서 빠진다 (남의 행을 가로채지 않는다)
+ok('이벤트 id 가 붙은 행은 후보가 아니다',
+  csync.upsertEvent({ id: 'evt-dup-6', title: '[xTS][3PL] HCN KSTB1157 1st > Passed', invitees: '이해찬', start: '2026-08-31', end: '2026-09-01' }).action === 'created');
+
 // 섹션 정리 — 아래 보고 본문 비교가 앞서 떠 둔 스냅숏과 어긋나지 않게 한다.
 for (const row of repo.confluenceRowsInRange({})) repo.remove(row.id, 'smoke 정리');
+for (const id of [manual2.id, manual3.id, manual4.id]) if (repo.get(id)) repo.remove(id, 'smoke 정리');
+for (const r of repo.list({})) if (/^KM-88/.test(r.model_name || '')) repo.remove(r.id, 'smoke 정리');
 ok('룩업 섹션 레코드 정리 완료', repo.confluenceRowsInRange({}).length === 0);
 (async () => {
   // ---------- Confluence 조회·폴링 (비동기) ----------

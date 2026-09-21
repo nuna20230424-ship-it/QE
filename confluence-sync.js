@@ -54,6 +54,48 @@ function mapEvent(event, { lookupRequester } = {}) {
   return { fields, warnings };
 }
 
+// 모델명 표기 흔들림을 흡수한다. `HCN_KSTB1157` · `HCN KSTB1157` · `HCN-KSTB1157` 은 같은 모델이다.
+const normModel = (s) => String(s ?? '').toLowerCase().replace(/[\s_/+\-.]/g, '');
+
+const shiftDay = (ymd, n) => {
+  const d = new Date(`${ymd}T00:00:00`);
+  d.setDate(d.getDate() + n);
+  const p = (x) => String(x).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+};
+
+// 같은 일정을 사람이 먼저 입력해 둔 건을 찾는다. 이벤트 id 로만 중복을 보면 수기 의뢰와 겹쳐
+// 또 만든다 — 2026-09-18 운영에서 8건 중 5건이 그렇게 중복됐다.
+//   모델명(표기 정규화) + 인증종류 + 시작일(±1일) 이 맞으면 같은 건으로 본다.
+// 차수가 양쪽에 다 있고 다르면 다른 회차다. 같은 거리에 후보가 둘 이상이면 판정하지 않는다 —
+// 엉뚱한 건에 갖다 붙이는 것이 중복을 하나 더 만드는 것보다 고치기 어렵다.
+function findMergeTarget(fields, { tolerance = 1 } = {}) {
+  const start = fields.started_date;
+  const want = normModel(fields.model_name);
+  if (!start || !fields.cert_type || want.length < 4) return null;
+
+  const rows = repo.mergeCandidates({
+    cert_type: fields.cert_type,
+    from: shiftDay(start, -tolerance),
+    to: shiftDay(start, tolerance),
+  });
+
+  const hits = rows.filter((r) => {
+    const got = normModel(r.model_name);
+    if (got.length < 4) return false;
+    if (!(got === want || got.includes(want) || want.includes(got))) return false;
+    if (fields.round && r.round && Number(fields.round) !== Number(r.round)) return false;
+    return true;
+  });
+  if (!hits.length) return null;
+
+  const dist = (r) => Math.abs((new Date(`${r.start_date}T00:00:00`) - new Date(`${start}T00:00:00`)) / 86400000);
+  const best = Math.min(...hits.map(dist));
+  const tied = hits.filter((r) => dist(r) === best);
+  if (tied.length > 1) return { ambiguous: tied.map((r) => r.id) };
+  return { row: tied[0] };
+}
+
 // 대시보드에 이미 값이 있는 칸은 사람 입력으로 보고 건드리지 않는다 — 빈 칸만 채운다.
 // 예외는 status 하나다. DEFAULT '예약대기'로 채워져 있어 그냥 두면 영원히 '값이 있는 칸'이 되고
 // Confluence 제목의 진행·결과가 신규 생성 이후로는 한 번도 반영되지 않는다.
@@ -81,7 +123,18 @@ function upsertEvent(event, opts = {}) {
     return { action: 'skipped', eventId, reason: '인증종류 또는 모델명을 파싱하지 못했습니다.', warnings };
   }
 
-  const cur = repo.getByConfluenceEventId(eventId);
+  let cur = repo.getByConfluenceEventId(eventId);
+  if (!cur) {
+    // 이벤트 id 로 못 찾았어도 사람이 먼저 입력해 둔 같은 건이 있을 수 있다. 있으면 새로 만들지 않고
+    // 그 행에 이벤트 id 를 붙여 이후 회차부터 제대로 이어지게 한다.
+    const match = findMergeTarget(fields, opts);
+    if (match && match.ambiguous) {
+      warnings.push(`같은 건으로 볼 의뢰가 여럿이라 판정하지 않았습니다 (id ${match.ambiguous.join(', ')}). 새로 만듭니다.`);
+    } else if (match && match.row) {
+      cur = repo.attachConfluenceEvent(match.row.id, eventId, actor);
+      warnings.push(`이미 있던 의뢰에 이어 붙였습니다 (id ${match.row.id}, ${match.row.model_name}).`);
+    }
+  }
   if (!cur) {
     const row = repo.create({ ...fields, confluence_event_id: eventId }, actor);
     return { action: 'created', eventId, id: row.id, warnings };

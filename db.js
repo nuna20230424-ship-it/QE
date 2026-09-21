@@ -304,6 +304,33 @@ module.exports = {
     return db.prepare('SELECT * FROM requests WHERE confluence_event_id = ?').get(id);
   },
 
+  // 사람이 먼저 입력해 둔 의뢰에 Confluence 이벤트 id 를 붙인다.
+  // `confluence_event_id` 는 ALLOWED 밖이다 — API PATCH 로 사람이 바꾸면 안 되는 값이라
+  // 일반 update 경로를 열지 않고 동기화 전용으로 따로 둔다.
+  attachConfluenceEvent(id, eventId, actor) {
+    const eid = String(eventId ?? '').trim();
+    const row = this.get(id);
+    if (!row || !eid) return null;
+    db.prepare('UPDATE requests SET confluence_event_id=@eid, updated_at=@ts WHERE id=@id')
+      .run({ eid, ts: nowIso(), id: row.id });
+    logHistory(row.id, actor || '동기화', '수정', `Confluence 이벤트 연결: ${eid}`);
+    return this.get(row.id);
+  },
+
+  // 같은 일정을 사람이 먼저 입력해 둔 건을 찾기 위한 후보. 아직 이벤트 id가 붙지 않은 의뢰 중
+  // 인증종류가 같고 대표 시작일이 기간 안에 든 것만 좁혀 준다. 같은 건인지 최종 판정은
+  // confluence-sync 가 한다 — 모델명 표기 정규화·차수 비교는 SQL 로 하기에 마땅치 않다.
+  mergeCandidates({ cert_type, from, to } = {}) {
+    return db.prepare(`
+      SELECT id, model_name, cert_type, round, ${ACT_START} AS start_date
+      FROM requests
+      WHERE TRIM(COALESCE(confluence_event_id,'')) = ''
+        AND TRIM(cert_type) = @cert_type
+        AND ${ACT_START} IS NOT NULL
+        AND ${ACT_START} BETWEEN @from AND @to
+    `).all({ cert_type: String(cert_type ?? '').trim(), from, to });
+  },
+
   // 동기화로 들어온 의뢰 중 조회 기간에 걸친 것들. Confluence에서 사라진 이벤트를 찾는 데 쓴다.
   // 기간을 넘기지 않으면 동기화 건 전체를 돌려준다.
   confluenceRowsInRange({ from, to } = {}) {

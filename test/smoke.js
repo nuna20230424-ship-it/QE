@@ -1135,8 +1135,14 @@ ok('소문자 인증종류도 받는다', cparse.parseTitle('[nts] KM-100 > Pass
 ok('Failed → 완료 · Fail', (() => { const r = cparse.parseTitle('[NTS] KM-100 > Failed'); return r.status === '완료' && r.verdict === 'Fail'; })());
 ok('Dropped → 중단 · Drop', (() => { const r = cparse.parseTitle('[NTS] KM-100 > Dropped'); return r.status === '중단' && r.verdict === 'Drop'; })());
 ok('3차 표기도 회차로 읽는다', cparse.parseTitle('[NTS][3PL] KM-100 3차 > Passed').round === '3');
-ok('[MR] 단독은 Test type', cparse.parseTitle('[xTS][MR] KM-100 > Passed').test_type === 'MR');
-ok('[IR][MR]이면 MR은 Test 목적으로 내려간다', (() => { const r = cparse.parseTitle('[xTS][IR][MR] KM-100 > Passed'); return r.test_type === 'IR' && r.test_purpose === 'MR'; })());
+// MR은 Test type 목록과 Test 목적 목록 양쪽에 있다. 2026-09-21 사용자 결정 —
+// 목적을 채우는 다른 대괄호가 있으면 MR은 Test type, MR뿐이면 Test 목적.
+// 팀이 대시보드에 `Test 목적 = MR`로 적어, 예전 방식은 목적을 (미지정)으로 남겨 중복을 만들었다.
+ok('[MR] 단독은 Test 목적', (() => { const r = cparse.parseTitle('[xTS][MR] KM-100 > Passed'); return r.test_purpose === 'MR' && r.test_type === ''; })());
+ok('[MR][3PL]이면 MR은 Test type', (() => { const r = cparse.parseTitle('[xTS][MR][3PL] KM-100 > Passed'); return r.test_type === 'MR' && r.test_purpose === '3PL'; })());
+ok('[IR][MR]이면 MR은 Test 목적', (() => { const r = cparse.parseTitle('[xTS][IR][MR] KM-100 > Passed'); return r.test_type === 'IR' && r.test_purpose === 'MR'; })());
+ok('[IR] 단독은 Test type (목적으로 내려가지 않는다)', (() => { const r = cparse.parseTitle('[xTS][IR] KM-100 > Passed'); return r.test_type === 'IR' && r.test_purpose === ''; })());
+ok('대괄호 밖 MR도 같은 규칙', cparse.parseTitle('[xTS] KM-100 MR 1st > Passed').test_purpose === 'MR');
 
 // 해석 못한 값은 경고로 남기고 필드를 비운다 (조용히 틀린 값을 넣지 않는다)
 const unknownCert = cparse.parseTitle('[ZZZ][Pre] KM-100 > Passed');

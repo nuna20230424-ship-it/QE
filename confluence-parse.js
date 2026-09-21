@@ -96,14 +96,25 @@ function parseTitle(title) {
     else warnings.push(`인증종류를 알 수 없습니다: [${tags[0]}]`);
   }
 
-  // 2. Test type / Test 목적 — 두 번째 이후 대괄호.
-  //    IR/LR/MR/파생이면 type, 아니면 목적으로 본다. MR은 양쪽에 다 있어 먼저 비어 있는 칸이 가져간다.
+  // 2. Test type / Test 목적 — 두 번째 이후 대괄호. IR/LR/파생이면 type, 3PL·Official 등이면 목적.
+  //    MR만 양쪽 목록에 다 있다. 판단을 미뤘다가 마지막에 붙인다 —
+  //    `[xTS][MR][3PL]`처럼 목적을 채우는 다른 대괄호가 있으면 MR은 Test type,
+  //    `[xTS][MR]`처럼 MR뿐이면 Test 목적이다. 팀이 대시보드에 `Test 목적 = MR`로 적는다
+  //    (2026-09-21 사용자 결정. 먼저 오는 칸이 가져가던 기존 방식은 목적을 (미지정)으로 남겨
+  //    수기 의뢰와 같은 건인데도 다른 행으로 갈리게 했다).
+  const ambiguous = [];
   for (const tag of tags.slice(1)) {
+    if (key(tag) === 'mr') { ambiguous.push(tag); continue; }
     const t = TEST_TYPES.find((v) => v.toLowerCase() === key(tag));
     if (t && !out.test_type) { out.test_type = t; continue; }
     const p = TEST_PURPOSES[key(tag)];
     if (p && !out.test_purpose) { out.test_purpose = p; continue; }
     warnings.push(`분류하지 못한 대괄호 값: [${tag}]`);
+  }
+  for (const tag of ambiguous) {
+    if (!out.test_purpose) out.test_purpose = 'MR';
+    else if (!out.test_type) out.test_type = 'MR';
+    else warnings.push(`분류하지 못한 대괄호 값: [${tag}]`);
   }
 
   // 3. 모델명·회차 — '>' 앞. 지시서 예시 1처럼 짝 없는 ']'가 섞여 있어도 떼어 낸다.
@@ -125,14 +136,20 @@ function parseTitle(title) {
 
     // 나머지는 알아볼 수 있는 칸만 채운다. 대괄호에서 이미 채운 칸은 덮지 않는다(대괄호가 우선).
     // 분류되지 않는 조각은 조용히 건너뛴다 — 제목 뒷부분은 자유 입력이라 경고로 남길 값이 아니다.
+    const tailMr = [];
     for (const tk of tokens.slice(i)) {
       const r = tk.match(ROUND);
       if (r && !out.round) { out.round = String(Number(r[1])); continue; }
       if (FW_VERSION.test(tk) && !out.fw_version) { out.fw_version = tk; continue; }
+      if (key(tk) === 'mr') { tailMr.push(tk); continue; }   // 대괄호와 같은 규칙으로 미뤄 둔다
       const t = TEST_TYPES.find((v) => v.toLowerCase() === key(tk));
       if (t && !out.test_type) { out.test_type = t; continue; }
       const p = TEST_PURPOSES[key(tk)];
       if (p && !out.test_purpose) { out.test_purpose = p; }
+    }
+    for (const _ of tailMr) {
+      if (!out.test_purpose) out.test_purpose = 'MR';
+      else if (!out.test_type) out.test_type = 'MR';
     }
   }
 

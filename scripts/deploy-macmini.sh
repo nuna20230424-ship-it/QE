@@ -1,6 +1,6 @@
 #!/bin/bash
-# 맥미니(dqa@172.16.5.102:3001) 배포 스크립트 — 로컬에서 stdin으로 넘겨 실행한다
-#   ssh dqa@172.16.5.102 bash -s < scripts/deploy-macmini.sh
+# 맥미니(dqa@172.16.3.136:3001) 배포 스크립트 — 로컬에서 stdin으로 넘겨 실행한다
+#   ssh dqa@172.16.3.136 bash -s < scripts/deploy-macmini.sh
 #
 # 안전 원칙
 #   - data.db 백업을 먼저 하고, 실패하면 즉시 중단한다
@@ -125,6 +125,6 @@ echo "실행 중 PID: $(lsof -ti:"$PORT" 2>/dev/null | head -1 || echo '(확인 
 grep -m1 'notify' server.log 2>/dev/null || true
 
 say "배포 완료"
-echo "접속: http://172.16.5.102:$PORT"
+echo "접속: http://172.16.3.136:$PORT"
 echo "되돌리려면: git log --oneline -5 로 이전 커밋을 확인하고 git checkout <커밋> 후 5~6단계를 다시 실행하세요."
 echo "데이터가 꼬였을 때만 백업본을 되돌립니다: cp \$HOME/data.db.bak-<타임스탬프> data.db"

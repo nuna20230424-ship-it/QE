@@ -1,12 +1,14 @@
 # Mac Mini 재배포 가이드
 
+> **2026-09-30 운영 서버 이전:** 운영 서버가 Ubuntu PC `172.16.5.102`로 바뀌었다. 새 서버 설치·재배포는 **[DEPLOY-UBUNTU.md](DEPLOY-UBUNTU.md)** 를 따른다. 이 문서는 이전 서버(Mac Mini) 기록으로 남겨 둔다.
+
 QE 인증 일정 대시보드 운영 서버(Mac Mini)를 최신 코드로 업데이트하는 절차. **Claude는 이 서버에 SSH로 접근할 수 없으므로**(비밀키 미등록) 아래 명령을 사용자가 Mac Mini 터미널에서 직접 실행해야 한다. 실행 후 결과를 알려주면 배포 후 점검(6번)은 Claude가 HTTP로 대신 확인할 수 있다.
 
 | 항목 | 값 |
 |------|-----|
-| 서버 | Mac Mini, 사내 IP `172.16.5.102` |
+| 서버 | Mac Mini, 사내 IP `172.16.3.136` |
 | 운영 포트 | `3001` |
-| 접속 주소 | `http://172.16.5.102:3001` |
+| 접속 주소 | `http://172.16.3.136:3001` |
 | 배포 폴더 | 클론한 경로 (예: `~/cert-schedule-dashboard` 또는 `~/QE`) — 정확한 경로를 모르면 2-2에서 찾는 법 참고 |
 | 저장소 | `https://github.com/nuna20230424-ship-it/QE.git` |
 
@@ -174,7 +176,7 @@ tail -20 server.log
 ### 5) 켠 뒤 확인 (Claude가 HTTP로 대신 가능)
 
 ```
-GET http://172.16.5.102:3001/api/confluence/status
+GET http://172.16.3.136:3001/api/confluence/status
 ```
 
 `configured:true` · `polling:true` · `last` 에 첫 회차 결과(생성·갱신·건너뜀)가 찍힌다.
@@ -243,25 +245,25 @@ tail -f server.log
 ### 6-1. API 확인 (Claude가 대신 확인 가능 — 사내망 HTTP는 PowerShell로 접근)
 아래 세 엔드포인트가 200을 반환해야 이번 배포가 제대로 적용된 것이다 (구버전은 404).
 ```
-GET http://172.16.5.102:3001/api/options
-GET http://172.16.5.102:3001/api/next-round?model_name=x&cert_type=Netflix%20NTS
-GET http://172.16.5.102:3001/api/bottlenecks
+GET http://172.16.3.136:3001/api/options
+GET http://172.16.3.136:3001/api/next-round?model_name=x&cert_type=Netflix%20NTS
+GET http://172.16.3.136:3001/api/bottlenecks
 ```
 `next-round`는 `model_name`·`cert_type` 없이 호출하면 400이 정상이다(이번 Task 0 수정으로 `cert_type`도 필수가 됐다).
 
 이번(2026-09-14) 인증 통계 수정이 올라갔는지는 응답에 `rounds` 필드가 생겼는지로 본다. 배포 전에는 없다.
 ```powershell
-$r = Invoke-WebRequest "http://172.16.5.102:3001/api/cert-stats?from=2026-09-07&to=2026-09-11" -UseBasicParsing
+$r = Invoke-WebRequest "http://172.16.3.136:3001/api/cert-stats?from=2026-09-07&to=2026-09-11" -UseBasicParsing
 $r.Content.Contains('"rounds"')     # True 면 반영됨
 ```
 
 Confluence 동기화를 켰다면 상태도 함께 본다 (4-B 5번).
 ```
-GET http://172.16.5.102:3001/api/confluence/status
+GET http://172.16.3.136:3001/api/confluence/status
 ```
 
 ### 6-2. 브라우저 육안 확인 (사람이 직접, `checklist.md` 10차 항목)
-`http://172.16.5.102:3001` 접속 후:
+`http://172.16.3.136:3001` 접속 후:
 - [ ] 의뢰요청 모달에서 모델명 입력 시 과거 이력이 드롭다운으로 뜨는지
 - [ ] 인증종류·Test type·Test 목적·모델명을 바꿀 때마다 진행차수가 다시 자동 산출되는지 (스피너 → 값 채워짐)
 - [ ] 진행차수 옆 ⓘ 클릭 시 이전 차수 타임라인이 뜨는지
@@ -310,6 +312,6 @@ cp ~/data.db.bak-<타임스탬프> data.db   # 1번 백업이 필요한 경우�
 ## 부록 — 자주 헷갈리는 점
 - **개발 PC도 포트 3001을 쓴다.** "3001 서버 재시작" 요청을 받으면 Mac Mini인지 개발 PC인지 먼저 확인한다.
 - **Claude는 이 서버에 SSH로 못 들어간다.** 배포 명령은 사람이 직접 실행하고, 결과(로그 출력, 에러 메시지)를 붙여넣어 주면 다음 단계를 안내할 수 있다.
-- **Bash 도구는 맥미니(`172.16.5.102`)에 못 닿는다.** Claude가 운영 서버를 확인할 때는 PowerShell의 `Invoke-WebRequest`를 쓴다. 다만 `confluence.kaonmedia.com`은 Bash에서도 닿아서, Confluence 진단 스크립트(`scripts/pat-check.js` 등)는 개발 PC에서 Claude가 직접 돌릴 수 있다.
+- **Bash 도구는 맥미니(`172.16.3.136`)에 못 닿는다.** Claude가 운영 서버를 확인할 때는 PowerShell의 `Invoke-WebRequest`를 쓴다. 다만 `confluence.kaonmedia.com`은 Bash에서도 닿아서, Confluence 진단 스크립트(`scripts/pat-check.js` 등)는 개발 PC에서 Claude가 직접 돌릴 수 있다.
 - **`config.json`과 `.env`는 서버마다 따로다.** `.gitignore` 대상이라 push·pull로 옮겨지지 않는다. 맥미니에 새 설정이 필요하면 항상 4-B를 다시 본다.
 - **QE 일정 페이지는 캘린더가 두 개 겹쳐 있다.** 개발자도구에서 `events.json` 요청을 하나만 보고 판단하면 안 된다. 자세한 건 `doc/CONFLUENCE-PROBE-실행가이드.md` 3단계.

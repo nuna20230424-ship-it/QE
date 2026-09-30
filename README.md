@@ -264,13 +264,16 @@ PORT=8080 npm start  # 포트 변경
 npm test             # 스모크 테스트 61건
 ```
 
-## Mac Mini 배포
+## 운영 서버
 
-> 이미 운영 중인 서버를 최신 코드로 업데이트할 때는 아래 대신 **[DEPLOY.md](DEPLOY.md)**(재배포 가이드)를 따른다. 아래 절차는 처음 설치할 때만 쓴다.
-
-- **서버**: Mac Mini, 사내 IP `172.16.5.102`
+- **서버**: Ubuntu 22.04 PC, 사내 IP `172.16.5.102` (2026-09-30 Mac Mini에서 이전)
 - **운영 포트**: `3001`
 - **접속 주소**: `http://172.16.5.102:3001`
+- **설치·재배포**: **[DEPLOY-UBUNTU.md](DEPLOY-UBUNTU.md)** — `scripts/deploy-ubuntu.sh`가 systemd 서비스까지 만든다
+
+## (이전) Mac Mini 배포
+
+> 이전 운영 서버(Mac Mini `172.16.3.136`) 기록이다. 재배포 절차는 **[DEPLOY.md](DEPLOY.md)**.
 
 1. 프로젝트를 Mac Mini로 복사 (git clone 또는 폴더 복사). `node_modules`, `data.db`는 제외.
 2. 의존성 설치 및 기동:
@@ -279,7 +282,7 @@ npm test             # 스모크 테스트 61건
    npm install
    PORT=3001 HOST=0.0.0.0 npm start
    ```
-3. 같은 사내망 PC 브라우저에서 접속: `http://172.16.5.102:3001`
+3. 같은 사내망 PC 브라우저에서 접속: `http://172.16.3.136:3001`
 4. macOS 방화벽이 켜져 있으면 node의 들어오는 연결을 허용 (시스템 설정 → 네트워크 → 방화벽 → 옵션에서 node 허용).
 
 ### 상시 구동 (재부팅·크래시 자동 복구) — launchd 권장

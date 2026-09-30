@@ -71,18 +71,54 @@ bash ~/deploy-ubuntu.sh ~/qe.bundle      # 서버가 GitHub에 닿으면 인자 
 
 처음 실행하면 `config.json`이 없으니 **메일이 꺼진 채로** 뜬다. 데이터와 설정을 넣기 전에 메일이 나가지 않도록 일부러 이 순서로 한다.
 
-## 4. 운영 데이터 옮기기 (서비스를 멈춘 채로)
+## 4. 운영 데이터 옮기기 (Mac Mini → Ubuntu)
+
+DB는 WAL 모드이고 서버에 종료 처리 코드가 없다. 그래서 프로세스를 끄고 `data.db`만 복사하면 `data.db-wal`에만 있던 최근 변경이 빠질 수 있다. **맥의 `sqlite3 .backup`으로 한 파일짜리 스냅샷을 만들어 옮긴다.** 파일에는 실명이 든 실제 의뢰 데이터가 있으니 메일·메신저로 보내지 않는다.
+
+### 4-1. Mac Mini에서 — 서버를 멈추고 스냅샷 만들기
+
+맥 터미널에서 실행하거나, 개발 PC의 일반 PowerShell 창에서 `ssh dqa@172.16.3.136`으로 접속해 실행한다.
 
 ```bash
+PID=$(lsof -ti:3001 | head -1); echo "PID=$PID"
+APP=$(lsof -a -p "$PID" -d cwd -Fn | sed -n 's/^n//p'); echo "APP=$APP"
+# PID 가 비어 있으면(서버가 이미 꺼져 있으면) 설치 폴더를 직접 넣는다. 예: APP=~/cert-schedule-dashboard
+kill "$PID"; sleep 3; lsof -ti:3001 || echo "stopped"
+cd "$APP" && ls -l data.db*
+sqlite3 data.db ".backup $HOME/qe-data.db"
+sqlite3 ~/qe-data.db "PRAGMA integrity_check; SELECT count(*) FROM requests;"
+```
+
+- 마지막 줄이 `ok`와 의뢰 건수를 찍어야 한다. **이 건수를 적어 둔다**(4-4에서 대조).
+- `kill` 뒤에도 `stopped`가 안 나오고 서버가 다시 뜨면 launchd가 살리고 있는 것이다. `launchctl unload ~/Library/LaunchAgents/com.qa.cert-dashboard.plist` 후 다시 확인한다.
+- 맥 서버는 **다시 켜지 않는다.** 스냅샷 뒤에 들어온 입력은 옮겨지지 않고, 두 서버가 함께 돌면 보고 메일이 두 번 나간다.
+
+### 4-2. 개발 PC에서 — 파일 넘기기 (일반 PowerShell 창)
+
+```powershell
+cd "$env:USERPROFILEDesktopQE-서버설치-172.16.5.102"
+scp dqa@172.16.3.136:~/qe-data.db .
+scp qe-data.db qe@172.16.5.102:~/
+Remove-Item qe-data.db        # 개발 PC에 운영 데이터를 남기지 않는다
+```
+
+### 4-3. Ubuntu에서 — 넣고 다시 켜기 (`ssh qe@172.16.5.102`)
+
+```bash
+cd ~/cert-schedule-dashboard
 sudo systemctl stop qe-dashboard
-# 이전 서버에서 받은 data.db 를 ~/cert-schedule-dashboard/data.db 로 둔다
-#   예) 개발 PC 일반 PowerShell: scp data.db <계정>@172.16.5.102:~/cert-schedule-dashboard/
-ls -l ~/cert-schedule-dashboard/data.db*
+mkdir -p ~/pre-migration && mv data.db data.db-wal data.db-shm ~/pre-migration/ 2>/dev/null; ls ~/pre-migration
+cp ~/qe-data.db data.db
+node -e "const d=new (require('better-sqlite3'))('data.db',{readonly:true});console.log(d.pragma('integrity_check',{simple:true}), d.prepare('select count(*) n from requests').get().n)"
 sudo systemctl start qe-dashboard
 ```
 
-- 이전 서버에서 복사할 때는 **그쪽 서버를 먼저 멈춘다.** 돌고 있는 SQLite를 복사하면 `data.db-wal`에만 있던 최근 변경이 빠질 수 있다.
-- 새 서버에 이미 입력한 데이터가 있으면 덮기 전에 `cp data.db ~/data.db.bak-$(date +%Y%m%d-%H%M%S)`로 백업한다.
+- `node -e` 줄이 `ok <건수>`를 찍고, 그 건수가 4-1과 같아야 한다.
+- 설치 때 생긴 빈 DB는 `~/pre-migration/`으로 옮겨 둔다. 문제가 없으면 나중에 지운다.
+
+### 4-4. 확인
+
+Claude가 `GET http://172.16.5.102:3001/api/stats`의 `total`을 4-1 건수와 대조한다. 브라우저에서도 의뢰 목록이 맥에서 보던 것과 같은지 본다.
 
 ## 5. 메일·Confluence 설정
 

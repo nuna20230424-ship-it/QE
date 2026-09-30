@@ -6,7 +6,7 @@ QE 인증 일정 대시보드를 새 운영 서버(Ubuntu PC `172.16.5.102`)에 
 
 | 항목 | 값 |
 |------|-----|
-| 서버 | Ubuntu 22.04 PC (2026-09-30 SSH 배너로 확인), 사내 IP `172.16.5.102` |
+| 서버 | Ubuntu PC (사용자 확인, SSH 배너상 22.04 — 서버에서 `lsb_release -d`로 한 번 더 확인), 사내 IP `172.16.5.102` |
 | 운영 포트 | `3001` |
 | 접속 주소 | `http://172.16.5.102:3001` |
 | SSH | `22`번 열림. 계정은 서버 담당자에게 확인 (아래 `<계정>`) |
@@ -28,18 +28,20 @@ QE 인증 일정 대시보드를 새 운영 서버(Ubuntu PC `172.16.5.102`)에 
 
 ## 1. Node.js 설치 (서버에서, 한 번만)
 
-Ubuntu 22.04 기본 `apt`의 nodejs는 v12라서 쓸 수 없다. 18 이상이 필요하고, NodeSource 저장소의 22 LTS를 쓴다.
+**Node 22를 쓴다.** Ubuntu 22.04 기본 `apt`의 nodejs는 v12라서 쓸 수 없다(18 이상 필요).
 
 ```bash
-node -v    # 이미 v18 이상이면 이 단계는 건너뛴다
+lsb_release -d; node -v                       # OS와 이미 깔린 node 버전 확인
 sudo apt update
 sudo apt install -y curl git build-essential python3
+# node 가 없거나 v18 미만일 때만 아래 두 줄
 curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
 sudo apt install -y nodejs
-node -v    # v22.x 확인
+node -v                                       # v22.x 확인
 ```
 
-`build-essential`·`python3`은 `better-sqlite3`의 미리 빌드된 바이너리를 못 받았을 때 소스 빌드에 쓰인다.
+- **Node 24는 피한다.** 2026-09-30 WSL에서 확인한 결과, 이 저장소의 `better-sqlite3` 11.10.0은 Node 24용 미리 빌드된 바이너리가 없어 소스 빌드로 넘어간다. `make`가 없으면 `npm ci`가 `not found: make`로 실패한다. 이미 24가 깔려 있으면 위 `build-essential` 줄을 꼭 실행한다.
+- Node 22에서는 미리 빌드된 바이너리를 받으므로 컴파일러 없이 설치된다(같은 날 확인). `build-essential`은 만일을 위한 것이다.
 
 ## 2. 파일 올리기 (개발 PC의 일반 PowerShell 창에서)
 
@@ -54,6 +56,8 @@ scp qe.bundle deploy-ubuntu.sh <계정>@172.16.5.102:~/
 ssh <계정>@172.16.5.102
 bash ~/deploy-ubuntu.sh ~/qe.bundle      # 서버가 GitHub에 닿으면 인자 없이: bash ~/deploy-ubuntu.sh
 ```
+
+`sudo bash ...`로 실행하지 않는다. 일반 계정으로 실행하면 서비스 등록 때만 sudo 비밀번호를 묻는다. root로 실행하면 스크립트가 멈춘다. 서비스가 그 계정으로 돌기 때문에 sudo 권한이 있는 계정이어야 한다.
 
 스크립트가 하는 일은 아래와 같다.
 
@@ -136,3 +140,21 @@ cp ~/data.db.bak-<시각> data.db          # 데이터가 꼬였을 때만 (서�
 ```
 
 되돌린 뒤 다시 최신으로 갈 때는 `git checkout main`을 먼저 한다. 스크립트는 `main`이 아니면 멈춘다.
+
+## 검증 기록
+
+2026-09-30 개발 PC의 WSL(Ubuntu 24.04, systemd 255)에서 임시 계정으로 `qe.bundle` + `deploy-ubuntu.sh`를 실제로 돌려 확인했다. 운영 서버(22.04)와 판이 다르지만 스크립트가 쓰는 bash·systemd·npm 동작은 같다. 테스트 후 임시 계정·서비스·sudo 설정은 지웠다.
+
+| 항목 | Node 22.x | Node 24.15 |
+|------|-----------|------------|
+| 번들로 첫 설치 → `/api/resources` 200 | 통과 | `npm ci` 실패 (`not found: make`) |
+| 서비스 `enabled`·`active`, `User`=설치 계정 | 통과 | — |
+| 서비스 환경 `TZ=Asia/Seoul`·`PORT=3001`·`HOST=0.0.0.0` | 통과 | — |
+| `server.log`·`data.db`가 설치 계정 소유 | 통과 | — |
+| origin이 GitHub 주소로 바뀜 | 통과 | — |
+| `config.json` 없을 때 메일 꺼진 채 기동 | 통과 | — |
+| 재실행(재배포): data.db 백업 → 이미 최신 → 200 | 통과 | — |
+| 프로세스 강제 종료 후 자동 재시작 | 통과 | — |
+| root로 실행하면 거부 | 통과 | — |
+
+운영 서버에서 확인하지 못한 것은 sudo 비밀번호 입력, ufw가 켜져 있을 때의 허용 추가, 22.04 판의 NodeSource 설치다.

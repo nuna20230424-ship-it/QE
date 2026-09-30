@@ -21,6 +21,8 @@ BUNDLE="${1:-}"
 say() { printf '\n=== %s ===\n' "$1"; }
 die() { printf '\n[중단] %s\n' "$1" >&2; exit 1; }
 
+# sudo bash 로 돌리면 root 홈에 root 소유로 깔리고 서비스도 root 로 돈다 — 일반 계정으로 실행하고 sudo 는 스크립트가 필요할 때만 쓴다
+[ "$(id -u)" -ne 0 ] || die "root 로 실행하지 마세요. 일반 계정으로 bash deploy-ubuntu.sh 를 실행하면 필요한 곳에서만 sudo 비밀번호를 묻습니다."
 [ -z "$BUNDLE" ] || [ -f "$BUNDLE" ] || die "번들 파일이 없습니다: $BUNDLE"
 [ -z "$BUNDLE" ] || BUNDLE="$(cd "$(dirname "$BUNDLE")" && pwd)/$(basename "$BUNDLE")"
 
@@ -85,9 +87,9 @@ echo "현재: $(git log --oneline -1)"
 
 # ---- 3. 의존성 ----
 say "3. npm ci"
-# better-sqlite3는 네이티브 모듈이다. 미리 빌드된 바이너리를 못 받으면 소스 빌드로 넘어가고,
-# 그때 컴파일러가 없으면 실패한다 → sudo apt install -y build-essential python3 후 다시 실행
-npm ci --omit=dev --no-audit --no-fund
+# better-sqlite3는 네이티브 모듈이다. 미리 빌드된 바이너리가 없는 node 버전(2026-09 확인: 24)이면
+# 소스 빌드로 넘어가고, 그때 make·g++ 가 없으면 실패한다
+npm ci --omit=dev --no-audit --no-fund   || die "npm ci 실패. 'not found: make' 가 보이면 sudo apt install -y build-essential python3 후 다시 실행하세요 (node $(node -v))."
 
 # ---- 4. 서버별 파일 확인 (만들지 않는다) ----
 say "4. 서버별 파일 확인"
@@ -132,10 +134,24 @@ EOF
   sudo systemctl daemon-reload
   sudo systemctl enable "$SERVICE"
 fi
+# 로그 파일을 먼저 만들어 둔다 — 없으면 systemd 가 root 소유로 만들어 계정에서 비우거나 옮길 수 없다
+touch server.log
 sudo systemctl restart "$SERVICE"
 
-if command -v ufw >/dev/null && sudo ufw status | grep -q "Status: active"; then
-  sudo ufw status | grep -q "^$PORT/tcp" || { echo "방화벽(ufw)에 $PORT/tcp 허용 추가"; sudo ufw allow "$PORT/tcp"; }
+if command -v ufw >/dev/null; then
+  UFW="$(sudo ufw status 2>/dev/null || true)"
+  if printf '%s
+' "$UFW" | grep -q "Status: active"; then
+    if printf '%s
+' "$UFW" | grep -q "^$PORT/tcp"; then
+      echo "방화벽(ufw): $PORT/tcp 이미 허용됨"
+    else
+      echo "방화벽(ufw)에 $PORT/tcp 허용 추가"
+      sudo ufw allow "$PORT/tcp"
+    fi
+  else
+    echo "방화벽(ufw) 꺼져 있음 — 추가 설정 없음"
+  fi
 fi
 
 # ---- 6. 기동 검증 ----

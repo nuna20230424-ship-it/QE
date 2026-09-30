@@ -9,8 +9,8 @@ QE 인증 일정 대시보드를 새 운영 서버(Ubuntu PC `172.16.5.102`)에 
 | 서버 | Ubuntu PC (사용자 확인, SSH 배너상 22.04 — 서버에서 `lsb_release -d`로 한 번 더 확인), 사내 IP `172.16.5.102` |
 | 운영 포트 | `3001` |
 | 접속 주소 | `http://172.16.5.102:3001` |
-| SSH | `22`번 열림. 계정은 서버 담당자에게 확인 (아래 `<계정>`) |
-| 설치 폴더 | `~/cert-schedule-dashboard` (스크립트 기본값, `APP_DIR=`로 바꿀 수 있음) |
+| SSH | `22`번. 설치 계정 `qe` (호스트 `qe-System-Product-Name`, 2026-09-30 설치) |
+| 설치 폴더 | `/home/qe/cert-schedule-dashboard` (스크립트 기본값 `~/cert-schedule-dashboard`, `APP_DIR=`로 바꿀 수 있음) |
 | 서비스 | systemd `qe-dashboard` (재부팅·크래시 자동 복구) |
 | 저장소 | `https://github.com/nuna20230424-ship-it/QE.git` |
 

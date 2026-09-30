@@ -1,7 +1,7 @@
 # [작업지시서] Confluence QE Schedule - 인증 대시보드 실시간 연동
 
 ## 1. 작업 개요
-- **목적:** 사내 Confluence 페이지의 'QE Schedule' 캘린더 데이터를 사내 인증 대시보드(http://172.16.3.136:3001/)에 실시간으로 동기화
+- **목적:** 사내 Confluence 페이지의 'QE Schedule' 캘린더 데이터를 사내 인증 대시보드(http://172.16.5.102:3001/)에 실시간으로 동기화
 - **핵심 목표:** Confluence 일정 등록/수정/삭제 이벤트 발생 시 대시보드 DB(인증 현황)에 즉시 자동 업데이트 및 데이터 파싱 적용
 
 ## 2. 대상 시스템 및 인증 정보
@@ -10,7 +10,7 @@
   - 대상: 메인 페이지 내 **QE Schedule** Team Calendar 이벤트
   - 인증 방식: Confluence Personal Access Token (PAT) - `.env` 환경 변수로 관리
 - **Target (인증 대시보드):**
-  - URL: `http://172.16.3.136:3001/`
+  - URL: `http://172.16.5.102:3001/`
   - 타겟 메뉴: **QE - Netflix, Google, Amazon 인증 일정 대시보드 > 인증 현황**
 
 ## 3. 필드 매핑 및 데이터 가공 규칙

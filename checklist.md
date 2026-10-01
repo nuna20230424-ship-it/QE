@@ -12,7 +12,9 @@
 - [x] Mac Mini 실제 IP 확정 → 172.16.3.136 (접속 http://172.16.3.136:3000)
 - [x] Mac Mini 배포 및 사내 접속 확인 (172.16.3.136:3001, 2026-06-23)
 - [x] Ubuntu PC(172.16.5.102) 설치 — deploy-ubuntu.sh 실행, 사내망에서 http://172.16.5.102:3001 200 확인 (2026-09-30, 계정 qe, 빈 DB)
-- [ ] Ubuntu PC에 운영 data.db·config.json·.env 이전 후 Mac Mini 정지
+- [x] Mac Mini(172.16.5.164) 정지 — launchd com.stbqa.cert-dashboard unload -w (2026-10-01)
+- [x] 운영 data.db 이전 — sqlite3 .backup, 133건·이력 910건, 새 서버 /api/stats total 133 일치 (2026-10-01)
+- [ ] Ubuntu PC에 config.json·.env 넣고 메일·Confluence 동기화 켜기
 - [ ] launchd 상시 구동 설정 (재부팅·크래시 자동 복구)
 
 ## 2차 보완 (2026-06-23 착수 / 2026-06-24 구현·검증 완료)

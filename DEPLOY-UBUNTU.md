@@ -91,7 +91,7 @@ sqlite3 ~/qe-data.db "PRAGMA integrity_check; SELECT count(*) FROM requests;"
 ```
 
 - 마지막 줄이 `ok`와 의뢰 건수를 찍어야 한다. **이 건수를 적어 둔다**(4-4에서 대조).
-- `kill` 뒤에도 `stopped`가 안 나오고 서버가 다시 뜨면 launchd가 살리고 있는 것이다. `launchctl unload ~/Library/LaunchAgents/com.qa.cert-dashboard.plist` 후 다시 확인한다.
+- `kill` 뒤에도 `stopped`가 안 나오고 서버가 다시 뜨면 launchd가 살리고 있는 것이다. `launchctl unload -w ~/Library/LaunchAgents/com.stbqa.cert-dashboard.plist` 후 다시 확인한다. 실제 맥의 launchd 이름은 `com.stbqa.cert-dashboard`다(2026-10-01 확인, `-w`는 재부팅 후에도 다시 켜지지 않게 막는다). 서버가 멈춘 뒤에는 `lsof`로 폴더를 못 찾으니 `grep -A1 WorkingDirectory` 로 plist에서 찾는다.
 - 맥 서버는 **다시 켜지 않는다.** 스냅샷 뒤에 들어온 입력은 옮겨지지 않고, 두 서버가 함께 돌면 보고 메일이 두 번 나간다.
 
 ### 4-2. 개발 PC에서 — 파일 넘기기 (일반 PowerShell 창)

@@ -1,6 +1,6 @@
 # Ubuntu 서버 설치·재배포 가이드
 
-QE 인증 일정 대시보드를 새 운영 서버(Ubuntu PC `172.16.5.102`)에 설치하고 이후 갱신하는 절차다. 이전 서버(Mac Mini `172.16.3.136`)용 절차는 [DEPLOY.md](DEPLOY.md)에 남아 있다.
+QE 인증 일정 대시보드를 새 운영 서버(Ubuntu PC `172.16.5.102`)에 설치하고 이후 갱신하는 절차다. 이전 서버(Mac Mini, 현재 `172.16.5.164`)용 절차는 [DEPLOY.md](DEPLOY.md)에 남아 있다.
 
 **Claude Code 세션은 이 서버에 SSH로 붙지 못한다.** 아래 명령은 사용자가 **일반 PowerShell 창**(Claude Code 밖)이나 서버 터미널에서 직접 실행한다. `!` 접두사도 같은 제약을 받는다. 설치가 끝난 뒤 HTTP 확인(6번)은 Claude가 대신할 수 있다.
 
@@ -97,7 +97,7 @@ sqlite3 ~/qe-data.db "PRAGMA integrity_check; SELECT count(*) FROM requests;"
 ### 4-2. 개발 PC에서 — 파일 넘기기 (일반 PowerShell 창)
 
 ```powershell
-cd "$env:USERPROFILEDesktopQE-서버설치-172.16.5.102"
+cd "$env:USERPROFILE\Desktop\QE-서버설치-172.16.5.102"
 scp dqa@172.16.5.164:~/qe-data.db .
 scp qe-data.db qe@172.16.5.102:~/
 Remove-Item qe-data.db        # 개발 PC에 운영 데이터를 남기지 않는다

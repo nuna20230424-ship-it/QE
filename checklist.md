@@ -14,7 +14,8 @@
 - [x] Ubuntu PC(172.16.5.102) 설치 — deploy-ubuntu.sh 실행, 사내망에서 http://172.16.5.102:3001 200 확인 (2026-09-30, 계정 qe, 빈 DB)
 - [x] Mac Mini(172.16.5.164) 정지 — launchd com.stbqa.cert-dashboard unload -w (2026-10-01)
 - [x] 운영 data.db 이전 — sqlite3 .backup, 133건·이력 910건, 새 서버 /api/stats total 133 일치 (2026-10-01)
-- [ ] Ubuntu PC에 config.json·.env 넣고 메일·Confluence 동기화 켜기
+- [x] config.json 이전 (맥→Ubuntu 직접 scp, baseUrl 172.16.5.102:3001) — 2026-10-01
+- [ ] .env(Confluence) — 보류: 중복 147·149·150 처리 결정 먼저, config.json 에 confluence 블록(baseUrl·subCalendarId)도 비어 있음
 - [ ] launchd 상시 구동 설정 (재부팅·크래시 자동 복구)
 
 ## 2차 보완 (2026-06-23 착수 / 2026-06-24 구현·검증 완료)

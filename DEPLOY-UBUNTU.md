@@ -13,6 +13,7 @@ QE 인증 일정 대시보드를 새 운영 서버(Ubuntu PC `172.16.5.102`)에 
 | 설치 폴더 | `/home/qe/cert-schedule-dashboard` (스크립트 기본값 `~/cert-schedule-dashboard`, `APP_DIR=`로 바꿀 수 있음) |
 | 서비스 | systemd `qe-dashboard` (재부팅·크래시 자동 복구) |
 | 저장소 | `https://github.com/nuna20230424-ship-it/QE.git` |
+| 이전 서버 | Mac Mini `172.16.5.164` (2026-10-01 확인, 예전 `172.16.3.136`에서 바뀜), SSH `dqa` |
 
 ## 0. 옮길 파일
 
@@ -77,7 +78,7 @@ DB는 WAL 모드이고 서버에 종료 처리 코드가 없다. 그래서 프�
 
 ### 4-1. Mac Mini에서 — 서버를 멈추고 스냅샷 만들기
 
-맥 터미널에서 실행하거나, 개발 PC의 일반 PowerShell 창에서 `ssh dqa@172.16.3.136`으로 접속해 실행한다.
+맥 터미널에서 실행하거나, 개발 PC의 일반 PowerShell 창에서 `ssh dqa@172.16.5.164`으로 접속해 실행한다.
 
 ```bash
 PID=$(lsof -ti:3001 | head -1); echo "PID=$PID"
@@ -97,7 +98,7 @@ sqlite3 ~/qe-data.db "PRAGMA integrity_check; SELECT count(*) FROM requests;"
 
 ```powershell
 cd "$env:USERPROFILEDesktopQE-서버설치-172.16.5.102"
-scp dqa@172.16.3.136:~/qe-data.db .
+scp dqa@172.16.5.164:~/qe-data.db .
 scp qe-data.db qe@172.16.5.102:~/
 Remove-Item qe-data.db        # 개발 PC에 운영 데이터를 남기지 않는다
 ```

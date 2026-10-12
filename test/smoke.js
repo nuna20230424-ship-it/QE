@@ -131,6 +131,13 @@ ok('이번주 KM-100/xTS/3PL 판정 2건이 1차·3차 두 행으로', wkStats.r
   .map((r) => r.round).join() === '1,3');
 ok('이번주 판정 건수 = 4', wkStats.totals.judged === 4, String(wkStats.totals.judged));
 
+// 지난주에 시작해 이번 주 월요일에 끝난 건은 이번 주에만 잡힌다 (주 경계 중복 방지)
+const span = mk({ cert_type: 'Google xTS', model_name: 'KM-SPAN', purpose: '3PL', round: '1', start: lastWeek(3), end: thisWeek(0), status: '완료', verdict: 'Pass' });
+ok('완료일이 이번 주인 건은 이번 주 통계에 포함', repo.certStats(wk).rows.some((r) => r.model_name === 'KM-SPAN'));
+ok('시작이 지난주여도 완료일이 이번 주면 지난주 통계에서 제외',
+  !repo.certStats(report.lastWorkWeekRange(now)).rows.some((r) => r.model_name === 'KM-SPAN'));
+repo.remove ? repo.remove(span.id, '테스트') : null;
+
 // ---------- Task 5. 진행차수 자동 산출 ----------
 head('Task 5. 진행차수 자동 산출');
 // 직전(최신) 건이 4차 진행중(미판정)이므로 Pass가 아니라서 이어진다 — 미판정도 "Pass가 아닌 경우"에 포함.

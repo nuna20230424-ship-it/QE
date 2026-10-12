@@ -96,6 +96,8 @@ const ACT_END = "COALESCE(NULLIF(completed_date,''), NULLIF(started_date,''), NU
 
 // 의뢰 하나의 대표 진행일(YYYY-MM-DD). 완료일 → 시작일 → 예약일 → 희망일 → 등록일 순.
 const ACT_DATE = `substr(COALESCE(NULLIF(completed_date,''), NULLIF(started_date,''), NULLIF(scheduled_date,''), NULLIF(desired_date,''), created_at), 1, 10)`;
+// 인증 통계의 주차 기준이 되는 인증완료일. 완료일 → 상태 전환 시각 → 대표 종료일 순.
+const COMP_DATE = `substr(COALESCE(NULLIF(completed_date,''), NULLIF(completed_at,''), ${ACT_END}), 1, 10)`;
 // "가장 최근 건"을 고르기 위한 정렬키. 대표 진행일이 같으면 id가 큰 쪽(나중 등록)이 최신.
 const SORT_KEY = `(${ACT_DATE} || '#' || printf('%010d', id))`;
 // Test 목적 미입력 건도 한 그룹으로 묶이도록 정규화한다.
@@ -120,7 +122,8 @@ function logHistory(requestId, actor, action, detail) {
 // MAX(SORT_KEY)와 함께 쓴 bare column(verdict 등)은 최댓값을 만든 행의 값을 돌려주는 SQLite 규칙에 기댄다.
 function certStatsOf(range) {
   const cond = [JUDGED];
-  if (range) cond.push(`${ACT_START} IS NOT NULL`, `${ACT_START} <= @to`, `MAX(${ACT_END}, ${ACT_START}) >= @from`);
+  // 주차는 인증완료일 기준이다. 진행 기간이 걸쳐 있다고 양쪽 주에 넣으면 주 경계에서 중복 집계된다.
+  if (range) cond.push(`${COMP_DATE} >= @from`, `${COMP_DATE} <= @to`);
   const rows = db.prepare(`
     SELECT model_name, cert_type, ${PURPOSE} AS test_purpose, ${ROUND} AS round_no,
            COUNT(*)                                          AS judged,

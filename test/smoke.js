@@ -1344,6 +1344,33 @@ ok('대표가 사라지면 남은 이벤트로 옮겨 붙는다', repo.get(rm.id
 ok('옮겨 붙인 건은 새로 만들지 않는다', sm3.created === 0, JSON.stringify(sm3));
 ok('옮겨 붙인 건은 중단되지 않는다', repo.get(rm.id).status === '완료', repo.get(rm.id).status);
 
+head('Confluence 작성일 기준 반영 (createdSince)');
+// 2026-10-25 사용자 결정 — 오늘 이후 Confluence 에 작성된 일정만 반영한다. 작성 시각은 이벤트 id 앞(UTC)이다.
+// 기준일은 한국 시간 자정이라 UTC 로는 전날 15:00 이 경계다.
+const cs = (id, model, start) => ({ id, title: `[xTS][MR] ${model} 1st >`, invitees: '이은경', start, end: start });
+const csEvs = [
+  cs('20261024T145959Z--1@x', 'KM-970', '2026-09-20'),   // KST 10-24 23:59:59 → 제외
+  cs('20261024T150000Z--2@x', 'KM-971', '2026-09-21'),   // KST 10-25 00:00:00 → 반영
+  cs('no-timestamp-id', 'KM-972', '2026-09-22'),          // 작성 시각 모름 → 제외
+  cs('20260901T000000Z--3@x', 'KM-973', '2026-09-23'),   // 예전 일정을
+  cs('20261025T010000Z--4@x', 'KM-973', '2026-09-23'),   // 오늘 다른 캘린더에 복사 → 대표가 예전 것이라 제외
+];
+const scs = csync.syncEvents(csEvs, { range: RANGE, createdSince: '2026-10-25' });
+ok('기준일(KST 자정) 이후 작성분만 반영', scs.created === 1 && !!repo.getByConfluenceEventId('20261024T150000Z--2@x'), JSON.stringify(scs));
+ok('기준일 직전 작성분은 반영하지 않는다', !repo.getByConfluenceEventId('20261024T145959Z--1@x'));
+ok('작성 시각을 못 읽는 일정은 반영하지 않는다', !repo.getByConfluenceEventId('no-timestamp-id'));
+ok('예전 일정의 복사본은 대표 기준으로 제외', !repo.getByConfluenceEventId('20261025T010000Z--4@x') && !repo.getByConfluenceEventId('20260901T000000Z--3@x'));
+ok('제외 건수를 집계한다', scs.excluded === 3, String(scs.excluded));
+ok('제외했다고 경고로 알린다', scs.warnings.some((w) => w.includes('2026-10-25 이전에 작성된 일정 3건')), scs.warnings.join(' | '));
+// 예전 일정에 이어진 의뢰는 제외돼도 '사라진 일정' 이 아니다 — 중단하지 않는다.
+const oldLinked = repo.create({ cert_type: 'Google xTS', model_name: 'KM-974', requester: 'PL', desired_date: '2026-09-24', confluence_event_id: '20260902T000000Z--5@x' }, '수기');
+const scs2 = csync.syncEvents([...csEvs, cs('20260902T000000Z--5@x', 'KM-974', '2026-09-24')], { range: RANGE, createdSince: '2026-10-25' });
+ok('제외된 일정에 이어진 의뢰는 중단하지 않는다', repo.get(oldLinked.id).status === '예약대기' && scs2.cancelled === 0, `${repo.get(oldLinked.id).status} / ${scs2.cancelled}`);
+let csErr = '';
+try { csync.syncEvents(csEvs, { range: RANGE, createdSince: '10/25' }); } catch (e) { csErr = e.message; }
+ok('기준일 형식이 틀리면 반영하지 않고 던진다', csErr.includes('createdSince'), csErr);
+ok('기준일이 비면 전부 반영 (기존 동작)', csync.syncEvents([cs('no-ts-2', 'KM-975', '2026-09-25')], { range: RANGE, createdSince: '' }).created === 1);
+
 // 섹션 정리 — 위 보고 본문 스냅숏 비교가 깨지지 않게 동기화로 만든 레코드를 전부 지운다.
 for (const row of repo.confluenceRowsInRange({})) repo.remove(row.id, 'smoke 정리');
 ok('동기화 레코드 정리 완료', repo.confluenceRowsInRange({}).length === 0, String(repo.confluenceRowsInRange({}).length));

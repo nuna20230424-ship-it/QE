@@ -231,12 +231,38 @@ function mergeAcrossCalendars(events, { tolerance = 1 } = {}) {
   return { events: unique, merged };
 }
 
+// Team Calendars 이벤트 id 는 작성 시각(UTC)으로 시작한다 — '20261025T052759Z--1054209075@…'.
+// 응답에 작성일 키가 없어(2026-09-16 확인) 이것이 작성 시각을 알 유일한 단서다. 모양이 다르면 null.
+function createdAtOf(id) {
+  const m = String(id ?? '').match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z/);
+  return m ? Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]) : null;
+}
+
+// 기준일 'YYYY-MM-DD' 는 한국 시간 자정이다. 서버 타임존(Ubuntu 는 UTC 일 수 있다)과 무관하게 고정한다.
+// 빈 값이면 null(제한 없음). 형식이 틀리면 던진다 — 조용히 전부 반영하면 막으려던 일이 그대로 일어난다.
+function createdSinceOf(day) {
+  const s = String(day ?? '').trim();
+  if (!s) return null;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) throw new Error(`createdSince 형식이 틀렸습니다 (YYYY-MM-DD): ${s}`);
+  return Date.parse(`${s}T00:00:00+09:00`);
+}
+
 // 이벤트 목록 한 회차를 통째로 반영한다. 한 건이 터져도 나머지는 계속 간다 —
 // 동기화는 여러 건을 묶어 처리하므로 한 건 때문에 회차 전체가 멈추면 안 된다.
 function syncEvents(events, opts = {}) {
-  const result = { created: 0, updated: 0, unchanged: 0, skipped: 0, cancelled: 0, warnings: [], errors: [] };
-  const { events: unique, merged } = mergeAcrossCalendars(events);
-  for (const m of merged) result.warnings.push(`[${m.id}] 캘린더 ${m.count}곳의 같은 일정을 1건으로 합쳤습니다: ${m.title}`);
+  const result = { created: 0, updated: 0, unchanged: 0, skipped: 0, cancelled: 0, excluded: 0, warnings: [], errors: [] };
+  const { events: all, merged } = mergeAcrossCalendars(events);
+  // createdSince 이전에 작성된 일정은 건드리지 않는다 (2026-10-25 사용자 결정: 오늘 이후 작성분부터).
+  // 합친 일정은 대표(가장 먼저 작성된 것) 기준이다 — 예전 일정을 오늘 자기 캘린더에 복사해도 새 의뢰가 생기지 않는다.
+  // id 에서 작성 시각을 못 읽는 일정도 뺀다 — 언제 것인지 모르면 반영하지 않는 쪽이 안전하다.
+  const since = createdSinceOf(opts.createdSince);
+  const unique = since === null ? all : all.filter((ev) => {
+    const at = createdAtOf((ev || {}).id);
+    return at !== null && at >= since;
+  });
+  result.excluded = all.length - unique.length;
+  if (result.excluded) result.warnings.push(`${opts.createdSince} 이전에 작성된 일정 ${result.excluded}건은 반영하지 않았습니다.`);
+  for (const m of merged) if (unique.some((ev) => String(ev.id) === m.id)) result.warnings.push(`[${m.id}] 캘린더 ${m.count}곳의 같은 일정을 1건으로 합쳤습니다: ${m.title}`);
   // '사라진 일정' 판정(cancelMissing)은 합치기 전 목록을 그대로 쓴다 — 구성 이벤트 id 가 모두 살아 있어야 한다.
   // 사라진 이벤트에 이어진 의뢰를 다시 붙이는 것(aliveIds)은 기간 전체를 받은 회차에서만 한다.
   // 일부만 넘긴 호출에서 하면 목록에 없는 모든 이벤트가 '사라진' 것으로 보인다.

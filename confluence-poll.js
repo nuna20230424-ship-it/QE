@@ -30,7 +30,7 @@ function lookupRequester(model, map) {
   return name || repo.requesterOfModel(model);
 }
 
-async function runOnce({ actor, fetchEvents, range: rangeIn } = {}) {
+async function runOnce({ actor, fetchEvents, range: rangeIn, createdSince } = {}) {
   if (running) return { ...(last || {}), busy: true };
   // 조회를 주입받았으면 설정 확인을 건너뛴다 — 주입한 쪽이 이미 조회 경로를 갖고 있다.
   if (!fetchEvents && !client.configured()) {
@@ -45,11 +45,12 @@ async function runOnce({ actor, fetchEvents, range: rangeIn } = {}) {
   const range = rangeIn || rangeOf();
   try {
     const fetched = await (fetchEvents || client.fetchEvents)(range);
-    const r = sync.syncEvents(fetched.events, { range, actor: actor || sync.ACTOR, lookupRequester });
+    const since = createdSince !== undefined ? createdSince : client.config().createdSince;
+    const r = sync.syncEvents(fetched.events, { range, actor: actor || sync.ACTOR, lookupRequester, createdSince: since });
     last = {
-      at: new Date().toISOString(), ok: true, range,
+      at: new Date().toISOString(), ok: true, range, createdSince: since,
       fetched: fetched.events.length, calendars: fetched.calendars,
-      created: r.created, updated: r.updated, unchanged: r.unchanged, skipped: r.skipped, cancelled: r.cancelled,
+      created: r.created, updated: r.updated, unchanged: r.unchanged, skipped: r.skipped, cancelled: r.cancelled, excluded: r.excluded,
       warnings: [...fetched.warnings, ...r.warnings], errors: r.errors,
     };
   } catch (err) {

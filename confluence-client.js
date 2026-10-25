@@ -40,6 +40,8 @@ function config() {
     fields: { ...DEFAULT_FIELDS, ...(cfg.fields || {}) },
     // 지시서의 [모델명-의뢰자 DB]. 여기 없는 모델은 대시보드 이력에서 찾는다(confluence-poll).
     requesterByModel: cfg.requesterByModel || {},
+    // 'YYYY-MM-DD'(한국 시간). 이 날 이후 Confluence 에 작성된 일정만 반영한다. 비우면 전부 (confluence-sync).
+    createdSince: String(cfg.createdSince || '').trim(),
     // PAT는 지시서대로 .env(환경변수)에만 둔다. config.json·코드·로그에 값을 남기지 않는다.
     token: String(process.env.CONFLUENCE_PAT || '').trim(),
   };

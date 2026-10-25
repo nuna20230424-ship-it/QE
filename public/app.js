@@ -102,7 +102,7 @@ function renderConfluence(st) {
   if (l) {
     const when = l.at ? new Date(l.at).toLocaleString('ko-KR') : '';
     if (l.ok) {
-      parts.push(`<span class="cf-ok">${esc(when)} · 조회 ${l.fetched}건${l.calendars ? ` (캘린더 ${l.calendars}곳)` : ''} → 신규 ${l.created} · 갱신 ${l.updated} · 유지 ${l.unchanged} · 건너뜀 ${l.skipped} · 중단 ${l.cancelled}</span>`);
+      parts.push(`<span class="cf-ok">${esc(when)} · 조회 ${l.fetched}건${l.calendars ? ` (캘린더 ${l.calendars}곳)` : ''} → 신규 ${l.created} · 갱신 ${l.updated} · 유지 ${l.unchanged} · 건너뜀 ${l.skipped} · 중단 ${l.cancelled}${l.excluded ? ` · 제외 ${l.excluded} (${esc(l.createdSince)} 이전 작성)` : ''}</span>`);
     } else {
       parts.push(`<span class="cf-fail">${esc(when)} · 실패: ${esc(l.reason || '')}</span>`);
     }

@@ -1266,8 +1266,17 @@ const s4 = csync.syncEvents([ev1pass], { range: RANGE });
 const r1c = repo.getByConfluenceEventId('evt-1001');
 ok('비어 있던 판정은 채운다', r1c.verdict === 'Pass', r1c.verdict);
 ok('비어 있던 회차는 채운다', r1c.round === '3', r1c.round);
-ok('이미 값이 있는 상태는 그대로 (결정의 결과)', r1c.status === '진행중', r1c.status);
+ok('결과가 적히면 진행중도 완료로 넘긴다', r1c.status === '완료', r1c.status);
 ok('채운 건은 수정으로 집계', s4.updated === 1, JSON.stringify(s4));
+
+// 결과 반영 규칙 — 예약확정도 넘기고, 보류·끝난 건은 두고, 결과가 아닌 상태로는 덮지 않는다
+const st = (cur, next) => csync.fillBlanks({ status: cur }, { status: next }).status;
+ok('예약확정 + Passed → 완료', st('예약확정', '완료') === '완료');
+ok('진행중 + Dropped → 중단', st('진행중', '중단') === '중단');
+ok('보류는 결과가 와도 유지', st('보류', '완료') === undefined);
+ok('완료는 Dropped 가 와도 유지', st('완료', '중단') === undefined);
+ok('중단은 Passed 가 와도 유지', st('중단', '완료') === undefined);
+ok('예약확정을 진행중으로 덮지 않는다', st('예약확정', '진행중') === undefined);
 
 // 상태 기본값 '예약대기'는 사람이 고른 값이 아니므로 빈 칸으로 본다
 const ev2 = { id: 'evt-1002', title: '[NTS][MR] KM-900', invitees: '이은경', start: '', end: '', relatedPage: '', created: '2026-09-08' };
@@ -1293,6 +1302,8 @@ const ev3 = { id: 'evt-1004', title: '[AVTS][양산] KM-902 > Passed', invitees:
 csync.syncEvents([ev3]);
 ok('완료 상태로 생성', repo.getByConfluenceEventId('evt-1004').status === '완료');
 
+// evt-1001 은 위에서 Passed 로 완료됐다 — 진행 중인 건이 사라지는 경우를 보려고 진행중으로 되돌린다
+repo.update(repo.getByConfluenceEventId('evt-1001').id, { status: '진행중' }, '테스터');
 const s5 = csync.syncEvents([], { range: RANGE });
 ok('사라진 이벤트는 중단으로 보관', repo.getByConfluenceEventId('evt-1001').status === '중단');
 ok('레코드를 지우지는 않는다', !!repo.getByConfluenceEventId('evt-1001'));

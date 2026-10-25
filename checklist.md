@@ -419,4 +419,12 @@
 - [x] DEPLOY 문서 갱신 (`subCalendarId` = 상위 캘린더)
 - [x] 오늘(2026-10-25) 이후 작성분만 반영 — `confluence.createdSince` (사용자 결정, a~f 는 사람이 별도 정리)
 - [x] 미리보기(기준일 적용) — 9곳 79건 → 제외 70 · 유지 1 · 신규 0 · 중단 0
-- [ ] push → 재배포 → 서버 config.json `subCalendarId`·`createdSince` → `.env` 원위치 → 첫 회차 확인 (**사용자 필요**)
+- [x] push → 재배포 → 서버 config.json `subCalendarId`·`createdSince` → `.env` 원위치 → 첫 회차 확인 — 운영 9곳 79건 · 제외 70 · 유지 1 · 오류 0 (2026-10-25)
+
+### 결과가 적히면 상태도 완료·중단으로 (2026-10-26)
+배경: O2_KSTB7268 처럼 사람이 예약확정으로 둔 의뢰는 제목이 `> Passed` 가 돼도 상태가 그대로 남고 판정만 Pass 로 채워졌다.
+- [x] 제목 결과(Passed·Failed·Dropped)면 예약확정·진행중도 완료·중단으로 넘긴다. 보류·완료·중단은 그대로 (사용자 결정)
+- [x] 기준일(createdSince 2026-10-25)은 유지 — 그 이전 작성 일정의 결과는 대시보드에서 직접 입력 (사용자 결정)
+- [x] 스모크 갱신 · `npm test` 711건 통과
+- [x] 운영 사본 미리보기 — 현재 데이터 변화 없음, 새로 작성한 `O2_KSTB7268 1st > Passed` 는 162 를 `완료 / Pass` 로
+- [ ] push → `deploy-ubuntu.sh` 재배포 (**사용자 필요**)

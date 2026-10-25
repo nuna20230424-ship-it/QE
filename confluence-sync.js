@@ -116,12 +116,17 @@ function findMergeTarget(fields, { tolerance = 1, aliveIds } = {}) {
 // 예외는 status 하나다. DEFAULT '예약대기'로 채워져 있어 그냥 두면 영원히 '값이 있는 칸'이 되고
 // Confluence 제목의 진행·결과가 신규 생성 이후로는 한 번도 반영되지 않는다.
 // 기본값 그대로면 사람이 고른 게 아니므로 빈 칸과 같게 본다.
+// 제목에 결과(Passed·Failed·Dropped)가 적히면 예약확정·진행중이어도 완료·중단으로 넘긴다 — 안 그러면
+// '예약확정 + Pass' 처럼 상태와 판정이 어긋난다. 끝난 건과 사람이 고른 보류는 그대로 둔다.
+const FINAL_STATUS = ['완료', '중단'];
+const statusOpen = (cur, next) => isBlank(cur) || cur === DEFAULT_STATUS
+  || (FINAL_STATUS.includes(next) && !FINAL_STATUS.includes(cur) && cur !== '보류');
 function fillBlanks(current, fields) {
   const patch = {};
   for (const [k, v] of Object.entries(fields)) {
     if (isBlank(v)) continue;
     const cur = current[k];
-    const blank = k === 'status' ? (isBlank(cur) || cur === DEFAULT_STATUS) : isBlank(cur);
+    const blank = k === 'status' ? statusOpen(cur, v) : isBlank(cur);
     if (blank && String(cur ?? '') !== String(v)) patch[k] = v;
   }
   return patch;

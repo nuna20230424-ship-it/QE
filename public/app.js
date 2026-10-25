@@ -10,6 +10,7 @@ const state = {
   cal: { y: _now.getFullYear(), m: _now.getMonth() }, // m: 0-based
   sort: { key: null, dir: 'asc' }, // 일정표 정렬 상태
   boardExpanded: new Set(), // 5개 초과 시 펼친 상태의 상태칼럼
+  boardAsc: new Set(),      // 숫자 클릭으로 오름차순(오래된 순)으로 뒤집은 상태칼럼 (기본은 최신일 내림차순)
   options: { models: [], testPurposes: [] }, // 입력 자동목록용 선택지 (필터와 무관한 전체 이력값)
   // 인증 통계 뷰: 주간(월~금) / 전체 누적 전환, weekOffset 0 = 이번 주
   certStats: { mode: 'week', weekOffset: 0, data: null, range: null },
@@ -18,6 +19,29 @@ const state = {
 };
 
 const BOARD_LIMIT = 5; // 보드 칼럼당 기본 노출 카드 수
+
+// 보드 칼럼 정렬 기준일. 여기 없는 칼럼(보류·중단)은 서버 순서 그대로 둔다.
+// 시작일이 빈 건(예약대기는 전부)은 카드 '일정' 표기와 같은 순서로 예약확정일 → 희망일을 쓴다.
+const startKey = (it) => it.started_date || it.scheduled_date || it.desired_date || '';
+const BOARD_SORT_KEYS = {
+  예약대기: startKey,
+  예약확정: startKey,
+  진행중: startKey,
+  완료: (it) => it.completed_date || it.started_date || '',
+};
+
+// 날짜가 빈 건은 방향과 관계없이 맨 뒤
+function sortBoardList(list, st) {
+  const f = BOARD_SORT_KEYS[st];
+  if (!f) return list;
+  const asc = state.boardAsc.has(st);
+  return [...list].sort((a, b) => {
+    const va = f(a), vb = f(b);
+    if (!va || !vb) return (va ? 0 : 1) - (vb ? 0 : 1);
+    const cmp = va < vb ? -1 : va > vb ? 1 : 0;
+    return asc ? cmp : -cmp;
+  });
+}
 
 const $ = (sel) => document.querySelector(sel);
 const pad2 = (n) => String(n).padStart(2, '0');
@@ -201,7 +225,7 @@ function cardHtml(it) {
 
 function renderBoard() {
   $('#view-board').innerHTML = STATUSES.map((st) => {
-    const list = state.items.filter((i) => i.status === st);
+    const list = sortBoardList(state.items.filter((i) => i.status === st), st);
     const expanded = state.boardExpanded.has(st);
     const shown = expanded ? list : list.slice(0, BOARD_LIMIT);
     const cards = shown.map(cardHtml).join('');
@@ -210,11 +234,16 @@ function renderBoard() {
       ? `<button class="col-toggle" data-toggle="${st}">${expanded ? '접기 ▴' : `+ ${hiddenN}개 더보기 ▾`}</button>`
       : '';
     const body = list.length ? cards + toggle : '<div class="col-empty">항목 없음</div>';
+    const asc = state.boardAsc.has(st);
+    const count = BOARD_SORT_KEYS[st]
+      ? `<button class="count count-sort" data-board-sort="${st}"
+          title="${st === '완료' ? '완료일' : '시작일'} 기준 ${asc ? '오름차순 · 클릭하면 최신순' : '최신순 · 클릭하면 오름차순'}">${list.length} ${asc ? '▴' : '▾'}</button>`
+      : `<span class="count">${list.length}</span>`;
     return `
       <div class="col">
         <div class="col-head">
           <span class="st-${st}"><span class="dot bg-${st}"></span> ${st}</span>
-          <span class="count">${list.length}</span>
+          ${count}
         </div>
         <div class="col-body">${body}</div>
       </div>`;
@@ -1682,8 +1711,17 @@ function bind() {
     }
   });
 
-  // 보드 칼럼 "더보기/접기" 토글
+  // 보드 칼럼 "더보기/접기" 토글 · 숫자 클릭 시 최신순/오름차순 토글
   $('#view-board').addEventListener('click', (e) => {
+    const sortBtn = e.target.closest('[data-board-sort]');
+    if (sortBtn) {
+      e.stopPropagation();
+      const st = sortBtn.dataset.boardSort;
+      if (state.boardAsc.has(st)) state.boardAsc.delete(st);
+      else state.boardAsc.add(st);
+      renderBoard();
+      return;
+    }
     const btn = e.target.closest('[data-toggle]');
     if (!btn) return;
     e.stopPropagation();

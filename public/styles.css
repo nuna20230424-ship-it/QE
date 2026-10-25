@@ -99,6 +99,8 @@ main { padding: 0 22px 40px; }
   padding: 11px 14px; border-bottom: 1px solid var(--line); font-weight: 700;
 }
 .col-head .count { background: #eef2f8; color: var(--muted); border-radius: 999px; padding: 1px 9px; font-size: 12px; }
+.col-head .count-sort { border: 0; font: inherit; font-size: 12px; font-weight: 700; cursor: pointer; }
+.col-head .count-sort:hover { background: #dde5f2; color: var(--text); }
 .col-body { padding: 10px; display: flex; flex-direction: column; gap: 10px; min-height: 60px; }
 .col-empty { color: var(--muted); font-size: 12px; text-align: center; padding: 14px 0; }
 .col-toggle { border: 0; background: #eef2f8; color: var(--muted); border-radius: 7px; padding: 7px 0; cursor: pointer; font-weight: 600; font-size: 12px; }

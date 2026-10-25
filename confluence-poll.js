@@ -48,7 +48,7 @@ async function runOnce({ actor, fetchEvents, range: rangeIn } = {}) {
     const r = sync.syncEvents(fetched.events, { range, actor: actor || sync.ACTOR, lookupRequester });
     last = {
       at: new Date().toISOString(), ok: true, range,
-      fetched: fetched.events.length,
+      fetched: fetched.events.length, calendars: fetched.calendars,
       created: r.created, updated: r.updated, unchanged: r.unchanged, skipped: r.skipped, cancelled: r.cancelled,
       warnings: [...fetched.warnings, ...r.warnings], errors: r.errors,
     };

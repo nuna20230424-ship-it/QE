@@ -124,7 +124,7 @@ chmod 600 .env
 ```json
   "confluence": {
     "baseUrl": "https://confluence.kaonmedia.com",
-    "subCalendarId": "eb1bca9b-35c2-4c19-a9bf-1f9532b64b45",
+    "subCalendarId": "d09b0749-0a22-4458-b1c8-7d4c659c5e3e",
     "timeZone": "Asia/Seoul",
     "pollMinutes": 5,
     "rangeBackDays": 30,
@@ -146,7 +146,7 @@ chmod 600 .env
 
 | 키 | 값 | 왜 |
 |---|---|---|
-| `subCalendarId` | `eb1bca9b-…` | QE 일정 페이지는 캘린더 **둘**을 겹쳐 보여준다. 옛 캘린더 `7d8fff49-…`는 2026-06-04에서 멈췄다 |
+| `subCalendarId` | `d09b0749-…` (상위) | **2026-10-25 정정.** QE Schedule 은 담당자별 하위 캘린더 9개를 묶은 상위 캘린더다. 상위 id 를 주면 하위를 모두 펼쳐 읽는다. 예전 값 `eb1bca9b-…` 는 하위 하나(조진원)뿐이라 79건 중 10건만 보였다 |
 | `fields.relatedPage` | `where` | '관련 페이지 / 어디서' → 비고. 63건 중 43건에 있다 |
 | `fields.created` | `start` | 이벤트 응답에 **생성일자 키가 없다.** 희망일정을 시작일로 대체(사용자 결정) |
 

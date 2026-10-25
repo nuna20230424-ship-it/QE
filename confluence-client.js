@@ -134,8 +134,12 @@ async function requestEvents({ from, to } = {}, cfg) {
   }
 
   const url = `${c.baseUrl}${EVENTS_PATH}?${q}`;
-  // 토큰은 헤더에만 넣는다. url은 로그·오류 메시지에 실릴 수 있어 비밀을 태우지 않는다.
-  const res = await fetch(url, { headers: { Authorization: `Bearer ${c.token}`, Accept: 'application/json' } });
+  return { url, body: await getJson(url, c.token) };
+}
+
+// 토큰은 헤더에만 넣는다. url은 로그·오류 메시지에 실릴 수 있어 비밀을 태우지 않는다.
+async function getJson(url, token) {
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } });
   if (!res.ok) {
     // 상태코드만으로는 이유를 알 수 없다. 본문에 'PAT 미지원'·'로그인 필요' 같은 단서가 들어 있다.
     // HTML 로그인 페이지가 오는 경우가 많아 태그를 지우고 앞부분만 싣는다.
@@ -146,7 +150,27 @@ async function requestEvents({ from, to } = {}, cfg) {
     } catch { /* 본문을 못 읽어도 상태코드만으로 보고한다 */ }
     throw new Error(`Confluence 응답 ${res.status} ${res.statusText}${hint} (${url})`);
   }
-  return { url, body: await res.json() };
+  return res.json();
+}
+
+// 'QE Schedule' 은 담당자별 하위 캘린더 9개를 묶은 상위 캘린더다(2026-10-25 확인). 이벤트는 하위에만 있고
+// 상위 id 로 조회하면 0건이 온다. 설정 id 의 하위 캘린더를 펼치고, 하위가 없으면 그 id 하나만 쓴다.
+// 실패하면 던진다 — 상위 id 로 조회를 이어 가면 0건이 와서 '사라진 일정 → 중단' 이 전부를 중단시킨다.
+const SUBCALENDARS_PATH = '/rest/calendar-services/1.0/calendar/subcalendars.json';
+
+async function resolveSubCalendars(cfg) {
+  const c = cfg || config();
+  const body = await getJson(`${c.baseUrl}${SUBCALENDARS_PATH}?include=${encodeURIComponent(c.subCalendarId)}`, c.token);
+  const children = [];
+  const walk = (o) => {
+    if (!o || typeof o !== 'object') return;
+    if (Array.isArray(o)) { o.forEach(walk); return; }
+    const sc = o.subCalendar;
+    if (sc && sc.parentId === c.subCalendarId && sc.id && !children.includes(sc.id)) children.push(sc.id);
+    Object.values(o).forEach(walk);
+  };
+  walk(body);
+  return children.length ? children : [c.subCalendarId];
 }
 
 // 응답 → 정규 이벤트 배열. 같은 경고가 이벤트 수만큼 쌓이지 않게 중복을 접는다.
@@ -168,10 +192,20 @@ function normalizeBody(body, fields = DEFAULT_FIELDS) {
   return { events, warnings };
 }
 
+// 하위 캘린더를 모두 조회해 한 목록으로 합친다. 하나라도 실패하면 회차 전체를 실패로 던진다 —
+// 일부만 받은 목록으로 동기화하면 못 받은 캘린더의 의뢰가 '사라진 일정' 으로 중단된다.
 async function fetchEvents(range, cfg) {
   const c = cfg || config();
-  const { body } = await requestEvents(range, c);
-  return normalizeBody(body, c.fields);
+  const ids = await resolveSubCalendars(c);
+  const events = [];
+  const warnings = [];
+  for (const id of ids) {
+    const { body } = await requestEvents(range, { ...c, subCalendarId: id });
+    const r = normalizeBody(body, c.fields);
+    for (const ev of r.events) events.push({ ...ev, subCalendarId: id });
+    for (const w of r.warnings) if (!warnings.includes(w)) warnings.push(w);
+  }
+  return { events, warnings, calendars: ids.length };
 }
 
 // 토큰이 이 인스턴스에서 먹는지만 확인한다. 캘린더 권한과 무관한 엔드포인트라
@@ -203,4 +237,4 @@ async function checkAuth(cfg) {
   return { status: res.status, ok: res.ok, authenticated, anonymous, who, url };
 }
 
-module.exports = { config, missing, configured, toInstant, checkAuth, dig, toText, normalizeEvent, normalizeBody, requestEvents, fetchEvents, DEFAULT_FIELDS, EVENTS_PATH };
+module.exports = { config, missing, configured, toInstant, checkAuth, dig, toText, normalizeEvent, normalizeBody, requestEvents, resolveSubCalendars, fetchEvents, DEFAULT_FIELDS, EVENTS_PATH };

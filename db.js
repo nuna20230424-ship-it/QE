@@ -323,15 +323,16 @@ module.exports = {
   // 같은 일정을 사람이 먼저 입력해 둔 건을 찾기 위한 후보. 아직 이벤트 id가 붙지 않은 의뢰 중
   // 인증종류가 같고 대표 시작일이 기간 안에 든 것만 좁혀 준다. 같은 건인지 최종 판정은
   // confluence-sync 가 한다 — 모델명 표기 정규화·차수 비교는 SQL 로 하기에 마땅치 않다.
-  mergeCandidates({ cert_type, from, to } = {}) {
+  // withLinked 면 이벤트 id 가 붙은 의뢰도 돌려준다 — 그 이벤트가 이번 회차에 사라졌는지는 호출부가 가른다.
+  mergeCandidates({ cert_type, from, to, withLinked = false } = {}) {
     return db.prepare(`
-      SELECT id, model_name, cert_type, round, ${ACT_START} AS start_date
+      SELECT id, model_name, cert_type, round, ${ACT_START} AS start_date, confluence_event_id
       FROM requests
-      WHERE TRIM(COALESCE(confluence_event_id,'')) = ''
+      WHERE (@withLinked = 1 OR TRIM(COALESCE(confluence_event_id,'')) = '')
         AND TRIM(cert_type) = @cert_type
         AND ${ACT_START} IS NOT NULL
         AND ${ACT_START} BETWEEN @from AND @to
-    `).all({ cert_type: String(cert_type ?? '').trim(), from, to });
+    `).all({ cert_type: String(cert_type ?? '').trim(), from, to, withLinked: withLinked ? 1 : 0 });
   },
 
   // 동기화로 들어온 의뢰 중 조회 기간에 걸친 것들. Confluence에서 사라진 이벤트를 찾는 데 쓴다.

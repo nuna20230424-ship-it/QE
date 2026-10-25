@@ -5,6 +5,7 @@ const CERT_TYPES = {
   xts: 'Google xTS',
   nts: 'Netflix NTS',
   avts: 'Amazon AVTS',
+  atvs: 'Amazon AVTS', // 팀 제목에 자주 나오는 오타. AVTS 로 받는다 (2026-10-25 사용자 결정)
 };
 
 // Test type — 대시보드 드롭다운과 같은 4종
@@ -103,13 +104,14 @@ function parseTitle(title) {
   //    (2026-09-21 사용자 결정. 먼저 오는 칸이 가져가던 기존 방식은 목적을 (미지정)으로 남겨
   //    수기 의뢰와 같은 건인데도 다른 행으로 갈리게 했다).
   const ambiguous = [];
+  const unknownTags = [];
   for (const tag of tags.slice(1)) {
     if (key(tag) === 'mr') { ambiguous.push(tag); continue; }
     const t = TEST_TYPES.find((v) => v.toLowerCase() === key(tag));
     if (t && !out.test_type) { out.test_type = t; continue; }
     const p = TEST_PURPOSES[key(tag)];
     if (p && !out.test_purpose) { out.test_purpose = p; continue; }
-    warnings.push(`분류하지 못한 대괄호 값: [${tag}]`);
+    unknownTags.push(tag);   // 모델명일 수 있어 경고는 3단계 뒤로 미룬다
   }
   for (const tag of ambiguous) {
     if (!out.test_purpose) out.test_purpose = 'MR';
@@ -124,15 +126,28 @@ function parseTitle(title) {
   if (gt < 0) warnings.push("'>' 구분자가 없어 진행·결과를 알 수 없습니다.");
 
   const tokens = left.split(/\s+/).filter(Boolean);
+  // 모델명이 대괄호 안에 들어간 제목 — `[NTS][Netflix_KSTB6277][ATV16][Ninja13] 1st >`.
+  // 대괄호 밖이 비었거나 차수·버전 같은 꼬리로 시작하면, 분류 못한 대괄호 중 숫자를 품은 첫 값을 모델명으로 쓴다.
+  // 대괄호 밖에 모델명이 있으면 그쪽이 우선이다 (기존 제목의 해석을 바꾸지 않는다).
+  if (!tokens.length || isTail(tokens[0])) {
+    const at = unknownTags.findIndex((tg) => /\d/.test(tg));
+    if (at >= 0) out.model_name = unknownTags.splice(at, 1)[0];
+  }
+  for (const tag of unknownTags) warnings.push(`분류하지 못한 대괄호 값: [${tag}]`);
+
   if (!tokens.length) {
-    warnings.push('모델명을 찾지 못했습니다.');
+    if (!out.model_name) warnings.push('모델명을 찾지 못했습니다.');
   } else {
     // 모델명 — 제목에 쓰인 그대로 잡는다. `NTT DOCOMO_KSTB6175`처럼 공백을 품은 것이 있어
     // 뒤 토큰도 붙이되, `rollback`·`Auto`·`CVT`처럼 영문 낱말뿐인 토큰에서 끊는다.
     // 모델명 조각은 대개 숫자나 `_`·`+`·`/`를 품는다(2026-09-18 실제 제목 61건으로 확인).
-    let i = 1;
-    while (i < tokens.length && !isTail(tokens[i]) && !isPlainWord(tokens[i])) i += 1;
-    out.model_name = tokens.slice(0, i).join(' ');
+    // 모델명을 대괄호에서 이미 얻었으면 대괄호 밖은 전부 꼬리다.
+    let i = 0;
+    if (!out.model_name) {
+      i = 1;
+      while (i < tokens.length && !isTail(tokens[i]) && !isPlainWord(tokens[i])) i += 1;
+      out.model_name = tokens.slice(0, i).join(' ');
+    }
 
     // 나머지는 알아볼 수 있는 칸만 채운다. 대괄호에서 이미 채운 칸은 덮지 않는다(대괄호가 우선).
     // 분류되지 않는 조각은 조용히 건너뛴다 — 제목 뒷부분은 자유 입력이라 경고로 남길 값이 아니다.

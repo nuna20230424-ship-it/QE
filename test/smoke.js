@@ -1175,6 +1175,17 @@ ok('대괄호 목적이 우선', outside.test_purpose === '3PL', outside.test_pu
 ok('점 없는 V1 은 FW 버전이 아니다', cparse.parseTitle('[xTS] KM-100 V1 > Passed').fw_version === '');
 ok('빈 제목은 경고', cparse.parseTitle('').warnings.length > 0);
 ok('대괄호 없는 제목은 경고', cparse.parseTitle('KM-100 > Passed').warnings.some((w) => w.includes('대괄호')));
+// 2026-10-25 사용자 결정 — 팀 제목의 [ATVS] 는 AVTS 오타로 본다.
+ok('ATVS → Amazon AVTS', cparse.parseTitle('[ATVS][IR] Tele2 KSTB7323_ATV16 1st >').cert_type === 'Amazon AVTS');
+// 모델명이 대괄호 안에 있는 제목 (운영 7건). 예전에는 모델명이 '1st' 가 됐다.
+const inBracket = cparse.parseTitle('[NTS][Netflix_KSTB6277][ATV16][Ninja13] 1st >');
+ok('대괄호 안 모델명을 읽는다', inBracket.model_name === 'Netflix_KSTB6277', inBracket.model_name);
+ok('대괄호 안 모델명이어도 차수는 밖에서 읽는다', inBracket.round === '1', inBracket.round);
+ok('모델명으로 쓰지 않은 대괄호는 여전히 경고', inBracket.warnings.some((w) => w.includes('[ATV16]')), inBracket.warnings.join(' | '));
+ok('대괄호 밖이 비어도 대괄호 안 모델명', cparse.parseTitle('[NTS][KM-700] > Passed').model_name === 'KM-700');
+const outsideWins = cparse.parseTitle('[xTS][KM-1] KM-200 1st > Passed');
+ok('대괄호 밖 모델명이 있으면 그쪽이 우선', outsideWins.model_name === 'KM-200', outsideWins.model_name);
+ok('그때 대괄호 값은 경고로 남는다', outsideWins.warnings.some((w) => w.includes('[KM-1]')));
 
 head('Confluence 담당자·날짜 파싱 (지시서 §3)');
 ok('한글 성명 추출', cparse.parsePerson('Haechan.lee 이해찬 (haechan)').name === '이해찬');
@@ -1297,6 +1308,41 @@ ok('조회 기간이 없으면 삭제 반영을 건너뛴다', s7.cancelled === 
 let threw = '';
 try { csync.cancelMissing([], {}); } catch (e) { threw = e.message; }
 ok('기간 없이 삭제 반영을 직접 호출하면 거부', threw.includes('조회 기간'), threw);
+
+head('Confluence 여러 캘린더의 같은 일정 → 1건 (메인 + 서브)');
+// 담당자마다 자기 하위 캘린더에 같은 일정을 올린다 (2026-10-25 운영 4그룹). 2026-10-25 사용자 결정: 메인 + 서브.
+const mEvs = [
+  { id: 'evt-m-2', title: '[xTS][MR] KM-960 1st >', invitees: 'Eunice.lee 이은경', start: '2026-09-15', end: '2026-09-16' },
+  { id: 'evt-m-1', title: '[xTS][MR] KM-960 1st >', invitees: 'Haechan.lee 이해찬', start: '2026-09-15', end: '2026-09-16' },
+  { id: 'evt-m-3', title: '[xTS][MR]  KM-960 1st > Failed', invitees: 'Yurim.moon 문유림', start: '2026-09-15', end: '2026-09-16' },
+  { id: 'evt-m-9', title: '[xTS][MR] KM-960 1st >', invitees: '이은경', start: '2026-09-22', end: '2026-09-22' },
+];
+const mg = csync.mergeAcrossCalendars(mEvs);
+ok('제목·시작일이 같으면 1건으로 합친다 (날짜 다른 건은 별개)', mg.events.length === 2 && mg.merged.length === 1, JSON.stringify(mg.merged));
+// 같은 테스트를 하루 차이로 올린 경우가 운영에 있다 (TIVO_TMIS 1st 10-01 / 10-02).
+const near1 = csync.mergeAcrossCalendars([
+  { id: 'a', title: '[xTS] KM-961 1st >', start: '2026-10-01' },
+  { id: 'b', title: '[xTS] KM-961 1st >', start: '2026-10-02' },
+  { id: 'c', title: '[xTS] KM-961 1st >', start: '2026-10-03' },
+]);
+ok('시작일 ±1일은 같은 일정, 기준일에서 2일이면 별개', near1.events.length === 2 && near1.merged[0].count === 2, JSON.stringify(near1.merged));
+ok('다른 제목은 같은 날이어도 합치지 않는다',
+  csync.mergeAcrossCalendars([{ id: 'a', title: '[xTS] KM-961 1st >', start: '2026-10-01' }, { id: 'b', title: '[xTS] KM-961 2nd >', start: '2026-10-01' }]).events.length === 2);
+const sm = csync.syncEvents(mEvs, { range: RANGE });
+ok('합친 일정은 의뢰 1건 + 날짜 다른 1건', sm.created === 2, JSON.stringify(sm));
+ok('합쳤다고 경고로 알린다', sm.warnings.some((w) => w.includes('3곳의 같은 일정을 1건으로')), sm.warnings.join(' | '));
+const rm = repo.getByConfluenceEventId('evt-m-1');
+ok('가장 먼저 만든 이벤트 id 가 레코드에 남는다', !!rm && !repo.getByConfluenceEventId('evt-m-2') && !repo.getByConfluenceEventId('evt-m-3'));
+ok('그 담당자가 메인 테스터', rm.tester === '이해찬', rm.tester);
+ok('나머지 담당자는 서브 테스터', rm.tester_sub === '이은경, 문유림', rm.tester_sub);
+ok('진행·결과가 가장 많이 나간 제목을 쓴다', rm.status === '완료' && rm.verdict === 'Fail', `${rm.status}/${rm.verdict}`);
+const sm2 = csync.syncEvents(mEvs, { range: RANGE });
+ok('재동기화는 변경 없음 · 중단 없음', sm2.unchanged === 2 && sm2.created === 0 && sm2.cancelled === 0, JSON.stringify(sm2));
+// 대표 이벤트가 지워져도 다른 캘린더에 남아 있으면 같은 의뢰다 — 대표 id 를 옮기고 중단하지 않는다.
+const sm3 = csync.syncEvents(mEvs.filter((e) => e.id !== 'evt-m-1'), { range: RANGE });
+ok('대표가 사라지면 남은 이벤트로 옮겨 붙는다', repo.get(rm.id).confluence_event_id === 'evt-m-2', repo.get(rm.id).confluence_event_id);
+ok('옮겨 붙인 건은 새로 만들지 않는다', sm3.created === 0, JSON.stringify(sm3));
+ok('옮겨 붙인 건은 중단되지 않는다', repo.get(rm.id).status === '완료', repo.get(rm.id).status);
 
 // 섹션 정리 — 위 보고 본문 스냅숏 비교가 깨지지 않게 동기화로 만든 레코드를 전부 지운다.
 for (const row of repo.confluenceRowsInRange({})) repo.remove(row.id, 'smoke 정리');
@@ -1476,6 +1522,27 @@ ok('룩업 섹션 레코드 정리 완료', repo.confluenceRowsInRange({}).lengt
   ok('조회 기간은 ISO 인스턴트로 실린다', seen.url.includes(`start=${expStart}`) && seen.url.includes(`end=${expEnd}`), seen.url);
   ok('날짜만 보내지 않는다', !seen.url.includes('start=2026-09-01&'), seen.url);
   ok('캘린더 id가 쿼리에 실린다', seen.url.includes('subCalendarId=cal-1'), seen.url);
+
+  // 'QE Schedule' 은 하위 캘린더 묶음이다. 상위 id 를 주면 하위를 펼쳐 전부 읽는다 (2026-10-25).
+  const subTree = { payload: [{ subCalendar: { id: 'parent', parentId: null }, childSubCalendars: [
+    { subCalendar: { id: 'c1', parentId: 'parent' } }, { subCalendar: { id: 'c2', parentId: 'parent' } }] }] };
+  const asked = [];
+  const stubTree = (failId) => async (url) => {
+    asked.push(url);
+    if (url.includes('subcalendars.json')) return { ok: true, status: 200, json: async () => subTree };
+    const id = (url.match(/subCalendarId=([^&]+)/) || [])[1];
+    if (id === failId) return { ok: false, status: 500, statusText: 'Server Error', text: async () => 'boom' };
+    return { ok: true, status: 200, json: async () => ({ events: [{ id: `e-${id}`, title: `[NTS] KM-95${id[1]} > Passed`, invitees: '이은경', start: '2026-09-05', end: '2026-09-05' }] }) };
+  };
+  global.fetch = stubTree('');
+  const tree = await cclient.fetchEvents({ from: '2026-09-01', to: '2026-09-30' }, { ...CFG, subCalendarId: 'parent' });
+  ok('상위 캘린더면 하위 캘린더를 모두 읽는다', tree.events.length === 2 && tree.calendars === 2, JSON.stringify(tree.events.map((e) => e.id)));
+  ok('이벤트에 어느 하위 캘린더인지 남긴다', tree.events.map((e) => e.subCalendarId).join(',') === 'c1,c2');
+  ok('상위 id 로는 이벤트를 조회하지 않는다', !asked.some((u) => u.includes('events.json') && u.includes('subCalendarId=parent')), asked.join(' | '));
+  global.fetch = stubTree('c2');
+  let partErr = '';
+  try { await cclient.fetchEvents({ from: '2026-09-01', to: '2026-09-30' }, { ...CFG, subCalendarId: 'parent' }); } catch (e) { partErr = e.message; }
+  ok('하위 캘린더 하나라도 실패하면 회차 전체 실패', partErr.includes('500'), partErr);
 
   global.fetch = async () => ({ ok: false, status: 401, statusText: 'Unauthorized' });
   let httpErr = '';

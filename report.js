@@ -19,20 +19,12 @@ function dayRange(now = new Date()) {
   const t = ymd(now);
   return { from: t, to: t };
 }
-// 이번 주 월~금 (주간업무보고의 모델별 인증 통계 섹션 기준. 본문 집계는 월~일 유지)
-function workWeekRange(now = new Date()) {
-  const base = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const offset = (base.getDay() + 6) % 7;
-  const mon = new Date(base); mon.setDate(base.getDate() - offset);
-  const fri = new Date(mon); fri.setDate(mon.getDate() + 4);
-  return { from: ymd(mon), to: ymd(fri) };
-}
-
-// 지난주 월~금. 월요일 아침 인증 통계 보고는 이번 주가 아직 비어 있어 지난주 실적을 싣는다.
-function lastWorkWeekRange(now = new Date()) {
+// 지난주 월~일. 월요일 아침 인증 통계 보고는 이번 주가 아직 비어 있어 지난주 실적을 싣는다.
+// 인증 통계 주차는 2026-10-26 월~금 → 월~일로 바꿨다 — 주말에 끝난 인증이 어느 주에도 잡히지 않았다.
+function lastWeekRange(now = new Date()) {
   const base = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   base.setDate(base.getDate() - 7);
-  return workWeekRange(base);
+  return weekRange(base);
 }
 
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => (
@@ -213,7 +205,7 @@ function certStatsTable(rows) {
     <tbody>${body}</tbody></table>`;
 }
 
-// label 예: "주차 2026-08-24 ~ 2026-08-28 (월~금)" · "기간 전체 누적"
+// label 예: "주차 2026-08-24 ~ 2026-08-30 (월~일)" · "기간 전체 누적"
 function statsBlock(s, label) {
   const t = s.totals;
   const head = `<p style="color:#6b7686;font-size:12px;margin:6px 0 10px;">
@@ -226,8 +218,8 @@ function statsBlock(s, label) {
 }
 
 function certStatsSection(now = new Date(), range = null) {
-  const { from, to } = range || workWeekRange(now);
-  return statsBlock(repo.certStats({ from, to }), `주차 ${from} ~ ${to} (월~금)`);
+  const { from, to } = range || weekRange(now);
+  return statsBlock(repo.certStats({ from, to }), `주차 ${from} ~ ${to} (월~일)`);
 }
 
 // 보고 메일 공통 겉틀. 일일·주간·인증통계 세 보고가 같은 서식을 쓰도록 한 곳에 둔다.
@@ -303,7 +295,6 @@ function daily(now = new Date()) {
 function weekly(now = new Date()) {
   const { from, to } = weekRange(now);
   const data = repo.reportData(from, to);
-  const wk = workWeekRange(now);
   return {
     period: 'weekly', title: '주간 현황보고', data,
     subject: `[인증일정] 주간 현황보고 (${from} ~ ${to})`,
@@ -312,11 +303,11 @@ function weekly(now = new Date()) {
   };
 }
 
-// 인증 통계 단독 보고 (월요일 아침 발송). 대상은 지난주 월~금.
+// 인증 통계 단독 보고 (월요일 아침 발송). 대상은 지난주 월~일.
 function certStats(now = new Date()) {
-  const range = lastWorkWeekRange(now);
+  const range = lastWeekRange(now);
   const s = repo.certStats(range);
-  const rangeLabel = `${range.from} ~ ${range.to} (월~금)`;
+  const rangeLabel = `${range.from} ~ ${range.to} (월~일)`;
   return {
     period: 'certstats', title: '인증 통계 보고', range, data: s,
     subject: `[인증일정] 주간 인증 통계 (${range.from} ~ ${range.to})`,
@@ -330,8 +321,8 @@ function certStats(now = new Date()) {
 // 탭에서 고른 기간을 그대로 쓰며, range가 null이면 전체 기간 누적이다.
 // 화면과 동일한 상세(모델명 포함)라 사내 수신자 전용이다. mailHtml(집계+링크)과는 용도가 다르다.
 function certStatsCopy(range, now = new Date()) {
-  const rangeLabel = range ? `${range.from} ~ ${range.to} (월~금)` : '전체 기간 누적';
-  const block = statsBlock(repo.certStats(range), range ? `주차 ${range.from} ~ ${range.to} (월~금)` : '기간 전체 누적');
+  const rangeLabel = range ? `${range.from} ~ ${range.to} (월~일)` : '전체 기간 누적';
+  const block = statsBlock(repo.certStats(range), range ? `주차 ${range.from} ~ ${range.to} (월~일)` : '기간 전체 누적');
   return {
     period: 'certstats',
     subject: `[인증일정] 인증 통계 (${rangeLabel})`,
@@ -341,5 +332,5 @@ function certStatsCopy(range, now = new Date()) {
 
 module.exports = {
   daily, weekly, certStats, certStatsCopy,
-  weekRange, dayRange, workWeekRange, lastWorkWeekRange, certStatsSection,
+  weekRange, dayRange, lastWeekRange, certStatsSection,
 };

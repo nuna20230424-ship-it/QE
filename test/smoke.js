@@ -118,11 +118,11 @@ ok('차수 오름차순 정렬', all.rows.filter((r) => r.model_name === 'KM-100
 ok('합쳐진 게 없으면 rounds 1건', x1.rounds.length === 1 && x3.rounds.length === 1);
 ok('미판정 4차는 rounds에도 없음', !all.rows.some((r) => r.rounds.some((h) => h.round === 4)));
 
-// ---------- Task 4-3 / 주차(월~금) 필터 ----------
-head('Task 4. 주차 월~금 필터');
-const wk = report.workWeekRange(now);
+// ---------- Task 4-3 / 주차(월~일) 필터 — 2026-10-26 월~금 → 월~일 ----------
+head('Task 4. 주차 월~일 필터');
+const wk = report.weekRange(now);
 ok('월요일 시작', new Date(`${wk.from}T00:00:00`).getDay() === 1, wk.from);
-ok('금요일 종료', new Date(`${wk.to}T00:00:00`).getDay() === 5, wk.to);
+ok('일요일 종료', new Date(`${wk.to}T00:00:00`).getDay() === 0, wk.to);
 const wkStats = repo.certStats(wk);
 ok('지난주 건(KM-200) 제외', !wkStats.rows.some((r) => r.model_name === 'KM-200'));
 ok('3주 전 건(KM-500) 제외', !wkStats.rows.some((r) => r.model_name === 'KM-500'));
@@ -135,8 +135,17 @@ ok('이번주 판정 건수 = 4', wkStats.totals.judged === 4, String(wkStats.to
 const span = mk({ cert_type: 'Google xTS', model_name: 'KM-SPAN', purpose: '3PL', round: '1', start: lastWeek(3), end: thisWeek(0), status: '완료', verdict: 'Pass' });
 ok('완료일이 이번 주인 건은 이번 주 통계에 포함', repo.certStats(wk).rows.some((r) => r.model_name === 'KM-SPAN'));
 ok('시작이 지난주여도 완료일이 이번 주면 지난주 통계에서 제외',
-  !repo.certStats(report.lastWorkWeekRange(now)).rows.some((r) => r.model_name === 'KM-SPAN'));
+  !repo.certStats(report.lastWeekRange(now)).rows.some((r) => r.model_name === 'KM-SPAN'));
 repo.remove ? repo.remove(span.id, '테스트') : null;
+
+// 주말(토·일)에 끝난 인증도 그 주 통계에 잡힌다 — 월~금일 때는 어느 주에도 들어가지 않았다
+const wkSat = mk({ cert_type: 'Google xTS', model_name: 'KM-SAT', purpose: '3PL', round: '1', start: lastWeek(4), end: lastWeek(5), status: '완료', verdict: 'Pass' });
+const wkSun = mk({ cert_type: 'Google xTS', model_name: 'KM-SUN', purpose: '3PL', round: '1', start: lastWeek(5), end: lastWeek(6), status: '완료', verdict: 'Fail' });
+const lwStats = repo.certStats(report.lastWeekRange(now));
+ok('토요일 완료 건이 그 주 통계에 포함', lwStats.rows.some((r) => r.model_name === 'KM-SAT'));
+ok('일요일 완료 건이 그 주 통계에 포함', lwStats.rows.some((r) => r.model_name === 'KM-SUN'));
+ok('주말 완료 건은 다음 주 통계에는 없음', !repo.certStats(wk).rows.some((r) => ['KM-SAT', 'KM-SUN'].includes(r.model_name)));
+repo.remove ? (repo.remove(wkSat.id, '테스트'), repo.remove(wkSun.id, '테스트')) : null;
 
 // ---------- Task 5. 진행차수 자동 산출 ----------
 head('Task 5. 진행차수 자동 산출');
@@ -208,14 +217,14 @@ const w = report.weekly(now);
 ok('"진행차수 1차, Pass" 표기', w.html.includes('진행차수 1차, Pass'));
 ok('"진행차수 3차, Fail" 표기', w.html.includes('진행차수 3차, Fail'));
 ok('인증 통계 섹션 포함', w.html.includes('모델별 인증 현황'));
-ok('주차 범위(월~금) 표기', w.html.includes(`${wk.from} ~ ${wk.to}`));
+ok('주차 범위(월~일) 표기', w.html.includes(`${wk.from} ~ ${wk.to} (월~일)`));
 ok('결과 컬럼 헤더 추가', w.html.includes('>결과</th>'));
 ok('Test 목적 컬럼 헤더 추가', w.html.includes('>Test 목적</th>'));
 ok('미판정 컬럼 헤더 삭제', !w.html.includes('>미판정</th>'));
 ok('Pass 파란 볼드 (4-3)', /<b [^>]*color:#1257c9[^>]*>[^<]*<font color="#1257c9"[^>]*>Pass</.test(w.html));
 ok('Fail 빨간 음영 볼드 (4-3)', w.html.includes('background:#d23227;color:#ffffff'));
 ok('Fail 상세에 결과 코멘트 유지', w.html.includes('DRM 재생 실패'));
-ok('본문 집계 구간은 월~일 유지', report.weekRange(now).to !== wk.to);
+ok('본문 집계와 인증 통계 섹션이 같은 월~일 구간', report.weekly(now).subject.includes(`${wk.from} ~ ${wk.to}`));
 ok('일일보고에는 통계 섹션 없음', !report.daily(now).html.includes('모델별 인증 현황'));
 
 // ---------- 보고 메일: 스케줄 · 링크 전용 본문 · 인증통계 단독 보고 ----------
@@ -264,10 +273,10 @@ ok('화면용과 발송용이 다른 본문', mails.every((r) => r.html !== r.ma
 const notifySrc = fs.readFileSync(path.join(__dirname, '..', 'notify.js'), 'utf8');
 ok('기본 수신자에 개인 Gmail 없음', !/DEFAULT_REPORT_TO[^;]*gmail\.com/i.test(notifySrc));
 
-// 인증통계 단독 보고는 '지난주' 월~금
-const lw = report.lastWorkWeekRange(now);
+// 인증통계 단독 보고는 '지난주' 월~일
+const lw = report.lastWeekRange(now);
 ok('지난주 월요일 시작', new Date(`${lw.from}T00:00:00`).getDay() === 1, lw.from);
-ok('지난주 금요일 종료', new Date(`${lw.to}T00:00:00`).getDay() === 5, lw.to);
+ok('지난주 일요일 종료', new Date(`${lw.to}T00:00:00`).getDay() === 0, lw.to);
 ok('이번 주보다 7일 앞', new Date(wk.from) - new Date(lw.from) === 7 * 86400000);
 ok('제목에 지난주 기간', cRep.subject.includes(`${lw.from} ~ ${lw.to}`), cRep.subject);
 ok('본문에 통계 섹션', cRep.html.includes('모델별 인증 현황'));

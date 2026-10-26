@@ -12,7 +12,7 @@ const state = {
   boardExpanded: new Set(), // 5개 초과 시 펼친 상태의 상태칼럼
   boardAsc: new Set(),      // 숫자 클릭으로 오름차순(오래된 순)으로 뒤집은 상태칼럼 (기본은 최신일 내림차순)
   options: { models: [], testPurposes: [] }, // 입력 자동목록용 선택지 (필터와 무관한 전체 이력값)
-  // 인증 통계 뷰: 주간(월~금) / 전체 누적 전환, weekOffset 0 = 이번 주
+  // 인증 통계 뷰: 주간(월~일) / 전체 누적 전환, weekOffset 0 = 이번 주
   certStats: { mode: 'week', weekOffset: 0, data: null, range: null },
   hiddenRequesters: [], // 의뢰자 제안에서 숨긴 이름 (의뢰 레코드는 보존)
   resources: null,      // Task 6. QE 전체 리소스 현황 (/api/resources 응답)
@@ -542,16 +542,17 @@ function rateBar(pass, fail) {
   </span>`;
 }
 
-// 기준 주(offset 0 = 이번 주)의 월요일~금요일. label은 "8/24~8/28" 형식.
+// 기준 주(offset 0 = 이번 주)의 월요일~일요일. label은 "8/24~8/30" 형식.
+// 2026-10-26 월~금 → 월~일 — 주말에 끝난 인증이 어느 주에도 잡히지 않았다.
 function weekRangeOf(offset) {
   const mon = new Date();
   mon.setHours(0, 0, 0, 0);
   mon.setDate(mon.getDate() - ((mon.getDay() + 6) % 7) + offset * 7);
-  const fri = new Date(mon);
-  fri.setDate(mon.getDate() + 4);
+  const sun = new Date(mon);
+  sun.setDate(mon.getDate() + 6);
   const iso = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
   const short = (d) => `${d.getMonth() + 1}/${d.getDate()}`;
-  return { from: iso(mon), to: iso(fri), label: `${short(mon)}~${short(fri)}` };
+  return { from: iso(mon), to: iso(sun), label: `${short(mon)}~${short(sun)}` };
 }
 
 // 결과 셀: Pass는 파란 볼드, Fail은 빨간 음영 + 흰 볼드 (지시서 4-3)
@@ -613,7 +614,7 @@ function downloadCertStatsCsv() {
   const cs = state.certStats;
   if (!cs.data) return;
   const isWeek = !!cs.range;
-  const period = isWeek ? `${cs.range.from} ~ ${cs.range.to} (월~금)` : '전체 기간 누적';
+  const period = isWeek ? `${cs.range.from} ~ ${cs.range.to} (월~일)` : '전체 기간 누적';
   const cols = [
     ['모델명', (r) => r.model_name],
     ['인증종류', (r) => r.cert_type],
@@ -642,7 +643,7 @@ function downloadCertStatsCsv() {
   saveCsv(lines, `인증통계_${stamp}.csv`);
 }
 
-// 인증 통계 보고를 지금 메일로 보낸다. 대상은 지난주 월~금(월요일 자동발송과 동일).
+// 인증 통계 보고를 지금 메일로 보낸다. 대상은 지난주 월~일(월요일 자동발송과 동일).
 async function sendCertStatsMail(btn) {
   btn.disabled = true;
   const orig = btn.textContent;
@@ -683,7 +684,7 @@ async function renderCertStats() {
   const nav = isWeek ? `
     <span class="week-nav">
       <button class="btn" data-stats-week="-1" title="이전 주">‹</button>
-      <b class="week-label">${wk.label}</b><small>(월~금)</small>
+      <b class="week-label">${wk.label}</b><small>(월~일)</small>
       <button class="btn" data-stats-week="1" title="다음 주">›</button>
       ${cs.weekOffset !== 0 ? '<button class="btn" data-stats-week="0">이번 주</button>' : ''}
     </span>` : '';
@@ -702,7 +703,7 @@ async function renderCertStats() {
         <button class="btn" data-stats-refresh="1">↻ 새로고침</button>
       </span>
     </div>
-    <p class="report-hint stats-period">대상 기간 · ${isWeek ? `${wk.from} ~ ${wk.to} (월~금)` : '전체 기간 누적'}
+    <p class="report-hint stats-period">대상 기간 · ${isWeek ? `${wk.from} ~ ${wk.to} (월~일)` : '전체 기간 누적'}
       · 판정 완료(Pass/Fail) 건만 집계하며 미판정 건은 제외합니다.
       같은 모델이라도 진행차수마다 행이 따로 서고, 결과·인증완료일·Pass율·Fail율은 그 차수의 값입니다.</p>
     <div class="summary stats-summary">${chips}</div>

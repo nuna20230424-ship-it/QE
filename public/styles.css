@@ -179,8 +179,8 @@ table { width: 100%; border-collapse: collapse; background: var(--panel); }
 th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line); font-size: 13px; vertical-align: middle; white-space: nowrap; }
 td.cell-comment { white-space: normal; max-width: 280px; }
 th { background: #f7f9fc; color: var(--muted); font-weight: 700; }
-th[data-sort] { cursor: pointer; user-select: none; white-space: nowrap; }
-th[data-sort]:hover { color: var(--text); background: #eef2f8; }
+th[data-sort], th[data-stats-sort] { cursor: pointer; user-select: none; white-space: nowrap; }
+th[data-sort]:hover, th[data-stats-sort]:hover { color: var(--text); background: #eef2f8; }
 tbody tr { cursor: pointer; }
 tbody tr:hover { background: #f7f9fc; }
 .status-pill { display: inline-flex; align-items: center; gap: 6px; font-weight: 700; font-size: 12px; }

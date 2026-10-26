@@ -13,7 +13,8 @@ const state = {
   boardAsc: new Set(),      // 숫자 클릭으로 오름차순(오래된 순)으로 뒤집은 상태칼럼 (기본은 최신일 내림차순)
   options: { models: [], testPurposes: [] }, // 입력 자동목록용 선택지 (필터와 무관한 전체 이력값)
   // 인증 통계 뷰: 주간(월~일) / 전체 누적 전환, weekOffset 0 = 이번 주
-  certStats: { mode: 'week', weekOffset: 0, data: null, range: null },
+  // asc: 인증완료일 헤더 클릭으로 오름차순으로 뒤집은 상태 (기본은 최신일 내림차순)
+  certStats: { mode: 'week', weekOffset: 0, data: null, range: null, asc: false },
   hiddenRequesters: [], // 의뢰자 제안에서 숨긴 이름 (의뢰 레코드는 보존)
   resources: null,      // Task 6. QE 전체 리소스 현황 (/api/resources 응답)
 };
@@ -572,8 +573,21 @@ function roundTrail(rows, i) {
     </tr>`;
 }
 
-function certStatsTable(rows) {
-  if (!rows.length) return '<p class="col-empty">집계할 판정 완료 의뢰가 없습니다.</p>';
+// 인증완료일 기준 정렬 (기본 최신순). 날짜가 빈 행은 방향과 관계없이 맨 뒤 — 보드 칼럼 정렬과 같은 규칙
+function sortCertStatsRows(rows) {
+  const asc = state.certStats.asc;
+  return [...rows].sort((a, b) => {
+    const va = a.completed_date || '', vb = b.completed_date || '';
+    if (!va || !vb) return (va ? 0 : 1) - (vb ? 0 : 1);
+    const cmp = va < vb ? -1 : va > vb ? 1 : 0;
+    return asc ? cmp : -cmp;
+  });
+}
+
+function certStatsTable(allRows) {
+  if (!allRows.length) return '<p class="col-empty">집계할 판정 완료 의뢰가 없습니다.</p>';
+  const rows = sortCertStatsRows(allRows);
+  const asc = state.certStats.asc;
   const body = rows.map((r, i) => {
     const merged = (r.rounds || []).length > 1;
     const more = merged
@@ -598,7 +612,9 @@ function certStatsTable(rows) {
     <div class="table-wrap">
     <table class="stats-table">
       <thead><tr>
-        <th>모델명</th><th>인증종류</th><th>결과</th><th>인증완료일</th><th>Test 목적</th>
+        <th>모델명</th><th>인증종류</th><th>결과</th>
+        <th data-stats-sort="1" title="인증완료일 기준 ${asc ? '오름차순 · 클릭하면 최신순' : '최신순 · 클릭하면 오름차순'}">인증완료일 ${asc ? '▴' : '▾'}</th>
+        <th>Test 목적</th>
         <th class="num">진행차수</th>
         <th class="num">Pass</th><th class="num">Fail</th>
         <th class="num">Pass율</th><th class="num">Fail율</th>
@@ -635,7 +651,7 @@ function downloadCertStatsCsv() {
     ['집계 대상', '판정 완료(Pass/Fail) 건만 — 미판정 건은 제외'],
     [],
     cols.map((c) => c[0]),
-    ...cs.data.rows.map((r) => cols.map((c) => c[1](r))),
+    ...sortCertStatsRows(cs.data.rows).map((r) => cols.map((c) => c[1](r))),
     [],
     ['합계', `모델 ${t.models}건`, '', '', `판정 ${t.judged}건`, t.pass, t.fail, t.pass_rate, t.fail_rate],
   ];
@@ -707,7 +723,7 @@ async function renderCertStats() {
       · 판정 완료(Pass/Fail) 건만 집계하며 미판정 건은 제외합니다.
       같은 모델이라도 진행차수마다 행이 따로 서고, 결과·인증완료일·Pass율·Fail율은 그 차수의 값입니다.</p>
     <div class="summary stats-summary">${chips}</div>
-    ${certStatsTable(s.rows)}`;
+    <div id="stats-table">${certStatsTable(s.rows)}</div>`;
 }
 
 // ---- Task 5. 진행차수 자동 산출 ----
@@ -1778,6 +1794,12 @@ function bind() {
     if (copy) {
       const r = state.certStats.range;
       copyReport(copy, 'certstats', r ? `?from=${r.from}&to=${r.to}` : '');
+      return;
+    }
+    // 인증완료일 헤더 클릭 → 최신순/오름차순 토글. 받아 둔 데이터로 표만 다시 그린다
+    if (e.target.closest('[data-stats-sort]')) {
+      state.certStats.asc = !state.certStats.asc;
+      $('#stats-table').innerHTML = certStatsTable(state.certStats.data.rows);
       return;
     }
     const trail = e.target.closest('[data-trail]');

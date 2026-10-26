@@ -860,7 +860,7 @@ const OPEN_STATUS = ['예약대기', '예약확정', '진행중'];
 const openRows = repo.openRequests();
 ok('미완 상태만 조회', openRows.every((r) => OPEN_STATUS.includes(r.status)), openRows.map((r) => r.status).join(','));
 ok('완료 건 미포함', openRows.every((r) => r.status !== '완료'));
-ok('중단·보류 미포함', openRows.every((r) => r.status !== '중단' && r.status !== '보류'));
+ok('아카이브·보류 미포함', openRows.every((r) => r.status !== '아카이브' && r.status !== '보류'));
 ok('대표 일정(plan_date) 포함', openRows.every((r) => 'plan_date' in r));
 // 실제 DB 픽스처로 돌려도 예외 없이 집계된다 (요약 계약 확인)
 const rsLive = resources.summarize(openRows, AS_OF);
@@ -1140,7 +1140,8 @@ ok('NTS → Netflix NTS', cparse.parseTitle('[NTS][MR] KM-100 2nd > Failed').cer
 ok('AVTS → Amazon AVTS', cparse.parseTitle('[AVTS][양산] KM-300 > Passed').cert_type === 'Amazon AVTS');
 ok('소문자 인증종류도 받는다', cparse.parseTitle('[nts] KM-100 > Passed').cert_type === 'Netflix NTS');
 ok('Failed → 완료 · Fail', (() => { const r = cparse.parseTitle('[NTS] KM-100 > Failed'); return r.status === '완료' && r.verdict === 'Fail'; })());
-ok('Dropped → 중단 · Drop', (() => { const r = cparse.parseTitle('[NTS] KM-100 > Dropped'); return r.status === '중단' && r.verdict === 'Drop'; })());
+ok('Dropped → 아카이브 · Drop', (() => { const r = cparse.parseTitle('[NTS] KM-100 > Dropped'); return r.status === '아카이브' && r.verdict === 'Drop'; })());
+ok('예전 표기 중단도 아카이브로', cparse.parseTitle('[NTS] KM-100 > 중단').status === '아카이브');
 ok('3차 표기도 회차로 읽는다', cparse.parseTitle('[NTS][3PL] KM-100 3차 > Passed').round === '3');
 // MR은 Test type 목록과 Test 목적 목록 양쪽에 있다. 2026-09-21 사용자 결정 —
 // 목적을 채우는 다른 대괄호가 있으면 MR은 Test type, MR뿐이면 Test 목적.
@@ -1272,10 +1273,10 @@ ok('채운 건은 수정으로 집계', s4.updated === 1, JSON.stringify(s4));
 // 결과 반영 규칙 — 예약확정도 넘기고, 보류·끝난 건은 두고, 결과가 아닌 상태로는 덮지 않는다
 const st = (cur, next) => csync.fillBlanks({ status: cur }, { status: next }).status;
 ok('예약확정 + Passed → 완료', st('예약확정', '완료') === '완료');
-ok('진행중 + Dropped → 중단', st('진행중', '중단') === '중단');
+ok('진행중 + Dropped → 아카이브', st('진행중', '아카이브') === '아카이브');
 ok('보류는 결과가 와도 유지', st('보류', '완료') === undefined);
-ok('완료는 Dropped 가 와도 유지', st('완료', '중단') === undefined);
-ok('중단은 Passed 가 와도 유지', st('중단', '완료') === undefined);
+ok('완료는 Dropped 가 와도 유지', st('완료', '아카이브') === undefined);
+ok('아카이브는 Passed 가 와도 유지', st('아카이브', '완료') === undefined);
 ok('예약확정을 진행중으로 덮지 않는다', st('예약확정', '진행중') === undefined);
 
 // 상태 기본값 '예약대기'는 사람이 고른 값이 아니므로 빈 칸으로 본다
@@ -1296,28 +1297,35 @@ ok('건너뛴 이벤트는 레코드가 없다', !repo.getByConfluenceEventId('e
 const noId = csync.syncEvents([{ title: '[xTS][Pre] KM-901 > Passed' }]);
 ok('이벤트 id가 없으면 건너뛴다', noId.skipped === 1 && noId.created === 0, JSON.stringify(noId));
 
-head('Confluence 삭제 이벤트 → 중단 보관');
+head('Confluence 삭제 이벤트 → 아카이브 보관');
 // 완료된 건은 되돌리지 않는다
 const ev3 = { id: 'evt-1004', title: '[AVTS][양산] KM-902 > Passed', invitees: '문유림', start: '2026-09-10', end: '2026-09-10', relatedPage: '', created: '2026-09-10' };
 csync.syncEvents([ev3]);
 ok('완료 상태로 생성', repo.getByConfluenceEventId('evt-1004').status === '완료');
 
 // evt-1001 은 위에서 Passed 로 완료됐다 — 진행 중인 건이 사라지는 경우를 보려고 진행중으로 되돌린다
-repo.update(repo.getByConfluenceEventId('evt-1001').id, { status: '진행중' }, '테스터');
+const goneId = repo.getByConfluenceEventId('evt-1001').id;
+repo.update(goneId, { status: '진행중' }, '테스터');
 const s5 = csync.syncEvents([], { range: RANGE });
-ok('사라진 이벤트는 중단으로 보관', repo.getByConfluenceEventId('evt-1001').status === '중단');
-ok('레코드를 지우지는 않는다', !!repo.getByConfluenceEventId('evt-1001'));
-ok('완료 건은 중단으로 바꾸지 않는다', repo.getByConfluenceEventId('evt-1004').status === '완료');
-ok('중단 처리 건수를 집계', s5.cancelled === 1, String(s5.cancelled));
-ok('중단 이력의 작업자는 동기화', repo.history(repo.getByConfluenceEventId('evt-1001').id).some((h) => h.actor === csync.ACTOR && String(h.detail).includes('중단')));
+const gone = repo.get(goneId);
+ok('사라진 이벤트는 아카이브로 보관', gone && gone.status === '아카이브', gone && gone.status);
+ok('레코드를 지우지는 않는다', !!gone);
+ok('아카이브하면 이벤트 연결을 끊는다', !gone.confluence_event_id && !repo.getByConfluenceEventId('evt-1001'));
+ok('완료 건은 아카이브로 옮기지 않는다', repo.getByConfluenceEventId('evt-1004').status === '완료');
+ok('아카이브 건수를 집계', s5.archived === 1, String(s5.archived));
+ok('아카이브 이력에 작업자·이벤트 id 가 남는다', repo.history(goneId).some((h) => h.actor === csync.ACTOR && String(h.detail).includes('아카이브') && String(h.detail).includes('evt-1001')));
 
 const s6 = csync.syncEvents([], { range: RANGE });
-ok('이미 중단된 건은 다시 건드리지 않는다', s6.cancelled === 0, String(s6.cancelled));
+ok('아카이브된 건은 다시 건드리지 않는다', s6.archived === 0, String(s6.archived));
 
+// 같은 이벤트가 다시 보이면 아카이브 건을 되살리지 않고 새 의뢰를 만든다 (2026-10-26 사용자 결정)
 const s7 = csync.syncEvents([ev1]);
-ok('조회 기간이 없으면 삭제 반영을 건너뛴다', s7.cancelled === 0 && s7.warnings.some((w) => w.includes('조회 기간이 없어')));
+ok('조회 기간이 없으면 삭제 반영을 건너뛴다', s7.archived === 0 && s7.warnings.some((w) => w.includes('조회 기간이 없어')));
+const back = repo.getByConfluenceEventId('evt-1001');
+ok('다시 보인 이벤트는 새 의뢰로 생성', s7.created === 1 && back && back.id !== goneId, JSON.stringify({ created: s7.created, id: back && back.id }));
+ok('아카이브 건은 그대로 남는다', repo.get(goneId).status === '아카이브');
 let threw = '';
-try { csync.cancelMissing([], {}); } catch (e) { threw = e.message; }
+try { csync.archiveMissing([], {}); } catch (e) { threw = e.message; }
 ok('기간 없이 삭제 반영을 직접 호출하면 거부', threw.includes('조회 기간'), threw);
 
 head('Confluence 여러 캘린더의 같은 일정 → 1건 (메인 + 서브)');
@@ -1348,12 +1356,12 @@ ok('그 담당자가 메인 테스터', rm.tester === '이해찬', rm.tester);
 ok('나머지 담당자는 서브 테스터', rm.tester_sub === '이은경, 문유림', rm.tester_sub);
 ok('진행·결과가 가장 많이 나간 제목을 쓴다', rm.status === '완료' && rm.verdict === 'Fail', `${rm.status}/${rm.verdict}`);
 const sm2 = csync.syncEvents(mEvs, { range: RANGE });
-ok('재동기화는 변경 없음 · 중단 없음', sm2.unchanged === 2 && sm2.created === 0 && sm2.cancelled === 0, JSON.stringify(sm2));
-// 대표 이벤트가 지워져도 다른 캘린더에 남아 있으면 같은 의뢰다 — 대표 id 를 옮기고 중단하지 않는다.
+ok('재동기화는 변경 없음 · 아카이브 없음', sm2.unchanged === 2 && sm2.created === 0 && sm2.archived === 0, JSON.stringify(sm2));
+// 대표 이벤트가 지워져도 다른 캘린더에 남아 있으면 같은 의뢰다 — 대표 id 를 옮기고 아카이브하지 않는다.
 const sm3 = csync.syncEvents(mEvs.filter((e) => e.id !== 'evt-m-1'), { range: RANGE });
 ok('대표가 사라지면 남은 이벤트로 옮겨 붙는다', repo.get(rm.id).confluence_event_id === 'evt-m-2', repo.get(rm.id).confluence_event_id);
 ok('옮겨 붙인 건은 새로 만들지 않는다', sm3.created === 0, JSON.stringify(sm3));
-ok('옮겨 붙인 건은 중단되지 않는다', repo.get(rm.id).status === '완료', repo.get(rm.id).status);
+ok('옮겨 붙인 건은 아카이브되지 않는다', repo.get(rm.id).status === '완료', repo.get(rm.id).status);
 
 head('Confluence 작성일 기준 반영 (createdSince)');
 // 2026-10-25 사용자 결정 — 오늘 이후 Confluence 에 작성된 일정만 반영한다. 작성 시각은 이벤트 id 앞(UTC)이다.
@@ -1373,10 +1381,10 @@ ok('작성 시각을 못 읽는 일정은 반영하지 않는다', !repo.getByCo
 ok('예전 일정의 복사본은 대표 기준으로 제외', !repo.getByConfluenceEventId('20261025T010000Z--4@x') && !repo.getByConfluenceEventId('20260901T000000Z--3@x'));
 ok('제외 건수를 집계한다', scs.excluded === 3, String(scs.excluded));
 ok('제외했다고 경고로 알린다', scs.warnings.some((w) => w.includes('2026-10-25 이전에 작성된 일정 3건')), scs.warnings.join(' | '));
-// 예전 일정에 이어진 의뢰는 제외돼도 '사라진 일정' 이 아니다 — 중단하지 않는다.
+// 예전 일정에 이어진 의뢰는 제외돼도 '사라진 일정' 이 아니다 — 아카이브하지 않는다.
 const oldLinked = repo.create({ cert_type: 'Google xTS', model_name: 'KM-974', requester: 'PL', desired_date: '2026-09-24', confluence_event_id: '20260902T000000Z--5@x' }, '수기');
 const scs2 = csync.syncEvents([...csEvs, cs('20260902T000000Z--5@x', 'KM-974', '2026-09-24')], { range: RANGE, createdSince: '2026-10-25' });
-ok('제외된 일정에 이어진 의뢰는 중단하지 않는다', repo.get(oldLinked.id).status === '예약대기' && scs2.cancelled === 0, `${repo.get(oldLinked.id).status} / ${scs2.cancelled}`);
+ok('제외된 일정에 이어진 의뢰는 아카이브하지 않는다', repo.get(oldLinked.id).status === '예약대기' && scs2.archived === 0, `${repo.get(oldLinked.id).status} / ${scs2.archived}`);
 let csErr = '';
 try { csync.syncEvents(csEvs, { range: RANGE, createdSince: '10/25' }); } catch (e) { csErr = e.message; }
 ok('기준일 형식이 틀리면 반영하지 않고 던진다', csErr.includes('createdSince'), csErr);

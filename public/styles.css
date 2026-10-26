@@ -155,13 +155,13 @@ main { padding: 0 22px 40px; }
 .st-진행중   { color: var(--s-prog); }  .bg-진행중   { background: var(--s-prog); }
 .st-완료     { color: var(--s-done); }  .bg-완료     { background: var(--s-done); }
 .st-보류     { color: var(--s-hold); }  .bg-보류     { background: var(--s-hold); }
-.st-중단     { color: var(--s-stop); }  .bg-중단     { background: var(--s-stop); }
+.st-아카이브     { color: var(--s-stop); }  .bg-아카이브     { background: var(--s-stop); }
 .card.cs-예약대기 { border-left-color: var(--s-wait); }
 .card.cs-예약확정 { border-left-color: var(--s-fixed); }
 .card.cs-진행중   { border-left-color: var(--s-prog); }
 .card.cs-완료     { border-left-color: var(--s-done); }
 .card.cs-보류     { border-left-color: var(--s-hold); }
-.card.cs-중단     { border-left-color: var(--s-stop); }
+.card.cs-아카이브     { border-left-color: var(--s-stop); }
 
 /* 완료 건 Pass/Fail 판정 배지 */
 .verdict { font-size: 11px; font-weight: 800; padding: 1px 7px; border-radius: 999px; margin-left: 6px; white-space: nowrap; }
@@ -202,7 +202,7 @@ tbody tr:hover { background: #f7f9fc; }
 .cal-chip.bg-진행중   { background: var(--s-prog); }
 .cal-chip.bg-완료     { background: var(--s-done); }
 .cal-chip.bg-보류     { background: var(--s-hold); }
-.cal-chip.bg-중단     { background: var(--s-stop); }
+.cal-chip.bg-아카이브     { background: var(--s-stop); }
 .cal-more { font-size: 11px; color: var(--muted); }
 
 /* 변경 이력 */

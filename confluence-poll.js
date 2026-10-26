@@ -50,7 +50,7 @@ async function runOnce({ actor, fetchEvents, range: rangeIn, createdSince } = {}
     last = {
       at: new Date().toISOString(), ok: true, range, createdSince: since,
       fetched: fetched.events.length, calendars: fetched.calendars,
-      created: r.created, updated: r.updated, unchanged: r.unchanged, skipped: r.skipped, cancelled: r.cancelled, excluded: r.excluded,
+      created: r.created, updated: r.updated, unchanged: r.unchanged, skipped: r.skipped, archived: r.archived, excluded: r.excluded,
       warnings: [...fetched.warnings, ...r.warnings], errors: r.errors,
     };
   } catch (err) {

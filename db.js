@@ -23,7 +23,7 @@ db.exec(`
     scheduled_date TEXT,                     -- 예약 확정 일정 (테스터 입력)
     tester         TEXT,                     -- 담당 테스터 (메인)
     tester_sub     TEXT,                     -- 서브 담당 테스터 (콤마 구분, 없는 경우가 대부분)
-    status         TEXT NOT NULL DEFAULT '예약대기',  -- 진행 상태 (… | 중단)
+    status         TEXT NOT NULL DEFAULT '예약대기',  -- 진행 상태 (… | 아카이브)
     progress       TEXT,                     -- 진행 사항 메모
     result         TEXT,                     -- 결과 코멘트
     verdict        TEXT,                     -- 판정 (Pass | Fail | Drop)
@@ -114,6 +114,16 @@ function logHistory(requestId, actor, action, detail) {
   db.prepare('INSERT INTO history (request_id, ts, actor, action, detail) VALUES (?,?,?,?,?)')
     .run(requestId, nowIso(), actor || '알수없음', action, detail || '');
 }
+
+// '중단' 상태는 2026-10-26 '아카이브' 로 바뀌었다 (사용자 결정). 남아 있는 예전 값을 옮기고 이력을 남긴다.
+// 옮길 것이 없으면 아무것도 하지 않으므로 기동할 때마다 돌려도 된다.
+db.transaction(() => {
+  const ts = nowIso();
+  for (const { id } of db.prepare("SELECT id FROM requests WHERE status = '중단'").all()) {
+    db.prepare("UPDATE requests SET status = '아카이브', updated_at = ? WHERE id = ?").run(ts, id);
+    logHistory(id, '시스템', '수정', "상태: 중단 → 아카이브 (상태 이름 변경)");
+  }
+})();
 
 // 모델(프로젝트) × 인증종류 × Test 목적 × 진행차수별 통계.
 // 미판정·Drop 건은 집계에서 빠지므로 분모는 판정 완료 건수이고 Pass율 + Fail율 = 100%가 된다.
@@ -265,7 +275,7 @@ function bottlenecksOf({ roundThreshold = 5, staleDays = 14 } = {}) {
            CAST(julianday('now') - julianday(${ACT_START}) AS INTEGER) AS days
     FROM requests
     WHERE (verdict IS NULL OR TRIM(verdict) = '')
-      AND status NOT IN ('완료', '보류', '중단')
+      AND status NOT IN ('완료', '보류', '아카이브')
       AND ${ACT_START} IS NOT NULL AND ${ACT_START} <= @limit
     ORDER BY since
   `).all({ limit });
@@ -320,15 +330,29 @@ module.exports = {
     return this.get(row.id);
   },
 
+  // Confluence 에서 지워진 일정의 의뢰를 아카이브로 옮기고 이벤트 연결을 끊는다.
+  // 연결을 남기면 같은 이벤트가 다시 보였을 때 새 의뢰를 만들 수 없다(이벤트 id 유니크 인덱스).
+  archiveConfluenceRow(id, actor) {
+    const row = this.get(id);
+    if (!row) return null;
+    db.prepare("UPDATE requests SET status = '아카이브', confluence_event_id = '', updated_at = @ts WHERE id = @id")
+      .run({ ts: nowIso(), id: row.id });
+    logHistory(row.id, actor || '동기화', '수정',
+      `Confluence 일정 삭제 → 상태: ${row.status} → 아카이브, 이벤트 연결 해제: ${row.confluence_event_id}`);
+    return this.get(row.id);
+  },
+
   // 같은 일정을 사람이 먼저 입력해 둔 건을 찾기 위한 후보. 아직 이벤트 id가 붙지 않은 의뢰 중
   // 인증종류가 같고 대표 시작일이 기간 안에 든 것만 좁혀 준다. 같은 건인지 최종 판정은
   // confluence-sync 가 한다 — 모델명 표기 정규화·차수 비교는 SQL 로 하기에 마땅치 않다.
   // withLinked 면 이벤트 id 가 붙은 의뢰도 돌려준다 — 그 이벤트가 이번 회차에 사라졌는지는 호출부가 가른다.
+  // 아카이브 건은 뺀다 — 지워졌던 일정이 다시 보이면 되살리지 않고 새 의뢰를 만든다(2026-10-26 사용자 결정).
   mergeCandidates({ cert_type, from, to, withLinked = false } = {}) {
     return db.prepare(`
       SELECT id, model_name, cert_type, round, ${ACT_START} AS start_date, confluence_event_id
       FROM requests
       WHERE (@withLinked = 1 OR TRIM(COALESCE(confluence_event_id,'')) = '')
+        AND status <> '아카이브'
         AND TRIM(cert_type) = @cert_type
         AND ${ACT_START} IS NOT NULL
         AND ${ACT_START} BETWEEN @from AND @to
@@ -431,7 +455,7 @@ module.exports = {
   },
 
   // Task 6. 리소스 산정 대상 — 아직 끝나지 않은 의뢰(예약대기·예약확정·진행중).
-  // 완료·보류·중단은 담당자의 남은 업무량이 아니므로 제외한다.
+  // 완료·보류·아카이브는 담당자의 남은 업무량이 아니므로 제외한다.
   // 정렬은 대표 일정 순(미정은 뒤로)이라 화면에서 임박한 건이 위에 온다.
   openRequests() {
     return db.prepare(`
@@ -504,7 +528,7 @@ module.exports = {
     for (const r of all) {
       byStatus[r.status] = (byStatus[r.status] || 0) + 1;
       byCert[r.cert_type] = (byCert[r.cert_type] || 0) + 1;
-      if (!['완료', '보류', '중단'].includes(r.status)) {
+      if (!['완료', '보류', '아카이브'].includes(r.status)) {
         for (const n of assignees.listOf(r)) testerLoad[n] = (testerLoad[n] || 0) + 1;
       }
       // 지연: 예약 확정일이 지났는데 아직 진행중으로 전환되지 않은 건 (예약대기/예약확정 상태로 잔류)

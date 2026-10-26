@@ -32,13 +32,15 @@ const STATUSES = {
   fail: { status: '완료', verdict: 'Fail' },
   'in-progress': { status: '진행중', verdict: '' },
   inprogress: { status: '진행중', verdict: '' },
-  dropped: { status: '중단', verdict: 'Drop' },
-  drop: { status: '중단', verdict: 'Drop' },
+  dropped: { status: '아카이브', verdict: 'Drop' },
+  drop: { status: '아카이브', verdict: 'Drop' },
   예약확정: { status: '예약확정', verdict: '' },
   진행중: { status: '진행중', verdict: '' },
   완료: { status: '완료', verdict: '' },
   보류: { status: '보류', verdict: '' },
-  중단: { status: '중단', verdict: 'Drop' },
+  // '중단' 상태는 2026-10-26 '아카이브' 로 바뀌었다. 예전 표기로 쓴 제목도 받는다.
+  중단: { status: '아카이브', verdict: 'Drop' },
+  아카이브: { status: '아카이브', verdict: '' },
 };
 
 const norm = (s) => String(s ?? '').trim();

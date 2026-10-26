@@ -1,5 +1,5 @@
 // 대시보드 프런트 로직: 목록 조회/등록/수정/삭제, 보드·일정표·캘린더 뷰, 요약·이력
-const STATUSES = ['예약대기', '예약확정', '진행중', '완료', '보류', '중단'];
+const STATUSES = ['예약대기', '예약확정', '진행중', '완료', '보류', '아카이브'];
 const _now = new Date();
 
 const state = {
@@ -20,7 +20,7 @@ const state = {
 
 const BOARD_LIMIT = 5; // 보드 칼럼당 기본 노출 카드 수
 
-// 보드 칼럼 정렬 기준일. 여기 없는 칼럼(보류·중단)은 서버 순서 그대로 둔다.
+// 보드 칼럼 정렬 기준일. 여기 없는 칼럼(보류·아카이브)은 서버 순서 그대로 둔다.
 // 시작일이 빈 건(예약대기는 전부)은 카드 '일정' 표기와 같은 순서로 예약확정일 → 희망일을 쓴다.
 const startKey = (it) => it.started_date || it.scheduled_date || it.desired_date || '';
 const BOARD_SORT_KEYS = {
@@ -102,7 +102,7 @@ function renderConfluence(st) {
   if (l) {
     const when = l.at ? new Date(l.at).toLocaleString('ko-KR') : '';
     if (l.ok) {
-      parts.push(`<span class="cf-ok">${esc(when)} · 조회 ${l.fetched}건${l.calendars ? ` (캘린더 ${l.calendars}곳)` : ''} → 신규 ${l.created} · 갱신 ${l.updated} · 유지 ${l.unchanged} · 건너뜀 ${l.skipped} · 중단 ${l.cancelled}${l.excluded ? ` · 제외 ${l.excluded} (${esc(l.createdSince)} 이전 작성)` : ''}</span>`);
+      parts.push(`<span class="cf-ok">${esc(when)} · 조회 ${l.fetched}건${l.calendars ? ` (캘린더 ${l.calendars}곳)` : ''} → 신규 ${l.created} · 갱신 ${l.updated} · 유지 ${l.unchanged} · 건너뜀 ${l.skipped} · 아카이브 ${l.archived}${l.excluded ? ` · 제외 ${l.excluded} (${esc(l.createdSince)} 이전 작성)` : ''}</span>`);
     } else {
       parts.push(`<span class="cf-fail">${esc(when)} · 실패: ${esc(l.reason || '')}</span>`);
     }

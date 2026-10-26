@@ -10,6 +10,8 @@ const ACTOR = 'Confluence 동기화';
 
 // 상태 기본값. 사람이 고른 값이 아니므로 빈 칸과 같게 취급한다.
 const DEFAULT_STATUS = '예약대기';
+// Confluence 에서 지워진 일정·Dropped 결과가 가는 상태. 예전 '중단' 자리다.
+const ARCHIVE_STATUS = '아카이브';
 
 const isBlank = (v) => String(v ?? '').trim() === '';
 
@@ -116,9 +118,9 @@ function findMergeTarget(fields, { tolerance = 1, aliveIds } = {}) {
 // 예외는 status 하나다. DEFAULT '예약대기'로 채워져 있어 그냥 두면 영원히 '값이 있는 칸'이 되고
 // Confluence 제목의 진행·결과가 신규 생성 이후로는 한 번도 반영되지 않는다.
 // 기본값 그대로면 사람이 고른 게 아니므로 빈 칸과 같게 본다.
-// 제목에 결과(Passed·Failed·Dropped)가 적히면 예약확정·진행중이어도 완료·중단으로 넘긴다 — 안 그러면
+// 제목에 결과(Passed·Failed·Dropped)가 적히면 예약확정·진행중이어도 완료·아카이브로 넘긴다 — 안 그러면
 // '예약확정 + Pass' 처럼 상태와 판정이 어긋난다. 끝난 건과 사람이 고른 보류는 그대로 둔다.
-const FINAL_STATUS = ['완료', '중단'];
+const FINAL_STATUS = ['완료', ARCHIVE_STATUS];
 const statusOpen = (cur, next) => isBlank(cur) || cur === DEFAULT_STATUS
   || (FINAL_STATUS.includes(next) && !FINAL_STATUS.includes(cur) && cur !== '보류');
 function fillBlanks(current, fields) {
@@ -177,17 +179,18 @@ function upsertEvent(event, opts = {}) {
   return { action: 'updated', eventId, id: cur.id, changed: Object.keys(patch), warnings };
 }
 
-// Confluence에서 사라진 이벤트 — 레코드를 지우지 않고 '중단'으로 돌려 보관한다.
-// 완료·중단 건은 건드리지 않는다. 끝난 일을 되돌리면 통계·보고가 뒤집힌다.
-// range는 필수다. 조회 기간을 모른 채 돌리면 이번에 받아 오지 않은 기간의 건까지 전부 중단이 된다.
-function cancelMissing(events, { range, actor } = {}) {
+// Confluence에서 사라진 이벤트 — 레코드를 지우지 않고 '아카이브'로 옮겨 보관한다 (2026-10-26 사용자 결정).
+// 이벤트 연결도 끊는다. 같은 이벤트가 다시 보이면 아카이브 건을 되살리지 않고 새 의뢰를 만든다(사용자 결정).
+// 완료·아카이브 건은 건드리지 않는다. 끝난 일을 되돌리면 통계·보고가 뒤집힌다.
+// range는 필수다. 조회 기간을 모른 채 돌리면 이번에 받아 오지 않은 기간의 건까지 전부 아카이브가 된다.
+function archiveMissing(events, { range, actor } = {}) {
   if (!range || (!range.from && !range.to)) throw new Error('조회 기간(range) 없이는 삭제 이벤트를 반영할 수 없습니다.');
   const alive = new Set((events || []).map((e) => String((e || {}).id ?? '').trim()).filter(Boolean));
   const out = [];
   for (const row of repo.confluenceRowsInRange(range)) {
     if (alive.has(String(row.confluence_event_id))) continue;
-    if (row.status === '완료' || row.status === '중단') continue;
-    repo.update(row.id, { status: '중단' }, actor || ACTOR);
+    if (row.status === '완료' || row.status === ARCHIVE_STATUS) continue;
+    repo.archiveConfluenceRow(row.id, actor || ACTOR);
     out.push({ id: row.id, eventId: row.confluence_event_id });
   }
   return out;
@@ -197,7 +200,7 @@ function cancelMissing(events, { range, actor } = {}) {
 // 있었다(2026-10-25). 제목의 '>' 앞과 시작일이 같으면 한 건으로 합친다 (사용자 결정: 테스터는 메인 + 서브).
 //   대표 = 가장 먼저 만든 이벤트(id 앞 타임스탬프가 가장 이른 것). 그 담당자가 메인이고 id 가 레코드에 남는다.
 //   제목 = 진행·결과가 가장 많이 나간 것. 한 사람만 '> Failed' 로 고쳐 둔 경우가 있다.
-const STATUS_RANK = { 완료: 3, 중단: 3, 보류: 2, 진행중: 2, 예약확정: 1 };
+const STATUS_RANK = { 완료: 3, 아카이브: 3, 보류: 2, 진행중: 2, 예약확정: 1 };
 const rankOf = (ev) => STATUS_RANK[parse.parseTitle(ev.title).status] || 0;
 
 // 시작일은 ±1일까지 같은 일정으로 본다 — 같은 테스트를 한 사람은 10-01, 다른 사람은 10-02 로 올린 경우가
@@ -255,7 +258,7 @@ function createdSinceOf(day) {
 // 이벤트 목록 한 회차를 통째로 반영한다. 한 건이 터져도 나머지는 계속 간다 —
 // 동기화는 여러 건을 묶어 처리하므로 한 건 때문에 회차 전체가 멈추면 안 된다.
 function syncEvents(events, opts = {}) {
-  const result = { created: 0, updated: 0, unchanged: 0, skipped: 0, cancelled: 0, excluded: 0, warnings: [], errors: [] };
+  const result = { created: 0, updated: 0, unchanged: 0, skipped: 0, archived: 0, excluded: 0, warnings: [], errors: [] };
   const { events: all, merged } = mergeAcrossCalendars(events);
   // createdSince 이전에 작성된 일정은 건드리지 않는다 (2026-10-25 사용자 결정: 오늘 이후 작성분부터).
   // 합친 일정은 대표(가장 먼저 작성된 것) 기준이다 — 예전 일정을 오늘 자기 캘린더에 복사해도 새 의뢰가 생기지 않는다.
@@ -268,7 +271,7 @@ function syncEvents(events, opts = {}) {
   result.excluded = all.length - unique.length;
   if (result.excluded) result.warnings.push(`${opts.createdSince} 이전에 작성된 일정 ${result.excluded}건은 반영하지 않았습니다.`);
   for (const m of merged) if (unique.some((ev) => String(ev.id) === m.id)) result.warnings.push(`[${m.id}] 캘린더 ${m.count}곳의 같은 일정을 1건으로 합쳤습니다: ${m.title}`);
-  // '사라진 일정' 판정(cancelMissing)은 합치기 전 목록을 그대로 쓴다 — 구성 이벤트 id 가 모두 살아 있어야 한다.
+  // '사라진 일정' 판정(archiveMissing)은 합치기 전 목록을 그대로 쓴다 — 구성 이벤트 id 가 모두 살아 있어야 한다.
   // 사라진 이벤트에 이어진 의뢰를 다시 붙이는 것(aliveIds)은 기간 전체를 받은 회차에서만 한다.
   // 일부만 넘긴 호출에서 하면 목록에 없는 모든 이벤트가 '사라진' 것으로 보인다.
   const runOpts = opts.range
@@ -290,7 +293,7 @@ function syncEvents(events, opts = {}) {
   }
 
   if (opts.range) {
-    try { result.cancelled = cancelMissing(events, opts).length; }
+    try { result.archived = archiveMissing(events, opts).length; }
     catch (err) { result.errors.push(`삭제 이벤트 반영 실패: ${err.message}`); }
   } else {
     result.warnings.push('조회 기간이 없어 삭제된 이벤트 반영을 건너뜁니다.');
@@ -299,4 +302,4 @@ function syncEvents(events, opts = {}) {
   return result;
 }
 
-module.exports = { mapEvent, fillBlanks, upsertEvent, cancelMissing, mergeAcrossCalendars, syncEvents, ACTOR, DEFAULT_STATUS };
+module.exports = { mapEvent, fillBlanks, upsertEvent, archiveMissing, mergeAcrossCalendars, syncEvents, ACTOR, DEFAULT_STATUS, ARCHIVE_STATUS };

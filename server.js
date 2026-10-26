@@ -14,7 +14,7 @@ const app = express();
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-const STATUSES = ['예약대기', '예약확정', '진행중', '완료', '보류', '중단'];
+const STATUSES = ['예약대기', '예약확정', '진행중', '완료', '보류', '아카이브'];
 const CERT_TYPES = ['Netflix NTS', 'Google xTS', 'Amazon AVTS'];
 const NOTIFY_ON = ['예약확정', '완료'];   // 이 상태로 바뀔 때 메일 발송
 

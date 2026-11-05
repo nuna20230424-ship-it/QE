@@ -13,13 +13,13 @@ const state = {
   boardAsc: new Set(),      // 숫자 클릭으로 오름차순(오래된 순)으로 뒤집은 상태칼럼 (기본은 최신일 내림차순)
   options: { models: [], testPurposes: [] }, // 입력 자동목록용 선택지 (필터와 무관한 전체 이력값)
   // 인증 통계 뷰: 주간(월~일) / 기간 지정 / 전체 누적 전환, weekOffset 0 = 이번 주
-  // from·to: 기간 지정 모드의 시작일·종료일 (기본 이번 달 1일~오늘), model: 단말 필터 ('' = 전체 단말)
+  // from·to: 기간 지정 모드의 시작일·종료일 (기본 이번 달 1일~오늘), models: 체크한 단말 ([] = 전체 단말)
   // asc: 인증완료일 헤더 클릭으로 오름차순으로 뒤집은 상태 (기본은 최신일 내림차순)
   certStats: {
     mode: 'week', weekOffset: 0, data: null, range: null, asc: false,
     from: `${_now.getFullYear()}-${String(_now.getMonth() + 1).padStart(2, '0')}-01`,
     to: `${_now.getFullYear()}-${String(_now.getMonth() + 1).padStart(2, '0')}-${String(_now.getDate()).padStart(2, '0')}`,
-    model: '',
+    models: [],
   },
   hiddenRequesters: [], // 의뢰자 제안에서 숨긴 이름 (의뢰 레코드는 보존)
   resources: null,      // Task 6. QE 전체 리소스 현황 (/api/resources 응답)
@@ -653,7 +653,7 @@ function downloadCertStatsCsv() {
   const t = cs.data.totals;
   const lines = [
     ['인증 통계', period],
-    ['단말', cs.model || '전체 단말'],
+    ['단말', cs.models.length ? cs.models.join(', ') : '전체 단말'],
     ['집계 대상', '판정 완료(Pass/Fail) 건만 — 미판정 건은 제외'],
     [],
     cols.map((c) => c[0]),
@@ -663,7 +663,8 @@ function downloadCertStatsCsv() {
   ];
   const stamp = cs.range ? `${cs.range.from}_${cs.range.to}` : '전체누적';
   // 파일명에 쓸 수 없는 문자는 _로 바꾼다
-  const modelStamp = cs.model ? `_${cs.model.replace(/[\\/:*?"<>|]/g, '_')}` : '';
+  const modelStamp = cs.models.length === 1 ? `_${cs.models[0].replace(/[\\/:*?"<>|]/g, '_')}`
+    : cs.models.length > 1 ? `_단말${cs.models.length}개` : '';
   saveCsv(lines, `인증통계_${stamp}${modelStamp}.csv`);
 }
 
@@ -682,6 +683,22 @@ async function sendCertStatsMail(btn) {
   btn.textContent = orig;
 }
 
+// 단말 버튼 표기: 전체 / 단말 이름 하나 / N개 선택
+function modelsButtonLabel(models) {
+  if (!models.length) return '전체';
+  return models.length === 1 ? models[0] : `${models.length}개 선택`;
+}
+
+// 단말 패널의 체크 상태를 바꾸고 'n / N' 카운트를 다시 쓴다
+function setModelChecks(root, on) {
+  root.querySelectorAll('#model-panel input[type=checkbox]').forEach((c) => { c.checked = on; });
+  updateModelCount(root);
+}
+function updateModelCount(root) {
+  const boxes = [...root.querySelectorAll('#model-panel input[type=checkbox]')];
+  $('#mp-count').textContent = `${boxes.filter((c) => c.checked).length} / ${boxes.length}`;
+}
+
 // 현재 모드의 조회 기간. 주간은 선택한 주, 기간 지정은 입력한 시작일~종료일, 전체 누적은 null.
 function certStatsRange() {
   const cs = state.certStats;
@@ -697,11 +714,11 @@ function certStatsPeriodLabel() {
   return `${cs.range.from} ~ ${cs.range.to}${cs.mode === 'week' ? ' (월~일)' : ''}`;
 }
 
-// /api/cert-stats · 본문 복사에 붙일 쿼리 (?from=&to=&model=). 조건이 없으면 빈 문자열
-function certStatsQueryString(range, model) {
+// /api/cert-stats · 본문 복사에 붙일 쿼리 (?from=&to=&model=A&model=B). 조건이 없으면 빈 문자열
+function certStatsQueryString(range, models) {
   const p = new URLSearchParams();
   if (range) { p.set('from', range.from); p.set('to', range.to); }
-  if (model) p.set('model', model);
+  for (const m of models) p.append('model', m);
   const q = p.toString();
   return q ? `?${q}` : '';
 }
@@ -716,7 +733,7 @@ async function renderCertStats() {
   root.innerHTML = '<p class="col-empty">불러오는 중…</p>';
 
   let s;
-  try { s = await api(`/api/cert-stats${certStatsQueryString(range, cs.model)}`); }
+  try { s = await api(`/api/cert-stats${certStatsQueryString(range, cs.models)}`); }
   catch (err) { root.innerHTML = `<p class="col-empty">통계를 불러오지 못했습니다: ${esc(err.message)}</p>`; return; }
   cs.data = s;
   cs.range = range;
@@ -745,16 +762,26 @@ async function renderCertStats() {
       <button class="btn" data-stats-range="1">조회</button>
     </span>` : '';
 
-  // 단말(모델명) 필터. 목록은 한 번이라도 입력된 모델명 전체다. 고른 값이 목록에 없어도 유지한다.
-  const models = !cs.model || state.options.models.includes(cs.model)
-    ? state.options.models : [cs.model, ...state.options.models];
+  // 단말(모델명) 체크박스 패널. 목록은 한 번이라도 입력된 모델명 전체이고, 고른 값이 목록에 없어도 유지한다.
+  // 아무것도 고르지 않은 상태(models = [])가 전체 단말이라 그때는 모두 체크된 채로 연다.
+  const all = [...cs.models.filter((m) => !state.options.models.includes(m)), ...state.options.models];
+  const isOn = (m) => !cs.models.length || cs.models.includes(m);
   const modelPick = `
-    <label class="stats-model">단말
-      <select id="stats-model">
-        <option value="">전체 단말</option>
-        ${models.map((m) => `<option value="${esc(m)}" ${m === cs.model ? 'selected' : ''}>${esc(m)}</option>`).join('')}
-      </select>
-    </label>`;
+    <span class="stats-model">
+      <button type="button" class="btn" data-model-toggle="1">단말 · ${esc(modelsButtonLabel(cs.models))} ▾</button>
+      <div class="model-panel hidden" id="model-panel">
+        <div class="mp-actions">
+          <button type="button" class="btn" data-model-all="1">전체 선택</button>
+          <button type="button" class="btn" data-model-none="1">전체 해제</button>
+          <span class="mp-count" id="mp-count">${all.filter(isOn).length} / ${all.length}</span>
+        </div>
+        <div class="mp-list">
+          ${all.map((m) => `<label><input type="checkbox" value="${esc(m)}" ${isOn(m) ? 'checked' : ''}> ${esc(m)}</label>`).join('')
+            || '<p class="col-empty">등록된 단말이 없습니다.</p>'}
+        </div>
+        <div class="mp-foot"><button type="button" class="btn btn-primary" data-model-apply="1">적용</button></div>
+      </div>
+    </span>`;
 
   root.innerHTML = `
     <div class="report-bar">
@@ -772,7 +799,7 @@ async function renderCertStats() {
         <button class="btn" data-stats-refresh="1">↻ 새로고침</button>
       </span>
     </div>
-    <p class="report-hint stats-period">대상 기간 · ${certStatsPeriodLabel()} · 단말 · ${cs.model ? esc(cs.model) : '전체'}
+    <p class="report-hint stats-period">대상 기간 · ${certStatsPeriodLabel()} · 단말 · ${cs.models.length ? esc(cs.models.join(', ')) : '전체'}
       · 판정 완료(Pass/Fail) 건만 집계하며 미판정 건은 제외합니다.
       같은 모델이라도 진행차수마다 행이 따로 서고, 결과·인증완료일·Pass율·Fail율은 그 차수의 값입니다.</p>
     <div class="summary stats-summary">${chips}</div>
@@ -1855,7 +1882,20 @@ function bind() {
     }
     const copy = e.target.closest('[data-stats-copy]');
     if (copy) {
-      copyReport(copy, 'certstats', certStatsQueryString(state.certStats.range, state.certStats.model));
+      copyReport(copy, 'certstats', certStatsQueryString(state.certStats.range, state.certStats.models));
+      return;
+    }
+    // 단말 패널: 열기/닫기 · 전체 선택 · 전체 해제 · 적용
+    if (e.target.closest('[data-model-toggle]')) { $('#model-panel').classList.toggle('hidden'); return; }
+    if (e.target.closest('[data-model-all]')) { setModelChecks(e.currentTarget, true); return; }
+    if (e.target.closest('[data-model-none]')) { setModelChecks(e.currentTarget, false); return; }
+    if (e.target.closest('[data-model-apply]')) {
+      const boxes = [...e.currentTarget.querySelectorAll('#model-panel input[type=checkbox]')];
+      const picked = boxes.filter((c) => c.checked).map((c) => c.value);
+      if (!picked.length) { alert('단말을 하나 이상 선택하세요.'); return; }
+      // 모두 체크 = 전체 단말. 조건 없이 조회해야 목록에 아직 없는 새 모델도 빠지지 않는다
+      state.certStats.models = picked.length === boxes.length ? [] : picked;
+      renderCertStats();
       return;
     }
     // 인증완료일 헤더 클릭 → 최신순/오름차순 토글. 받아 둔 데이터로 표만 다시 그린다
@@ -1878,11 +1918,14 @@ function bind() {
     if (send) { sendCertStatsMail(send); return; }
     if (e.target.closest('[data-stats-refresh]')) renderCertStats();
   });
-  // 단말 선택 → 현재 기간 그대로 다시 조회
+  // 단말 체크박스 개별 체크/언체크 → 카운트만 갱신 (조회는 '적용'을 눌러야 한다)
   $('#view-certstats').addEventListener('change', (e) => {
-    if (e.target.id !== 'stats-model') return;
-    state.certStats.model = e.target.value;
-    renderCertStats();
+    if (e.target.closest('#model-panel')) updateModelCount(e.currentTarget);
+  });
+  // 패널 밖을 누르면 적용하지 않고 닫는다
+  document.addEventListener('click', (e) => {
+    const panel = $('#model-panel');
+    if (panel && !e.target.closest('.stats-model')) panel.classList.add('hidden');
   });
 
   // 일정표 엑셀 다운로드 + 컬럼 정렬

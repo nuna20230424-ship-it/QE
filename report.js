@@ -329,17 +329,20 @@ function isMonToSun({ from, to }) {
 // 대시보드 '인증 통계' 탭을 메일 작성창에 그대로 붙여넣기 위한 본문.
 // 탭에서 고른 기간을 그대로 쓰며, range가 null이면 전체 기간 누적이다.
 // 화면과 동일한 상세(모델명 포함)라 사내 수신자 전용이다. mailHtml(집계+링크)과는 용도가 다르다.
-// 기간 지정으로 고른 임의 구간은 '(월~일)' 주차가 아니므로 표기를 나눈다. model을 주면 그 단말만 싣는다.
-function certStatsCopy(range, now = new Date(), model = '') {
+// 기간 지정으로 고른 임의 구간은 '(월~일)' 주차가 아니므로 표기를 나눈다. models를 주면 그 단말들만 싣는다.
+function certStatsCopy(range, now = new Date(), models = []) {
+  const list = [].concat(models || []).filter(Boolean);
   const isWeek = range && isMonToSun(range);
   const rangeLabel = !range ? '전체 기간 누적'
     : `${range.from} ~ ${range.to}${isWeek ? ' (월~일)' : ''}`;
   const label = !range ? '기간 전체 누적'
     : isWeek ? `주차 ${range.from} ~ ${range.to} (월~일)` : `기간 ${range.from} ~ ${range.to}`;
-  const block = statsBlock(repo.certStats(range, model), model ? `${label} · 단말 ${model}` : label);
+  // 본문에는 고른 단말 이름을 모두, 제목에는 하나면 이름·여럿이면 개수만 적는다
+  const block = statsBlock(repo.certStats(range, list), list.length ? `${label} · 단말 ${list.join(', ')}` : label);
+  const subjModel = list.length === 1 ? ` · ${list[0]}` : list.length > 1 ? ` · 단말 ${list.length}개` : '';
   return {
     period: 'certstats',
-    subject: `[인증일정] 인증 통계 (${rangeLabel}${model ? ` · ${model}` : ''})`,
+    subject: `[인증일정] 인증 통계 (${rangeLabel}${subjModel})`,
     html: shell('통계 보고', rangeLabel, block, now.toLocaleString('ko-KR')),
   };
 }

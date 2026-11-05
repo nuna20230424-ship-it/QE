@@ -299,7 +299,18 @@ head('기간 지정 · 단말 필터');
 const km100 = repo.certStats(null, 'KM-100');
 ok('단말 필터: KM-100 행만 남음', km100.rows.length > 0 && km100.rows.every((r) => r.model_name === 'KM-100'));
 ok('단말 필터: 모델 수 1', km100.totals.models === 1, String(km100.totals.models));
-ok('단말 필터: 응답에 model 표기', km100.model === 'KM-100');
+ok('단말 필터: 응답에 models 표기', JSON.stringify(km100.models) === '["KM-100"]', JSON.stringify(km100.models));
+// 다중 선택 (2026-11-05 체크박스)
+const two = repo.certStats(null, ['KM-100', 'KM-200']);
+ok('다중 단말: 고른 두 단말 행만', two.rows.length > 0 && two.rows.every((r) => ['KM-100', 'KM-200'].includes(r.model_name)));
+ok('다중 단말: 두 단말 모두 나옴', new Set(two.rows.map((r) => r.model_name)).size === 2);
+ok('다중 단말: 판정 건수 = 단일 합',
+  two.totals.judged === km100.totals.judged + repo.certStats(null, 'KM-200').totals.judged);
+ok('다중 단말: 중복·공백 값은 무시', repo.certStats(null, ['KM-100', ' KM-100 ', '']).totals.judged === km100.totals.judged);
+ok('빈 배열 단말은 전체와 같음', repo.certStats(null, []).totals.judged === repo.certStats(null).totals.judged);
+const copyTwo = report.certStatsCopy(null, now, ['KM-100', 'KM-200']);
+ok('다중 단말 복사본: 본문에 이름 모두', copyTwo.html.includes('단말 KM-100, KM-200'));
+ok('다중 단말 복사본: 제목엔 개수', copyTwo.subject.includes('단말 2개'), copyTwo.subject);
 ok('단말 필터: 판정 건수 = 전체에서 KM-100 행 합',
   km100.totals.judged === repo.certStats(null).rows.filter((r) => r.model_name === 'KM-100').reduce((a, r) => a + r.judged, 0));
 ok('없는 단말은 빈 결과', repo.certStats(null, 'NO-SUCH-MODEL').rows.length === 0);

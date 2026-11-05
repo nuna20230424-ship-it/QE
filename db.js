@@ -130,13 +130,17 @@ db.transaction(() => {
 // 차수를 그룹 키에 넣어 같은 모델이라도 차수마다 행이 따로 선다 — 2차 Fail과 3차 Pass가 한 줄로
 // 합쳐지면서 이전 차수의 결과·인증완료일이 최신 판정 값으로 덮이던 문제를 없앤다.
 // MAX(SORT_KEY)와 함께 쓴 bare column(verdict 등)은 최댓값을 만든 행의 값을 돌려주는 SQLite 규칙에 기댄다.
-// model을 주면 그 단말(모델명 정확히 일치)만 집계한다.
-function certStatsOf(range, model) {
+// models(모델명 문자열 하나 또는 배열)를 주면 그 단말들(모델명 정확히 일치)만 집계한다. 비면 전체 단말.
+function certStatsOf(range, models) {
+  const list = [...new Set([].concat(models || []).map((m) => String(m).trim()).filter(Boolean))];
   const cond = [JUDGED];
   // 주차는 인증완료일 기준이다. 진행 기간이 걸쳐 있다고 양쪽 주에 넣으면 주 경계에서 중복 집계된다.
   if (range) cond.push(`${COMP_DATE} >= @from`, `${COMP_DATE} <= @to`);
-  if (model) cond.push('model_name = @model');
-  const params = { ...(range || {}), ...(model ? { model } : {}) };
+  const params = { ...(range || {}) };
+  if (list.length) {
+    cond.push(`model_name IN (${list.map((_, i) => `@m${i}`).join(',')})`);
+    list.forEach((m, i) => { params[`m${i}`] = m; });
+  }
   const rows = db.prepare(`
     SELECT model_name, cert_type, ${PURPOSE} AS test_purpose, ${ROUND} AS round_no,
            COUNT(*)                                          AS judged,
@@ -192,7 +196,7 @@ function certStatsOf(range, model) {
   const judged = sum('judged');
   return {
     range: range || null,
-    model: model || null,
+    models: list,
     rows: out,
     totals: {
       models: new Set(out.map((r) => r.model_name)).size,

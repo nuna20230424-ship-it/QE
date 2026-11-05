@@ -37,22 +37,23 @@ app.get('/api/options', (req, res) => {
   res.json({ models: repo.modelNames(), testPurposes: repo.testPurposes() });
 });
 
-// 인증 통계 조회 조건(from·to·model)을 검사한다. 잘못되면 { error }, 아니면 { range, model }.
-// range가 null이면 전체 기간, model이 빈 값이면 전체 단말이다.
+// 인증 통계 조회 조건(from·to·model)을 검사한다. 잘못되면 { error }, 아니면 { range, models }.
+// range가 null이면 전체 기간, models가 빈 배열이면 전체 단말이다. model은 ?model=A&model=B 처럼 여러 번 줄 수 있다.
 function certStatsQuery(q) {
   const { from, to } = q;
   if ((from && !to) || (!from && to)) return { error: 'from과 to는 함께 지정해야 합니다.' };
   const ymd = /^\d{4}-\d{2}-\d{2}$/;
   if ((from && !ymd.test(from)) || (to && !ymd.test(to))) return { error: '날짜는 YYYY-MM-DD 형식이어야 합니다.' };
   if (from && from > to) return { error: '시작일이 종료일보다 늦습니다.' };
-  return { range: from && to ? { from, to } : null, model: String(q.model || '').trim() };
+  const models = [].concat(q.model || []).map((m) => String(m).trim()).filter(Boolean);
+  return { range: from && to ? { from, to } : null, models };
 }
 
-// 모델(프로젝트)별 인증 통계. from·to를 함께 주면 해당 기간에 진행된 건만, model을 주면 그 단말만 집계
+// 모델(프로젝트)별 인증 통계. from·to를 함께 주면 해당 기간에 진행된 건만, model을 주면 그 단말들만 집계
 app.get('/api/cert-stats', (req, res) => {
   const c = certStatsQuery(req.query);
   if (c.error) return res.status(400).json({ error: c.error });
-  res.json(repo.certStats(c.range, c.model));
+  res.json(repo.certStats(c.range, c.models));
 });
 
 // Task 5. 인증종류 + Test type + Test 목적 + 모델명 4가지로 신규 의뢰의 진행차수를 산출.
@@ -110,7 +111,7 @@ app.get('/api/report/:period/copy', (req, res) => {
   if (period === 'certstats') {
     const c = certStatsQuery(req.query);
     if (c.error) return res.status(400).json({ error: c.error });
-    const r = report.certStatsCopy(c.range, new Date(), c.model);
+    const r = report.certStatsCopy(c.range, new Date(), c.models);
     return res.json({ period, subject: r.subject, html: r.html });
   }
   const fn = PERIODS[period];

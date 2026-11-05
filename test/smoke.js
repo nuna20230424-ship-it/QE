@@ -308,6 +308,15 @@ ok('다중 단말: 판정 건수 = 단일 합',
   two.totals.judged === km100.totals.judged + repo.certStats(null, 'KM-200').totals.judged);
 ok('다중 단말: 중복·공백 값은 무시', repo.certStats(null, ['KM-100', ' KM-100 ', '']).totals.judged === km100.totals.judged);
 ok('빈 배열 단말은 전체와 같음', repo.certStats(null, []).totals.judged === repo.certStats(null).totals.judged);
+// 단말 선택 목록(available_models): 기간 안에 판정 결과가 있는 모델만, 단말 조건과 무관
+const allAvail = repo.certStats(null).available_models;
+ok('available: 전체 기간은 판정 결과 있는 모델 전체', JSON.stringify(allAvail) === JSON.stringify([...new Set(repo.certStats(null).rows.map((r) => r.model_name))].sort((a, b) => a.localeCompare(b))), JSON.stringify(allAvail));
+ok('available: 단말 필터를 걸어도 목록은 그대로', JSON.stringify(km100.available_models) === JSON.stringify(allAvail));
+const wkAvail = repo.certStats(wk, 'KM-100').available_models;
+ok('available: 기간 안 모델만 (주간 = 주간 통계 모델과 같음)',
+  JSON.stringify(wkAvail) === JSON.stringify([...new Set(repo.certStats(wk).rows.map((r) => r.model_name))].sort((a, b) => a.localeCompare(b))), JSON.stringify(wkAvail));
+const farAvail = repo.certStats({ from: '2001-01-01', to: '2001-01-07' }).available_models;
+ok('available: 결과 없는 기간은 빈 목록', farAvail.length === 0, JSON.stringify(farAvail));
 const copyTwo = report.certStatsCopy(null, now, ['KM-100', 'KM-200']);
 ok('다중 단말 복사본: 본문에 이름 모두', copyTwo.html.includes('단말 KM-100, KM-200'));
 ok('다중 단말 복사본: 제목엔 개수', copyTwo.subject.includes('단말 2개'), copyTwo.subject);

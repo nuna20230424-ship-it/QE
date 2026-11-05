@@ -733,7 +733,23 @@ async function renderCertStats() {
   root.innerHTML = '<p class="col-empty">불러오는 중…</p>';
 
   let s;
-  try { s = await api(`/api/cert-stats${certStatsQueryString(range, cs.models)}`); }
+  let pruneNote = '';
+  try {
+    s = await api(`/api/cert-stats${certStatsQueryString(range, cs.models)}`);
+    // 기간이 있으면 그 기간에 판정 결과가 있는 단말만 고를 수 있다. 골라 둔 단말 중 이 기간에 없는 것은 뺀다.
+    // 남은 게 있으면 결과는 같으므로(없는 단말은 행이 없다) 다시 조회하지 않는다.
+    if (range && cs.models.length) {
+      const kept = cs.models.filter((m) => s.available_models.includes(m));
+      if (kept.length < cs.models.length) {
+        const dropped = cs.models.filter((m) => !kept.includes(m));
+        cs.models = kept;
+        pruneNote = kept.length
+          ? `이 기간에 결과가 없는 단말(${dropped.join(', ')})은 선택에서 뺐습니다.`
+          : '선택한 단말이 이 기간에 없어 전체 단말로 표시합니다.';
+        if (!kept.length) s = await api(`/api/cert-stats${certStatsQueryString(range, [])}`);
+      }
+    }
+  }
   catch (err) { root.innerHTML = `<p class="col-empty">통계를 불러오지 못했습니다: ${esc(err.message)}</p>`; return; }
   cs.data = s;
   cs.range = range;
@@ -762,9 +778,11 @@ async function renderCertStats() {
       <button class="btn" data-stats-range="1">조회</button>
     </span>` : '';
 
-  // 단말(모델명) 체크박스 패널. 목록은 한 번이라도 입력된 모델명 전체이고, 고른 값이 목록에 없어도 유지한다.
+  // 단말(모델명) 체크박스 패널. 주간·기간 지정은 그 기간에 판정 결과가 있는 단말만,
+  // 전체 누적은 한 번이라도 입력된 모델명 전체를 보여 준다. 고른 값이 목록에 없어도 유지한다.
   // 아무것도 고르지 않은 상태(models = [])가 전체 단말이라 그때는 모두 체크된 채로 연다.
-  const all = [...cs.models.filter((m) => !state.options.models.includes(m)), ...state.options.models];
+  const base = range ? s.available_models : state.options.models;
+  const all = [...cs.models.filter((m) => !base.includes(m)), ...base];
   const isOn = (m) => !cs.models.length || cs.models.includes(m);
   const modelPick = `
     <span class="stats-model">
@@ -777,7 +795,7 @@ async function renderCertStats() {
         </div>
         <div class="mp-list">
           ${all.map((m) => `<label><input type="checkbox" value="${esc(m)}" ${isOn(m) ? 'checked' : ''}> ${esc(m)}</label>`).join('')
-            || '<p class="col-empty">등록된 단말이 없습니다.</p>'}
+            || `<p class="col-empty">${range ? '이 기간에 판정 결과가 있는 단말이 없습니다.' : '등록된 단말이 없습니다.'}</p>`}
         </div>
         <div class="mp-foot"><button type="button" class="btn btn-primary" data-model-apply="1">적용</button></div>
       </div>
@@ -802,6 +820,7 @@ async function renderCertStats() {
     <p class="report-hint stats-period">대상 기간 · ${certStatsPeriodLabel()} · 단말 · ${cs.models.length ? esc(cs.models.join(', ')) : '전체'}
       · 판정 완료(Pass/Fail) 건만 집계하며 미판정 건은 제외합니다.
       같은 모델이라도 진행차수마다 행이 따로 서고, 결과·인증완료일·Pass율·Fail율은 그 차수의 값입니다.</p>
+    ${pruneNote ? `<p class="report-hint stats-prune">⚠ ${esc(pruneNote)}</p>` : ''}
     <div class="summary stats-summary">${chips}</div>
     <div id="stats-table">${certStatsTable(s.rows)}</div>`;
 }

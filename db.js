@@ -192,11 +192,19 @@ function certStatsOf(range, models) {
     rounds: trails.get(trailKey(r)) || [],
   }));
 
+  // 단말 선택 목록: 이 기간에 판정 결과가 있는 모델 전체. 단말 조건은 빼야 고르지 않은 단말도 목록에 남는다.
+  const available = db.prepare(`
+    SELECT DISTINCT model_name FROM requests
+    WHERE ${JUDGED}${range ? ` AND ${COMP_DATE} >= @from AND ${COMP_DATE} <= @to` : ''}
+    ORDER BY model_name COLLATE NOCASE
+  `).all(range || {}).map((r) => r.model_name);
+
   const sum = (k) => out.reduce((a, r) => a + r[k], 0);
   const judged = sum('judged');
   return {
     range: range || null,
     models: list,
+    available_models: available,
     rows: out,
     totals: {
       models: new Set(out.map((r) => r.model_name)).size,

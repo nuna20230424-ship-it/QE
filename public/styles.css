@@ -134,6 +134,7 @@ main { padding: 0 22px 40px; }
 .mp-list input[type=checkbox] { margin: 0; padding: 0; flex: none; }
 .mp-list label:hover { background: #f1f4f9; }
 .mp-foot { display: flex; justify-content: flex-end; margin-top: 8px; }
+.stats-prune { color: #b26a00; font-weight: 600; }
 .stats-table tbody tr { cursor: default; }
 .stats-table th.num, .stats-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
 .stats-table th small { display: block; font-weight: 600; font-size: 10px; opacity: 0.85; }

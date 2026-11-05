@@ -37,17 +37,22 @@ app.get('/api/options', (req, res) => {
   res.json({ models: repo.modelNames(), testPurposes: repo.testPurposes() });
 });
 
-// 모델(프로젝트)별 인증 통계. from·to를 함께 주면 해당 기간에 진행된 건만 집계
-app.get('/api/cert-stats', (req, res) => {
-  const { from, to } = req.query;
-  if ((from && !to) || (!from && to)) {
-    return res.status(400).json({ error: 'from과 to는 함께 지정해야 합니다.' });
-  }
+// 인증 통계 조회 조건(from·to·model)을 검사한다. 잘못되면 { error }, 아니면 { range, model }.
+// range가 null이면 전체 기간, model이 빈 값이면 전체 단말이다.
+function certStatsQuery(q) {
+  const { from, to } = q;
+  if ((from && !to) || (!from && to)) return { error: 'from과 to는 함께 지정해야 합니다.' };
   const ymd = /^\d{4}-\d{2}-\d{2}$/;
-  if ((from && !ymd.test(from)) || (to && !ymd.test(to))) {
-    return res.status(400).json({ error: '날짜는 YYYY-MM-DD 형식이어야 합니다.' });
-  }
-  res.json(repo.certStats(from && to ? { from, to } : null));
+  if ((from && !ymd.test(from)) || (to && !ymd.test(to))) return { error: '날짜는 YYYY-MM-DD 형식이어야 합니다.' };
+  if (from && from > to) return { error: '시작일이 종료일보다 늦습니다.' };
+  return { range: from && to ? { from, to } : null, model: String(q.model || '').trim() };
+}
+
+// 모델(프로젝트)별 인증 통계. from·to를 함께 주면 해당 기간에 진행된 건만, model을 주면 그 단말만 집계
+app.get('/api/cert-stats', (req, res) => {
+  const c = certStatsQuery(req.query);
+  if (c.error) return res.status(400).json({ error: c.error });
+  res.json(repo.certStats(c.range, c.model));
 });
 
 // Task 5. 인증종류 + Test type + Test 목적 + 모델명 4가지로 신규 의뢰의 진행차수를 산출.
@@ -99,19 +104,13 @@ app.get('/api/report/:period', (req, res) => {
 
 // 화면 내용을 메일 작성창에 그대로 붙여넣기 위한 본문 (인라인 스타일).
 // 자동발송 본문(mailHtml)과 달리 모델명·담당자·코멘트가 들어간 화면용 html이라 사내 수신자 전용이다.
-// certstats는 통계 탭에서 고른 기간을 그대로 받는다. from·to가 없으면 전체 기간 누적.
+// certstats는 통계 탭에서 고른 기간·단말을 그대로 받는다. from·to가 없으면 전체 기간 누적.
 app.get('/api/report/:period/copy', (req, res) => {
   const period = req.params.period;
   if (period === 'certstats') {
-    const { from, to } = req.query;
-    if ((from && !to) || (!from && to)) {
-      return res.status(400).json({ error: 'from과 to는 함께 지정해야 합니다.' });
-    }
-    const ymd = /^\d{4}-\d{2}-\d{2}$/;
-    if ((from && !ymd.test(from)) || (to && !ymd.test(to))) {
-      return res.status(400).json({ error: '날짜는 YYYY-MM-DD 형식이어야 합니다.' });
-    }
-    const r = report.certStatsCopy(from && to ? { from, to } : null);
+    const c = certStatsQuery(req.query);
+    if (c.error) return res.status(400).json({ error: c.error });
+    const r = report.certStatsCopy(c.range, new Date(), c.model);
     return res.json({ period, subject: r.subject, html: r.html });
   }
   const fn = PERIODS[period];

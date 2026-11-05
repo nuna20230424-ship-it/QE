@@ -316,16 +316,30 @@ function certStats(now = new Date()) {
   };
 }
 
+// from이 월요일이고 to가 그 주 일요일인지 (YYYY-MM-DD, 로컬 날짜 기준)
+function isMonToSun({ from, to }) {
+  const d = new Date(`${from}T00:00:00`);
+  if (d.getDay() !== 1) return false;
+  d.setDate(d.getDate() + 6);
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` === to;
+}
+
 // ---- 복사용 본문 ----
 // 대시보드 '인증 통계' 탭을 메일 작성창에 그대로 붙여넣기 위한 본문.
 // 탭에서 고른 기간을 그대로 쓰며, range가 null이면 전체 기간 누적이다.
 // 화면과 동일한 상세(모델명 포함)라 사내 수신자 전용이다. mailHtml(집계+링크)과는 용도가 다르다.
-function certStatsCopy(range, now = new Date()) {
-  const rangeLabel = range ? `${range.from} ~ ${range.to} (월~일)` : '전체 기간 누적';
-  const block = statsBlock(repo.certStats(range), range ? `주차 ${range.from} ~ ${range.to} (월~일)` : '기간 전체 누적');
+// 기간 지정으로 고른 임의 구간은 '(월~일)' 주차가 아니므로 표기를 나눈다. model을 주면 그 단말만 싣는다.
+function certStatsCopy(range, now = new Date(), model = '') {
+  const isWeek = range && isMonToSun(range);
+  const rangeLabel = !range ? '전체 기간 누적'
+    : `${range.from} ~ ${range.to}${isWeek ? ' (월~일)' : ''}`;
+  const label = !range ? '기간 전체 누적'
+    : isWeek ? `주차 ${range.from} ~ ${range.to} (월~일)` : `기간 ${range.from} ~ ${range.to}`;
+  const block = statsBlock(repo.certStats(range, model), model ? `${label} · 단말 ${model}` : label);
   return {
     period: 'certstats',
-    subject: `[인증일정] 인증 통계 (${rangeLabel})`,
+    subject: `[인증일정] 인증 통계 (${rangeLabel}${model ? ` · ${model}` : ''})`,
     html: shell('통계 보고', rangeLabel, block, now.toLocaleString('ko-KR')),
   };
 }

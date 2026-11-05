@@ -294,6 +294,24 @@ ok('통계 복사본에 통계 표 포함', copyWk.html.includes('모델별 인�
 ok('전체 누적이 주간보다 판정 건수 많거나 같음',
   repo.certStats(null).totals.judged >= repo.certStats({ from: wk.from, to: wk.to }).totals.judged);
 
+// ---------- 기간 지정 · 단말 필터 (2026-11-05) ----------
+head('기간 지정 · 단말 필터');
+const km100 = repo.certStats(null, 'KM-100');
+ok('단말 필터: KM-100 행만 남음', km100.rows.length > 0 && km100.rows.every((r) => r.model_name === 'KM-100'));
+ok('단말 필터: 모델 수 1', km100.totals.models === 1, String(km100.totals.models));
+ok('단말 필터: 응답에 model 표기', km100.model === 'KM-100');
+ok('단말 필터: 판정 건수 = 전체에서 KM-100 행 합',
+  km100.totals.judged === repo.certStats(null).rows.filter((r) => r.model_name === 'KM-100').reduce((a, r) => a + r.judged, 0));
+ok('없는 단말은 빈 결과', repo.certStats(null, 'NO-SUCH-MODEL').rows.length === 0);
+ok('빈 문자열 단말은 전체와 같음', repo.certStats(null, '').totals.judged === repo.certStats(null).totals.judged);
+// 임의 기간(월~일이 아닌 구간)은 '(월~일)' 표기 없이 '기간'으로 싣는다
+const custom = { from: lastWeek(2), to: thisWeek(1) };
+const copyCustom = report.certStatsCopy(custom, now, 'KM-100');
+ok('기간 지정 복사본: 기간 표기', copyCustom.html.includes(`대상 기간 ${custom.from} ~ ${custom.to}`));
+ok('기간 지정 복사본: (월~일) 없음', !copyCustom.subject.includes('월~일'), copyCustom.subject);
+ok('기간 지정 복사본: 단말 표기', copyCustom.html.includes('단말 KM-100') && copyCustom.subject.includes('KM-100'));
+ok('기간+단말 동시 필터', repo.certStats(custom, 'KM-100').rows.every((r) => r.model_name === 'KM-100'));
+
 // 주간보고 안의 통계 섹션과 같은 서식이어야 붙여넣기 결과가 동일하다.
 ok('주간보고 통계 섹션과 동일 서식', copyWk.html.includes(report.certStatsSection(now, wk)));
 

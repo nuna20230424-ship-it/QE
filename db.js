@@ -130,10 +130,13 @@ db.transaction(() => {
 // 차수를 그룹 키에 넣어 같은 모델이라도 차수마다 행이 따로 선다 — 2차 Fail과 3차 Pass가 한 줄로
 // 합쳐지면서 이전 차수의 결과·인증완료일이 최신 판정 값으로 덮이던 문제를 없앤다.
 // MAX(SORT_KEY)와 함께 쓴 bare column(verdict 등)은 최댓값을 만든 행의 값을 돌려주는 SQLite 규칙에 기댄다.
-function certStatsOf(range) {
+// model을 주면 그 단말(모델명 정확히 일치)만 집계한다.
+function certStatsOf(range, model) {
   const cond = [JUDGED];
   // 주차는 인증완료일 기준이다. 진행 기간이 걸쳐 있다고 양쪽 주에 넣으면 주 경계에서 중복 집계된다.
   if (range) cond.push(`${COMP_DATE} >= @from`, `${COMP_DATE} <= @to`);
+  if (model) cond.push('model_name = @model');
+  const params = { ...(range || {}), ...(model ? { model } : {}) };
   const rows = db.prepare(`
     SELECT model_name, cert_type, ${PURPOSE} AS test_purpose, ${ROUND} AS round_no,
            COUNT(*)                                          AS judged,
@@ -148,7 +151,7 @@ function certStatsOf(range) {
     WHERE ${cond.join(' AND ')}
     GROUP BY model_name, cert_type, ${PURPOSE}, ${ROUND}
     ORDER BY model_name COLLATE NOCASE, cert_type, test_purpose, round_no
-  `).all(range || {});
+  `).all(params);
 
   // 차수까지 갈랐어도 같은 차수를 두 번 이상 판정한 건이 있으면 그 행은 여전히 합쳐진다
   // (결과·인증완료일이 최신 판정 값으로 덮인다). 그런 행만 판정 내역을 따로 달아 펼쳐 볼 수 있게 한다.
@@ -160,7 +163,7 @@ function certStatsOf(range) {
     FROM requests
     WHERE ${cond.join(' AND ')}
     ORDER BY ${SORT_KEY}
-  `).all(range || {})) {
+  `).all(params)) {
     const key = trailKey(t);
     const list = trails.get(key) || [];
     list.push({ round: t.round_no || null, verdict: t.verdict, date: t.on_date });
@@ -189,6 +192,7 @@ function certStatsOf(range) {
   const judged = sum('judged');
   return {
     range: range || null,
+    model: model || null,
     rows: out,
     totals: {
       models: new Set(out.map((r) => r.model_name)).size,

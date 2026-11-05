@@ -12,9 +12,15 @@ const state = {
   boardExpanded: new Set(), // 5개 초과 시 펼친 상태의 상태칼럼
   boardAsc: new Set(),      // 숫자 클릭으로 오름차순(오래된 순)으로 뒤집은 상태칼럼 (기본은 최신일 내림차순)
   options: { models: [], testPurposes: [] }, // 입력 자동목록용 선택지 (필터와 무관한 전체 이력값)
-  // 인증 통계 뷰: 주간(월~일) / 전체 누적 전환, weekOffset 0 = 이번 주
+  // 인증 통계 뷰: 주간(월~일) / 기간 지정 / 전체 누적 전환, weekOffset 0 = 이번 주
+  // from·to: 기간 지정 모드의 시작일·종료일 (기본 이번 달 1일~오늘), model: 단말 필터 ('' = 전체 단말)
   // asc: 인증완료일 헤더 클릭으로 오름차순으로 뒤집은 상태 (기본은 최신일 내림차순)
-  certStats: { mode: 'week', weekOffset: 0, data: null, range: null, asc: false },
+  certStats: {
+    mode: 'week', weekOffset: 0, data: null, range: null, asc: false,
+    from: `${_now.getFullYear()}-${String(_now.getMonth() + 1).padStart(2, '0')}-01`,
+    to: `${_now.getFullYear()}-${String(_now.getMonth() + 1).padStart(2, '0')}-${String(_now.getDate()).padStart(2, '0')}`,
+    model: '',
+  },
   hiddenRequesters: [], // 의뢰자 제안에서 숨긴 이름 (의뢰 레코드는 보존)
   resources: null,      // Task 6. QE 전체 리소스 현황 (/api/resources 응답)
 };
@@ -629,8 +635,7 @@ function certStatsTable(allRows) {
 function downloadCertStatsCsv() {
   const cs = state.certStats;
   if (!cs.data) return;
-  const isWeek = !!cs.range;
-  const period = isWeek ? `${cs.range.from} ~ ${cs.range.to} (월~일)` : '전체 기간 누적';
+  const period = certStatsPeriodLabel();
   const cols = [
     ['모델명', (r) => r.model_name],
     ['인증종류', (r) => r.cert_type],
@@ -648,6 +653,7 @@ function downloadCertStatsCsv() {
   const t = cs.data.totals;
   const lines = [
     ['인증 통계', period],
+    ['단말', cs.model || '전체 단말'],
     ['집계 대상', '판정 완료(Pass/Fail) 건만 — 미판정 건은 제외'],
     [],
     cols.map((c) => c[0]),
@@ -655,8 +661,10 @@ function downloadCertStatsCsv() {
     [],
     ['합계', `모델 ${t.models}건`, '', '', `판정 ${t.judged}건`, t.pass, t.fail, t.pass_rate, t.fail_rate],
   ];
-  const stamp = isWeek ? `${cs.range.from}_${cs.range.to}` : '전체누적';
-  saveCsv(lines, `인증통계_${stamp}.csv`);
+  const stamp = cs.range ? `${cs.range.from}_${cs.range.to}` : '전체누적';
+  // 파일명에 쓸 수 없는 문자는 _로 바꾼다
+  const modelStamp = cs.model ? `_${cs.model.replace(/[\\/:*?"<>|]/g, '_')}` : '';
+  saveCsv(lines, `인증통계_${stamp}${modelStamp}.csv`);
 }
 
 // 인증 통계 보고를 지금 메일로 보낸다. 대상은 지난주 월~일(월요일 자동발송과 동일).
@@ -674,23 +682,49 @@ async function sendCertStatsMail(btn) {
   btn.textContent = orig;
 }
 
+// 현재 모드의 조회 기간. 주간은 선택한 주, 기간 지정은 입력한 시작일~종료일, 전체 누적은 null.
+function certStatsRange() {
+  const cs = state.certStats;
+  if (cs.mode === 'week') return weekRangeOf(cs.weekOffset);
+  if (cs.mode === 'range') return { from: cs.from, to: cs.to };
+  return null;
+}
+
+// 화면·CSV에 쓰는 대상 기간 표기
+function certStatsPeriodLabel() {
+  const cs = state.certStats;
+  if (!cs.range) return '전체 기간 누적';
+  return `${cs.range.from} ~ ${cs.range.to}${cs.mode === 'week' ? ' (월~일)' : ''}`;
+}
+
+// /api/cert-stats · 본문 복사에 붙일 쿼리 (?from=&to=&model=). 조건이 없으면 빈 문자열
+function certStatsQueryString(range, model) {
+  const p = new URLSearchParams();
+  if (range) { p.set('from', range.from); p.set('to', range.to); }
+  if (model) p.set('model', model);
+  const q = p.toString();
+  return q ? `?${q}` : '';
+}
+
 async function renderCertStats() {
   const root = $('#view-certstats');
   const cs = state.certStats;
   const isWeek = cs.mode === 'week';
+  const isRange = cs.mode === 'range';
   const wk = weekRangeOf(cs.weekOffset);
+  const range = certStatsRange();
   root.innerHTML = '<p class="col-empty">불러오는 중…</p>';
 
   let s;
-  try { s = await api(`/api/cert-stats${isWeek ? `?from=${wk.from}&to=${wk.to}` : ''}`); }
+  try { s = await api(`/api/cert-stats${certStatsQueryString(range, cs.model)}`); }
   catch (err) { root.innerHTML = `<p class="col-empty">통계를 불러오지 못했습니다: ${esc(err.message)}</p>`; return; }
   cs.data = s;
-  cs.range = isWeek ? wk : null;
+  cs.range = range;
 
   const t = s.totals;
   const chips = [
     { k: '모델 수', v: t.models },
-    { k: isWeek ? '주간 판정' : '누적 판정', v: t.judged },
+    { k: isWeek ? '주간 판정' : isRange ? '기간 판정' : '누적 판정', v: t.judged },
     { k: 'Pass', v: t.pass },
     { k: 'Fail', v: t.fail, warn: t.fail > 0 },
     { k: '전체 Pass율', v: `${t.pass_rate}%` },
@@ -703,15 +737,34 @@ async function renderCertStats() {
       <b class="week-label">${wk.label}</b><small>(월~일)</small>
       <button class="btn" data-stats-week="1" title="다음 주">›</button>
       ${cs.weekOffset !== 0 ? '<button class="btn" data-stats-week="0">이번 주</button>' : ''}
+    </span>` : isRange ? `
+    <span class="week-nav">
+      <input type="date" id="stats-from" value="${esc(cs.from)}">
+      <span>~</span>
+      <input type="date" id="stats-to" value="${esc(cs.to)}">
+      <button class="btn" data-stats-range="1">조회</button>
     </span>` : '';
+
+  // 단말(모델명) 필터. 목록은 한 번이라도 입력된 모델명 전체다. 고른 값이 목록에 없어도 유지한다.
+  const models = !cs.model || state.options.models.includes(cs.model)
+    ? state.options.models : [cs.model, ...state.options.models];
+  const modelPick = `
+    <label class="stats-model">단말
+      <select id="stats-model">
+        <option value="">전체 단말</option>
+        ${models.map((m) => `<option value="${esc(m)}" ${m === cs.model ? 'selected' : ''}>${esc(m)}</option>`).join('')}
+      </select>
+    </label>`;
 
   root.innerHTML = `
     <div class="report-bar">
       <span class="seg">
         <button class="seg-btn ${isWeek ? 'active' : ''}" data-stats-mode="week">주간</button>
-        <button class="seg-btn ${isWeek ? '' : 'active'}" data-stats-mode="all">전체 누적</button>
+        <button class="seg-btn ${isRange ? 'active' : ''}" data-stats-mode="range">기간 지정</button>
+        <button class="seg-btn ${cs.mode === 'all' ? 'active' : ''}" data-stats-mode="all">전체 누적</button>
       </span>
       ${nav}
+      ${modelPick}
       <span class="bar-right">
         <button class="btn" data-stats-excel="1">⤓ 엑셀 다운로드</button>
         <button class="btn" data-stats-send="1">✉ 지금 메일 발송</button>
@@ -719,7 +772,7 @@ async function renderCertStats() {
         <button class="btn" data-stats-refresh="1">↻ 새로고침</button>
       </span>
     </div>
-    <p class="report-hint stats-period">대상 기간 · ${isWeek ? `${wk.from} ~ ${wk.to} (월~일)` : '전체 기간 누적'}
+    <p class="report-hint stats-period">대상 기간 · ${certStatsPeriodLabel()} · 단말 · ${cs.model ? esc(cs.model) : '전체'}
       · 판정 완료(Pass/Fail) 건만 집계하며 미판정 건은 제외합니다.
       같은 모델이라도 진행차수마다 행이 따로 서고, 결과·인증완료일·Pass율·Fail율은 그 차수의 값입니다.</p>
     <div class="summary stats-summary">${chips}</div>
@@ -1790,10 +1843,19 @@ function bind() {
       renderCertStats();
       return;
     }
+    // 기간 지정: 시작일·종료일을 읽어 다시 조회
+    if (e.target.closest('[data-stats-range]')) {
+      const from = $('#stats-from').value, to = $('#stats-to').value;
+      if (!from || !to) { alert('시작일과 종료일을 모두 입력하세요.'); return; }
+      if (from > to) { alert('시작일이 종료일보다 늦습니다.'); return; }
+      state.certStats.from = from;
+      state.certStats.to = to;
+      renderCertStats();
+      return;
+    }
     const copy = e.target.closest('[data-stats-copy]');
     if (copy) {
-      const r = state.certStats.range;
-      copyReport(copy, 'certstats', r ? `?from=${r.from}&to=${r.to}` : '');
+      copyReport(copy, 'certstats', certStatsQueryString(state.certStats.range, state.certStats.model));
       return;
     }
     // 인증완료일 헤더 클릭 → 최신순/오름차순 토글. 받아 둔 데이터로 표만 다시 그린다
@@ -1815,6 +1877,12 @@ function bind() {
     const send = e.target.closest('[data-stats-send]');
     if (send) { sendCertStatsMail(send); return; }
     if (e.target.closest('[data-stats-refresh]')) renderCertStats();
+  });
+  // 단말 선택 → 현재 기간 그대로 다시 조회
+  $('#view-certstats').addEventListener('change', (e) => {
+    if (e.target.id !== 'stats-model') return;
+    state.certStats.model = e.target.value;
+    renderCertStats();
   });
 
   // 일정표 엑셀 다운로드 + 컬럼 정렬

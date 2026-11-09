@@ -1775,9 +1775,32 @@ ok('룩업 섹션 레코드 정리 완료', repo.confluenceRowsInRange({}).lengt
   ok('인증종류 합계 = 전체 판정', sm.by_cert.reduce((a, c) => a + c.total.judged, 0) === sm.totals.judged);
   ok('빈 기간 분류 통계 0 나눗셈 없음', repo.certSummary({ from: '2019-01-01', to: '2019-01-02' }).totals.pass_rate === 0);
 
+  // 2026-11-09 국내 추가분 · 인증 비율 · 진행중 모델 · 분류 통계 본문 복사
+  mk20('UHD5K 4.5th', 'Google xTS', '3PL', 'Pass', '14');
+  mk20('K1200UA ATV14', 'Google xTS', '3PL', 'Pass', '15');
+  mk20('UHD5KG', 'Netflix NTS', '3PL', 'Pass', '16');
+  const rg = repo.certStats(R20).rows;
+  const rOf = (m) => rg.find((r) => r.model_name === m).region;
+  ok('추가 국내 모델 (UHD5K 4.5th · K1200UA ATV14 · UHD5KG)', ['UHD5K 4.5th', 'K1200UA ATV14', 'UHD5KG'].every((m) => rOf(m) === '국내'));
+  const sm2 = repo.certSummary(R20);
+  ok('인증 비율 국내 6/8 = 75%', sm2.regions[0].models === 6 && sm2.regions[0].model_share === 75, JSON.stringify(sm2.regions[0]));
+  ok('인증 비율 국내 + 해외 = 100%', sm2.regions[0].model_share + sm2.regions[1].model_share === 100);
+  ok('인증종류 3개 항상 노출 (0건 포함)', ['Google xTS', 'Netflix NTS', 'Amazon AVTS'].every((c) => sm2.by_cert.some((x) => x.cert_type === c)));
+  const gx2 = sm2.by_cert.find((c) => c.cert_type === 'Google xTS');
+  ok('xTS 인증 비율 = xTS 모델 / 전체 모델', gx2.total.model_share === Math.round((gx2.total.models / sm2.totals.models) * 1000) / 10);
+  ok('빈 기간 인증 비율 0', repo.certSummary({ from: '2019-01-01', to: '2019-01-02' }).regions[0].model_share === 0);
+  const ip = sm2.in_progress;
+  ok('진행중 모델: 국내 + 해외 = 전체', ip.regions[0].requests + ip.regions[1].requests === ip.totals.requests && ip.totals.requests > 0, JSON.stringify(ip.totals));
+  ok('진행중 모델: 진행중 KM-400 은 해외', ip.regions[1].model_names.includes('KM-400'));
+  ok('진행중 모델: 완료 건은 빠짐', !ip.totals.model_names.includes('KG4101'));
+  const sc = report.certSummaryCopy(R20, now);
+  ok('분류 통계 본문 복사에 네 구역', ['인증 비율', '국내 / 해외 인증 모델 통계', '인증종류별 통계', '인증 진행중 모델'].every((k) => sc.html.includes(k)));
+  ok('분류 통계 본문 복사 제목', sc.subject.includes('2020-01-01 ~ 2020-01-31'));
+
   const cp = report.certStatsCopy(R20, now, [], { region: '국내', verdict: 'Pass' });
   ok('본문 복사에 조건 표기', cp.html.includes('구분 국내') && cp.html.includes('결과 Pass'));
-  ok('본문 복사가 조건대로 집계 (국내 Pass 2행)', (cp.html.match(/KSTB6188|KG4101|uhd5kg/gi) || []).length === 2, cp.html.match(/KSTB6188|KG4101|uhd5kg/gi));
+  ok('본문 복사가 조건대로 집계 (국내 Pass 포함 · 국내 Fail·해외 제외)',
+    cp.html.includes('KSTB6188') && cp.html.includes('KG4101') && !cp.html.includes('lg u+_uhd5kg') && !cp.html.includes('Telenor'));
 
   // 정리 실패가 테스트 결과를 뒤집지 않도록 분리한다. 임시 폴더가 남아도 OS가 회수한다.
   repo.close();

@@ -126,6 +126,13 @@ app.get('/api/report/:period/copy', (req, res) => {
     const r = report.certStatsCopy(c.range, new Date(), c.models, c.filters);
     return res.json({ period, subject: r.subject, html: r.html });
   }
+  // 분류 통계(국내/해외 · 인증종류)는 기간만 받는다
+  if (period === 'certsummary') {
+    const c = certStatsQuery({ from: req.query.from, to: req.query.to });
+    if (c.error) return res.status(400).json({ error: c.error });
+    const r = report.certSummaryCopy(c.range, new Date());
+    return res.json({ period, subject: r.subject, html: r.html });
+  }
   const fn = PERIODS[period];
   if (!fn) return res.status(400).json(badPeriod);
   const r = report[fn]();

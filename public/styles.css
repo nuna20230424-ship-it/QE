@@ -144,6 +144,8 @@ main { padding: 0 22px 40px; }
 .region-ovs { background: #eef7ee; color: #2a7a3b; }
 .sum-title { font-size: 15px; margin: 18px 0 8px; }
 .stats-table .sum-row td { background: #f6f8fb; font-weight: 700; }
+.share-bar { display: inline-block; width: 140px; height: 8px; border-radius: 4px; background: #eef1f6; overflow: hidden; vertical-align: middle; }
+.share-bar i { display: block; height: 100%; background: #1a56d6; }
 .sum-matrix th.grp { text-align: center; border-left: 1px solid var(--line); }
 .stats-table tbody tr { cursor: default; }
 .stats-table th.num, .stats-table td.num { text-align: right; font-variant-numeric: tabular-nums; }

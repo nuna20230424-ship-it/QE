@@ -799,11 +799,55 @@ const sumCells = (a) => `
       <td class="num">${a.pass}</td><td class="num ${a.fail ? 'em-fail' : ''}">${a.fail}</td>
       <td class="num">${a.pass_rate}%</td>`;
 
+// 분류 통계 화면 내용을 CSV로 저장 (인증 비율 · 국내/해외 · 인증종류 · 진행중 모델 · 구분별 모델)
+function downloadCertSummaryCsv() {
+  const cs = state.certStats;
+  const s = cs.summary;
+  if (!s) return;
+  const t = s.totals;
+  const five = (a) => [a.models, a.judged, a.pass, a.fail, a.pass_rate];
+  const p = s.in_progress;
+  const lines = [
+    ['국내·해외 / 인증종류 통계', certStatsPeriodLabel()],
+    ['집계 대상', '단말 전체 · 판정 완료(Pass/Fail) 건 · 인증완료일 기준'],
+    [],
+    ['[인증 비율 (전체 모델 중, 모델 수 기준)]'],
+    ['구분', '모델 수', '비율(%)'],
+    ...s.regions.map((r) => [`${r.region} 단말`, r.models, r.model_share]),
+    ...s.by_cert.map((c) => [`${c.cert_type} 인증`, c.total.models, c.total.model_share]),
+    ['전체 모델', t.models, 100],
+    [],
+    ['[국내 / 해외 인증 모델 통계]'],
+    ['구분', '모델 수', '판정', 'Pass', 'Fail', 'Pass율(%)'],
+    ...s.regions.map((r) => [r.region, ...five(r)]),
+    ['합계', ...five(t)],
+    [],
+    ['[인증종류별 통계]'],
+    ['인증종류', '국내 모델', '국내 판정', '국내 Pass', '국내 Fail', '국내 Pass율(%)',
+      '해외 모델', '해외 판정', '해외 Pass', '해외 Fail', '해외 Pass율(%)',
+      '합계 모델', '합계 판정', '합계 Pass', '합계 Fail', '합계 Pass율(%)'],
+    ...s.by_cert.map((c) => [c.cert_type, ...five(c['국내']), ...five(c['해외']), ...five(c.total)]),
+    [],
+    ['[인증 진행중 모델 (현재 시점, 기간 무관)]'],
+    ['구분', '진행 모델', '진행 건수', ...p.by_cert.map((c) => c.cert_type), '모델'],
+    ...[...p.regions.map((r) => [r.region, r]), ['전체', p.totals]].map(([k, a]) => [
+      k, a.models, a.requests, ...p.by_cert.map((c) => (k === '전체' ? c.total : c[k]).models), a.model_names.join(', ')]),
+    [],
+    ['[구분별 모델]'],
+    ...s.regions.map((r) => [r.region, r.model_names.join(', ')]),
+  ];
+  const stamp = cs.range ? `${cs.range.from}_${cs.range.to}` : '전체누적';
+  saveCsv(lines, `분류통계_${stamp}.csv`);
+}
+
 // 단말 전체 분류 통계. 기간(주간·기간 지정·전체 누적)만 따르고 단말·조회 조건은 걸지 않는다.
 async function renderCertSummary(root, range) {
   let s;
   try { s = await api(`/api/cert-summary${certStatsQueryString(range, [])}`); }
   catch (err) { root.innerHTML = `<p class="col-empty">통계를 불러오지 못했습니다: ${esc(err.message)}</p>`; return; }
+  // 엑셀·본문 복사가 화면과 같은 기간·데이터를 쓰도록 보관
+  state.certStats.summary = s;
+  state.certStats.range = range;
   const t = s.totals;
   const [dom, ovs] = s.regions;
   const chips = [
@@ -838,20 +882,58 @@ async function renderCertSummary(root, range) {
       </tbody>
     </table></div>` : '<p class="col-empty">집계할 판정 완료 의뢰가 없습니다.</p>';
 
+  // 인증 비율: 전체 모델 중 국내·해외 단말, 인증종류별 모델 비율 (모델 수 기준)
+  const shareRows = [...s.regions.map((r) => [regionTag(r.region) + ' 단말', r]),
+    ...s.by_cert.map((c) => [`<span class="badge badge-${certClass(c.cert_type)}">${esc(c.cert_type)}</span> 인증`, c.total])];
+  const ratioTable = `
+    <div class="table-wrap"><table class="stats-table">
+      <thead><tr><th>구분</th><th class="num">모델 수</th><th class="num">전체 모델 중 비율</th><th>비율</th></tr></thead>
+      <tbody>
+        ${shareRows.map(([k, a]) => `<tr><td>${k}</td><td class="num">${a.models}</td><td class="num">${a.model_share}%</td>
+          <td><span class="share-bar"><i style="width:${a.model_share}%"></i></span></td></tr>`).join('')}
+        <tr class="sum-row"><td><b>전체 모델</b></td><td class="num">${t.models}</td><td class="num">100%</td><td></td></tr>
+      </tbody>
+    </table></div>`;
+
+  // 인증 진행중 모델 (지금 상태가 '진행중'인 의뢰, 기간 무관)
+  const p = s.in_progress;
+  const progTable = `
+    <div class="table-wrap"><table class="stats-table">
+      <thead><tr><th>구분</th><th class="num">진행 모델</th><th class="num">진행 건수</th>
+        ${p.by_cert.map((c) => `<th class="num">${esc(c.cert_type)}</th>`).join('')}<th>모델</th></tr></thead>
+      <tbody>
+        ${[...p.regions.map((r) => [r.region, r]), ['전체', p.totals]].map(([k, a]) => `
+          <tr class="${k === '전체' ? 'sum-row' : ''}"><td>${k === '전체' ? '<b>전체</b>' : regionTag(k)}</td>
+            <td class="num">${a.models}</td><td class="num">${a.requests}</td>
+            ${p.by_cert.map((c) => `<td class="num">${(k === '전체' ? c.total : c[k]).models}</td>`).join('')}
+            <td>${a.model_names.length ? a.model_names.map(esc).join(', ') : '—'}</td></tr>`).join('')}
+      </tbody>
+    </table></div>`;
+
   const names = (r) => (r.model_names.length ? r.model_names.map(esc).join(', ') : '없음');
   root.innerHTML = `
     ${certStatsViewBar()}
     <div class="report-bar">${certStatsModeSeg()}${certStatsNav()}
-      <span class="bar-right"><button class="btn" data-stats-refresh="1">↻ 새로고침</button></span>
+      <span class="bar-right">
+        <button class="btn" data-summary-excel="1">⤓ 엑셀 다운로드</button>
+        <button class="btn" data-summary-copy="1">📋 본문 복사</button>
+        <button class="btn" data-stats-refresh="1">↻ 새로고침</button>
+      </span>
     </div>
     <p class="report-hint stats-period">대상 기간 · ${certStatsPeriodLabel()} · 단말 전체
       · 판정 완료(Pass/Fail) 건만 집계합니다(인증완료일 기준). 모델 수는 모델명 기준 중복 제거, 판정은 의뢰 건수입니다.
       한 모델이 여러 인증종류를 받았으면 인증종류마다 1개로 셉니다.</p>
     <div class="summary stats-summary">${chips}</div>
+    <h3 class="sum-title">인증 비율 (전체 모델 중)</h3>
+    <p class="report-hint">모델 수 기준입니다. 인증종류 비율은 한 모델이 여러 인증을 받으면 겹쳐 합이 100%를 넘을 수 있습니다.</p>
+    ${ratioTable}
     <h3 class="sum-title">국내 / 해외 인증 모델 통계</h3>
     ${regionTable}
     <h3 class="sum-title">인증종류별 통계 (국내 / 해외)</h3>
     ${certTable}
+    <h3 class="sum-title">인증 진행중 모델 (전체 / 국내 / 해외)</h3>
+    <p class="report-hint">지금 상태가 '진행중'인 의뢰 기준이며 위 기간 선택과 무관합니다. 인증종류 칸은 진행 모델 수입니다.</p>
+    ${progTable}
     <h3 class="sum-title">구분별 모델</h3>
     <p class="report-hint"><b>국내</b> · ${names(dom)}</p>
     <p class="report-hint"><b>해외</b> · ${names(ovs)}</p>
@@ -2019,6 +2101,10 @@ function bind() {
       renderCertStats();
       return;
     }
+    // 분류 통계: 엑셀 다운로드 · 본문 복사 (보고 있는 기간 그대로)
+    if (e.target.closest('[data-summary-excel]')) { downloadCertSummaryCsv(); return; }
+    const sumCopy = e.target.closest('[data-summary-copy]');
+    if (sumCopy) { copyReport(sumCopy, 'certsummary', certStatsQueryString(state.certStats.range, [])); return; }
     if (e.target.closest('[data-stats-filter-reset]')) {
       state.certStats.filters = { cert_type: '', verdict: '', purpose: '', region: '' };
       renderCertStats();

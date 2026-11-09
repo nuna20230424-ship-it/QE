@@ -352,7 +352,53 @@ function certStatsCopy(range, now = new Date(), models = [], filters = {}) {
   };
 }
 
+// 분류 통계(국내/해외 · 인증종류 · 인증 비율 · 진행중 모델) 본문 복사용. 화면용이라 모델명이 들어가 사내 수신자 전용이다.
+function certSummaryCopy(range, now = new Date()) {
+  const s = repo.certSummary(range);
+  const rangeLabel = !range ? '전체 기간 누적'
+    : `${range.from} ~ ${range.to}${isMonToSun(range) ? ' (월~일)' : ''}`;
+  const t = s.totals;
+  const [dom, ovs] = s.regions;
+  const table = (head, body) => `<table cellspacing="0" cellpadding="0" style="border-collapse:collapse;width:100%;">
+    <tr>${head}</tr>${body}</table>`;
+  const nums = (a) => [a.models, a.judged, a.pass, a.fail, `${a.pass_rate}%`].map(tdNum).join('');
+  const head5 = ['모델 수', '판정', 'Pass', 'Fail', 'Pass율'].map(thNum).join('');
+  const b = (v) => `<b>${v}</b>`;
+
+  const ratio = table(th('구분') + thNum('모델 수') + thNum('전체 모델 중 비율'),
+    [...s.regions.map((r) => [`${r.region} 단말`, r]), ...s.by_cert.map((c) => [`${c.cert_type} 인증`, c.total])]
+      .map(([k, a]) => `<tr>${td(esc(k))}${tdNum(a.models)}${tdNum(`${a.model_share}%`)}</tr>`).join('')
+    + `<tr>${td(b('전체 모델'))}${tdNum(b(t.models))}${tdNum(b('100%'))}</tr>`);
+  const regionTbl = table(th('구분') + head5,
+    s.regions.map((r) => `<tr>${td(r.region)}${nums(r)}</tr>`).join('') + `<tr>${td(b('합계'))}${nums(t)}</tr>`);
+  const certTbl = table(th('인증종류') + thNum('국내 모델') + thNum('국내 판정') + thNum('해외 모델') + thNum('해외 판정')
+    + thNum('합계 모델') + thNum('합계 판정') + thNum('Pass') + thNum('Fail') + thNum('Pass율'),
+  s.by_cert.map((c) => `<tr>${td(certBadge(c.cert_type))}${tdNum(c['국내'].models)}${tdNum(c['국내'].judged)}`
+    + `${tdNum(c['해외'].models)}${tdNum(c['해외'].judged)}${tdNum(c.total.models)}${tdNum(c.total.judged)}`
+    + `${tdNum(c.total.pass)}${tdNum(c.total.fail)}${tdNum(`${c.total.pass_rate}%`)}</tr>`).join(''));
+  const p = s.in_progress;
+  const progTbl = table(th('구분') + thNum('진행 모델') + thNum('진행 건수') + th('모델'),
+    [...p.regions.map((r) => [r.region, r]), ['전체', p.totals]]
+      .map(([k, a]) => `<tr>${td(k === '전체' ? b(k) : k)}${tdNum(a.models)}${tdNum(a.requests)}${td(dash(a.model_names.join(', ')))}</tr>`).join(''));
+  const progCert = table(th('인증종류') + thNum('국내') + thNum('해외') + thNum('합계'),
+    p.by_cert.map((c) => `<tr>${td(certBadge(c.cert_type))}${tdNum(c['국내'].models)}${tdNum(c['해외'].models)}${tdNum(c.total.models)}</tr>`).join(''));
+
+  const note = `<p style="color:#6b7686;font-size:12px;margin:6px 0 10px;">
+    대상 ${esc(rangeLabel)} · 단말 전체 · 모델 ${t.models}개 (국내 ${dom.models} · 해외 ${ovs.models}) · 판정 ${t.judged}건
+    <br>판정 완료(Pass/Fail) 건만, 인증완료일 기준으로 집계합니다. 비율은 모델 수 기준이며 인증종류 비율은 한 모델이 여러 인증을 받으면 겹칩니다.</p>`;
+  const body = section('인증 비율 (전체 모델 중)', note + ratio)
+    + section('국내 / 해외 인증 모델 통계', regionTbl)
+    + section('인증종류별 통계 (국내 / 해외)', certTbl)
+    + section('인증 진행중 모델 (현재 시점, 진행 기간 무관)', progTbl + '<div style="height:8px"></div>' + progCert)
+    + `<p style="color:#6b7686;font-size:12px;">국내 · ${esc(dom.model_names.join(', ') || '없음')}<br>해외 · ${esc(ovs.model_names.join(', ') || '없음')}</p>`;
+  return {
+    period: 'certsummary',
+    subject: `[인증일정] 국내·해외 / 인증종류 통계 (${rangeLabel})`,
+    html: shell('분류 통계 보고', rangeLabel, body, now.toLocaleString('ko-KR')),
+  };
+}
+
 module.exports = {
-  daily, weekly, certStats, certStatsCopy,
+  daily, weekly, certStats, certStatsCopy, certSummaryCopy,
   weekRange, dayRange, lastWeekRange, certStatsSection,
 };

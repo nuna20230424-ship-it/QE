@@ -112,7 +112,11 @@ const JUDGED = `verdict IN ('Pass','Fail')`;
 const DOMESTIC_MODELS = [
   'LG U+_UHD5K', 'KG3100', 'KI1101', 'LG U+_UHD5KG', 'LG HV_K1210UA', 'KG4100',
   'KSTB6188', 'KG2100', 'DOCOMO_KSTB6175', 'KSTB8000', 'KG4101', 'LG U+_UHD4K',
+  // 2026-11-09 사용자 추가 (KSTB6188(rollback)은 위 KSTB6188 로 이미 국내)
+  'UHD5KG', 'UHD5K 4.5th', 'K1210UA', 'K1200UA ATV14',
 ];
+// 분류 통계에서 0건이어도 항상 보여 줄 인증종류
+const CERT_TYPES = ['Google xTS', 'Netflix NTS', 'Amazon AVTS'];
 // 상수 목록이라 리터럴로 넣는다(작은따옴표만 이스케이프).
 const REGION = `(CASE WHEN ${DOMESTIC_MODELS
   .map((m) => `instr(upper(model_name), '${m.toUpperCase().replace(/'/g, "''")}') > 0`)
@@ -269,18 +273,46 @@ function certSummaryOf(range) {
       pass_rate: pct(pass, judged), fail_rate: pct(judged - pass, judged),
     };
   };
-  const certTypes = [...new Set(rows.map((r) => r.cert_type))].sort();
+  const certTypes = [...CERT_TYPES, ...[...new Set(rows.map((r) => r.cert_type))].filter((c) => !CERT_TYPES.includes(c)).sort()];
+  const totals = agg(rows);
+  // 인증 비율 = 전체 모델 중 그 구분·인증종류 모델 비율(모델 수 기준).
+  // 인증종류 비율은 한 모델이 여러 인증을 받으면 겹치므로 합이 100%를 넘을 수 있다.
+  const share = (a) => ({ ...a, model_share: pct(a.models, totals.models) });
+
+  // 현재 진행중인 의뢰(상태 '진행중'). 기간과 무관한 지금 시점 현황이다.
+  const prog = db.prepare(`
+    SELECT ${REGION} AS region, cert_type, model_name, COUNT(*) AS n
+    FROM requests WHERE status = '진행중'
+    GROUP BY ${REGION}, cert_type, model_name
+    ORDER BY model_name COLLATE NOCASE
+  `).all();
+  const pagg = (list) => {
+    const names = [...new Set(list.map((r) => r.model_name))];
+    return { models: names.length, requests: list.reduce((a, r) => a + r.n, 0), model_names: names };
+  };
+  const progCerts = [...CERT_TYPES, ...[...new Set(prog.map((r) => r.cert_type))].filter((c) => !CERT_TYPES.includes(c)).sort()];
+
   return {
     range: range || null,
     domestic_models: DOMESTIC_MODELS,
-    regions: REGIONS.map((region) => ({ region, ...agg(rows.filter((r) => r.region === region)) })),
+    regions: REGIONS.map((region) => ({ region, ...share(agg(rows.filter((r) => r.region === region))) })),
     by_cert: certTypes.map((cert_type) => {
       const mine = rows.filter((r) => r.cert_type === cert_type);
-      const out = { cert_type, total: agg(mine) };
+      const out = { cert_type, total: share(agg(mine)) };
       for (const region of REGIONS) out[region] = agg(mine.filter((r) => r.region === region));
       return out;
     }),
-    totals: agg(rows),
+    totals,
+    in_progress: {
+      totals: pagg(prog),
+      regions: REGIONS.map((region) => ({ region, ...pagg(prog.filter((r) => r.region === region)) })),
+      by_cert: progCerts.map((cert_type) => {
+        const mine = prog.filter((r) => r.cert_type === cert_type);
+        const out = { cert_type, total: pagg(mine) };
+        for (const region of REGIONS) out[region] = pagg(mine.filter((r) => r.region === region));
+        return out;
+      }),
+    },
   };
 }
 

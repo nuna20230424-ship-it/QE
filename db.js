@@ -114,6 +114,7 @@ const DOMESTIC_MODELS = [
   'KSTB6188', 'KG2100', 'DOCOMO_KSTB6175', 'KSTB8000', 'KG4101', 'LG U+_UHD4K',
   // 2026-11-09 사용자 추가 (KSTB6188(rollback)은 위 KSTB6188 로 이미 국내)
   'UHD5KG', 'UHD5K 4.5th', 'K1210UA', 'K1200UA ATV14',
+  'LG HV_K1200UA',
 ];
 // 분류 통계에서 0건이어도 항상 보여 줄 인증종류
 const CERT_TYPES = ['Google xTS', 'Netflix NTS', 'Amazon AVTS'];

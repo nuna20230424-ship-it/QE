@@ -1781,8 +1781,7 @@ ok('룩업 섹션 레코드 정리 완료', repo.confluenceRowsInRange({}).lengt
   mk20('UHD5KG', 'Netflix NTS', '3PL', 'Pass', '16');
   const rg = repo.certStats(R20).rows;
   const rOf = (m) => rg.find((r) => r.model_name === m).region;
-  ok('추가 국내 모델 (UHD5K 4.5th · K1200UA ATV14 · UHD5KG)', ['UHD5K 4.5th', 'K1200UA ATV14', 'UHD5KG'].every((m) => rOf(m) === '국내'));
-  const sm2 = repo.certSummary(R20);
+  ok('추가 국내 모델 (UHD5K 4.5th · K1200UA ATV14 · UHD5KG)', ['UHD5K 4.5th', 'K1200UA ATV14', 'UHD5KG'].every((m) => rOf(m) === '국내'));  const sm2 = repo.certSummary(R20);
   ok('인증 비율 국내 6/8 = 75%', sm2.regions[0].models === 6 && sm2.regions[0].model_share === 75, JSON.stringify(sm2.regions[0]));
   ok('인증 비율 국내 + 해외 = 100%', sm2.regions[0].model_share + sm2.regions[1].model_share === 100);
   ok('인증종류 3개 항상 노출 (0건 포함)', ['Google xTS', 'Netflix NTS', 'Amazon AVTS'].every((c) => sm2.by_cert.some((x) => x.cert_type === c)));
@@ -1801,6 +1800,9 @@ ok('룩업 섹션 레코드 정리 완료', repo.confluenceRowsInRange({}).lengt
   ok('본문 복사에 조건 표기', cp.html.includes('구분 국내') && cp.html.includes('결과 Pass'));
   ok('본문 복사가 조건대로 집계 (국내 Pass 포함 · 국내 Fail·해외 제외)',
     cp.html.includes('KSTB6188') && cp.html.includes('KG4101') && !cp.html.includes('lg u+_uhd5kg') && !cp.html.includes('Telenor'));
+  // 위 집계 건수에 영향이 없도록 마지막에 만든다
+  mk20('LG HV_K1200UA', 'Google xTS', '3PL', 'Pass', '20');
+  ok('LG HV_K1200UA 는 국내', repo.certStats(R20, ['LG HV_K1200UA']).rows[0].region === '국내');
 
   // 정리 실패가 테스트 결과를 뒤집지 않도록 분리한다. 임시 폴더가 남아도 OS가 회수한다.
   repo.close();

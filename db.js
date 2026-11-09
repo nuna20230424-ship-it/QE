@@ -145,6 +145,28 @@ db.transaction(() => {
   }
 })();
 
+// 모델명 정리: 보이지 않는 문자(zero-width·BOM) 제거, 연속 공백 1칸, 앞뒤 공백 제거.
+// 화면에서는 같아 보이는 ' LG HV_K1210UA' · 'LG HV_K1210UA' 가 통계에서 다른 모델로 갈리던 것을 막는다.
+const cleanModel = (s) => String(s ?? '').replace(/[​-‍﻿]/g, '').replace(/\s+/g, ' ').trim();
+
+// 이미 저장된 모델명을 한 번 정리한다(2026-11-09). 바뀐 건마다 이력을 남긴다.
+// 정리할 것이 없으면 아무것도 하지 않으므로 기동할 때마다 돌려도 된다.
+function cleanModelNames() {
+  let n = 0;
+  db.transaction(() => {
+    const ts = nowIso();
+    for (const { id, model_name } of db.prepare('SELECT id, model_name FROM requests').all()) {
+      const fixed = cleanModel(model_name);
+      if (fixed === model_name || !fixed) continue;
+      db.prepare('UPDATE requests SET model_name = ?, updated_at = ? WHERE id = ?').run(fixed, ts, id);
+      logHistory(id, '시스템', '수정', `모델명: ${JSON.stringify(model_name)} → ${JSON.stringify(fixed)} (공백 정리)`);
+      n++;
+    }
+  })();
+  return n;
+}
+cleanModelNames();
+
 // 모델(프로젝트) × 인증종류 × Test 목적 × 진행차수별 통계.
 // 미판정·Drop 건은 집계에서 빠지므로 분모는 판정 완료 건수이고 Pass율 + Fail율 = 100%가 된다.
 // 차수를 그룹 키에 넣어 같은 모델이라도 차수마다 행이 따로 선다 — 2차 Fail과 3차 Pass가 한 줄로
@@ -495,7 +517,7 @@ module.exports = {
       test_type: d.test_type || '',
       test_purpose: d.test_purpose || '',
       round: d.round || '',
-      model_name: d.model_name,
+      model_name: cleanModel(d.model_name),
       fw_version: d.fw_version || '',
       requester: d.requester || '',
       note: d.note || '',
@@ -528,6 +550,7 @@ module.exports = {
   update(id, d, actor) {
     const cur = this.get(id);
     if (!cur) return null;
+    if ('model_name' in d) d = { ...d, model_name: cleanModel(d.model_name) };
     const merged = { ...cur };
     const changes = [];
     for (const k of ALLOWED) {
@@ -605,6 +628,8 @@ module.exports = {
   certStats: certStatsOf,
   // 단말 전체 국내/해외 · 인증종류 분류 통계
   certSummary: certSummaryOf,
+  // 저장된 모델명 공백 정리 (기동 시 자동 실행, 정리한 건수 반환)
+  cleanModelNames,
   regions: REGIONS,
 
   // Task 5. 진행차수 자동 산출과 그 근거가 되는 판정 이력.

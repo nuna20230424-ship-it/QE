@@ -1810,6 +1810,24 @@ ok('룩업 섹션 레코드 정리 완료', repo.confluenceRowsInRange({}).lengt
   ok('하이픈 표기 LG-U+-UHD4K 는 국내', repo.certStats(R20, ['LG-U+-UHD4K']).rows[0].region === '국내');
   ok('구분자 무시해도 해외 모델은 해외', repo.certStats(R20, ['Telenor_KSTB7277']).rows.every((r) => r.region === '해외'));
 
+  // 모델명 공백 정리: 화면에선 같아 보이는 표기가 통계에서 따로 잡히지 않게
+  head('모델명 공백 정리');
+  const k1 = mk20(' LG HV_K1210UA', 'Google xTS', '3PL', 'Pass', '23');
+  const k2 = mk20('LG HV_K1210UA​ ', 'Netflix NTS', '3PL', 'Pass', '24');
+  ok('등록 시 앞 공백 제거', k1.model_name === 'LG HV_K1210UA', JSON.stringify(k1.model_name));
+  ok('등록 시 뒤 공백·zero-width 제거', k2.model_name === 'LG HV_K1210UA', JSON.stringify(k2.model_name));
+  ok('수정 시 연속 공백 1칸 · 앞뒤 공백 제거', repo.update(k1.id, { model_name: '  LG  HV_K1210UA ' }, '테스트').model_name === 'LG HV_K1210UA');
+  ok('분류 통계에서 한 모델로', repo.certSummary(R20).regions[0].model_names.filter((m) => m.includes('K1210UA')).length === 1);
+  // 예전에 저장된 지저분한 값은 기동 시 정리. 다른 연결로 직접 넣어 재현한다.
+  const raw = new (require('better-sqlite3'))(process.env.DB_PATH);
+  raw.prepare('UPDATE requests SET model_name = ? WHERE id = ?').run(' LG HV_K1210UA', k1.id);
+  raw.prepare('UPDATE requests SET model_name = ? WHERE id = ?').run('LG HV_K1210UA ', k2.id);
+  raw.close();
+  ok('기존 값 정리 건수 2', repo.cleanModelNames() === 2);
+  ok('기존 값 정리 후 같은 이름', repo.get(k1.id).model_name === 'LG HV_K1210UA' && repo.get(k2.id).model_name === 'LG HV_K1210UA');
+  ok('정리 이력 남김', repo.history(k1.id).some((h) => h.actor === '시스템' && h.detail.includes('공백 정리')));
+  ok('다시 돌리면 0건 (재실행 안전)', repo.cleanModelNames() === 0);
+
   // 정리 실패가 테스트 결과를 뒤집지 않도록 분리한다. 임시 폴더가 남아도 OS가 회수한다.
   repo.close();
   try { fs.rmSync(TMP, { recursive: true, force: true }); }

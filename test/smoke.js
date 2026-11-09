@@ -1803,6 +1803,12 @@ ok('룩업 섹션 레코드 정리 완료', repo.confluenceRowsInRange({}).lengt
   // 위 집계 건수에 영향이 없도록 마지막에 만든다
   mk20('LG HV_K1200UA', 'Google xTS', '3PL', 'Pass', '20');
   ok('LG HV_K1200UA 는 국내', repo.certStats(R20, ['LG HV_K1200UA']).rows[0].region === '국내');
+  // 구분자만 다른 표기 (공백 · 하이픈) 도 국내
+  mk20('LG U+ UHD5K', 'Google xTS', '3PL', 'Pass', '21');
+  mk20('LG-U+-UHD4K', 'Google xTS', '3PL', 'Pass', '22');
+  ok('공백 표기 LG U+ UHD5K 는 국내', repo.certStats(R20, ['LG U+ UHD5K']).rows[0].region === '국내');
+  ok('하이픈 표기 LG-U+-UHD4K 는 국내', repo.certStats(R20, ['LG-U+-UHD4K']).rows[0].region === '국내');
+  ok('구분자 무시해도 해외 모델은 해외', repo.certStats(R20, ['Telenor_KSTB7277']).rows.every((r) => r.region === '해외'));
 
   // 정리 실패가 테스트 결과를 뒤집지 않도록 분리한다. 임시 폴더가 남아도 OS가 회수한다.
   repo.close();

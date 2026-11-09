@@ -118,9 +118,12 @@ const DOMESTIC_MODELS = [
 ];
 // 분류 통계에서 0건이어도 항상 보여 줄 인증종류
 const CERT_TYPES = ['Google xTS', 'Netflix NTS', 'Amazon AVTS'];
+// 공백·밑줄·하이픈은 빼고 비교한다 — 'LG U+ UHD5K'(공백)와 'LG U+_UHD5K'(밑줄)처럼 구분자만 다르게 입력된다.
 // 상수 목록이라 리터럴로 넣는다(작은따옴표만 이스케이프).
+const normModel = (m) => m.toUpperCase().replace(/[\s_-]/g, '');
+const MODEL_NORM_SQL = "replace(replace(replace(upper(model_name), ' ', ''), '_', ''), '-', '')";
 const REGION = `(CASE WHEN ${DOMESTIC_MODELS
-  .map((m) => `instr(upper(model_name), '${m.toUpperCase().replace(/'/g, "''")}') > 0`)
+  .map((m) => `instr(${MODEL_NORM_SQL}, '${normModel(m).replace(/'/g, "''")}') > 0`)
   .join(' OR ')} THEN '국내' ELSE '해외' END)`;
 const REGIONS = ['국내', '해외'];
 

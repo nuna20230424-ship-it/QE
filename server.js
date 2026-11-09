@@ -46,14 +46,26 @@ function certStatsQuery(q) {
   if ((from && !ymd.test(from)) || (to && !ymd.test(to))) return { error: '날짜는 YYYY-MM-DD 형식이어야 합니다.' };
   if (from && from > to) return { error: '시작일이 종료일보다 늦습니다.' };
   const models = [].concat(q.model || []).map((m) => String(m).trim()).filter(Boolean);
-  return { range: from && to ? { from, to } : null, models };
+  // 인증종류·결과·Test 목적·구분(국내/해외)은 값 하나씩. 비면 조건 없음.
+  const one = (v) => String([].concat(v || '')[0] || '').trim();
+  const filters = { cert_type: one(q.cert_type), verdict: one(q.verdict), purpose: one(q.purpose), region: one(q.region) };
+  if (filters.verdict && !['Pass', 'Fail'].includes(filters.verdict)) return { error: '결과는 Pass 또는 Fail이어야 합니다.' };
+  if (filters.region && !repo.regions.includes(filters.region)) return { error: '구분은 국내 또는 해외여야 합니다.' };
+  return { range: from && to ? { from, to } : null, models, filters };
 }
 
 // 모델(프로젝트)별 인증 통계. from·to를 함께 주면 해당 기간에 진행된 건만, model을 주면 그 단말들만 집계
 app.get('/api/cert-stats', (req, res) => {
   const c = certStatsQuery(req.query);
   if (c.error) return res.status(400).json({ error: c.error });
-  res.json(repo.certStats(c.range, c.models));
+  res.json(repo.certStats(c.range, c.models, c.filters));
+});
+
+// 단말 전체 국내/해외 · 인증종류 분류 통계. from·to를 주면 그 기간(인증완료일 기준)만.
+app.get('/api/cert-summary', (req, res) => {
+  const c = certStatsQuery({ from: req.query.from, to: req.query.to });
+  if (c.error) return res.status(400).json({ error: c.error });
+  res.json(repo.certSummary(c.range));
 });
 
 // Task 5. 인증종류 + Test type + Test 목적 + 모델명 4가지로 신규 의뢰의 진행차수를 산출.
@@ -111,7 +123,7 @@ app.get('/api/report/:period/copy', (req, res) => {
   if (period === 'certstats') {
     const c = certStatsQuery(req.query);
     if (c.error) return res.status(400).json({ error: c.error });
-    const r = report.certStatsCopy(c.range, new Date(), c.models);
+    const r = report.certStatsCopy(c.range, new Date(), c.models, c.filters);
     return res.json({ period, subject: r.subject, html: r.html });
   }
   const fn = PERIODS[period];

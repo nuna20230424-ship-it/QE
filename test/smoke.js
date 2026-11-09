@@ -1732,6 +1732,53 @@ ok('룩업 섹션 레코드 정리 완료', repo.confluenceRowsInRange({}).lengt
     ok(`${k} 자동발송에 모델명·실명·결함코멘트 없음`, hit.length === 0, hit.join(', '));
   });
 
+  // ---------- 인증 통계 조회 조건 · 국내/해외 분류 통계 ----------
+  // 다른 블록 집계와 섞이지 않게 2020-01 에만 만든다.
+  head('인증 통계 조회 조건 · 국내/해외');
+  const R20 = { from: '2020-01-01', to: '2020-01-31' };
+  const mk20 = (model, cert, purpose, verdict, day) => mk({
+    cert_type: cert, model_name: model, purpose, round: '1', start: `2020-01-${day}`, end: `2020-01-${day}`, status: '완료', verdict,
+  });
+  mk20('KSTB6188(rollback)', 'Google xTS', '3PL', 'Pass', '06');   // 꼬리 붙은 국내 모델
+  mk20('lg u+_uhd5kg', 'Netflix NTS', 'Official', 'Fail', '07');   // 대소문자 다른 국내 모델
+  mk20('KG4101', 'Google xTS', '3PL', 'Pass', '08');
+  mk20('Telenor_KSTB7277', 'Google xTS', '3PL', 'Fail', '09');     // 해외
+  mk20('Telenor_KSTB7277', 'Amazon AVTS', 'MR', 'Pass', '10');     // 해외, 인증종류 다름
+  mk20('KSTB6200', 'Netflix NTS', '', 'Pass', '13');               // 해외(목록에 없음), 목적 미입력
+
+  const all20 = repo.certStats(R20);
+  const regionOf = (m) => all20.rows.find((r) => r.model_name === m).region;
+  ok('꼬리 붙은 모델명도 국내', regionOf('KSTB6188(rollback)') === '국내');
+  ok('대소문자 무시로 국내', regionOf('lg u+_uhd5kg') === '국내');
+  ok('목록에 없는 모델은 해외', regionOf('KSTB6200') === '해외' && regionOf('Telenor_KSTB7277') === '해외');
+
+  const dom = repo.certStats(R20, [], { region: '국내' });
+  ok('구분=국내 → 국내 3행', dom.rows.length === 3 && dom.rows.every((r) => r.region === '국내'), JSON.stringify(dom.rows.map((r) => r.model_name)));
+  ok('구분=국내 → 단말 목록도 국내만', dom.available_models.length === 3 && !dom.available_models.includes('KSTB6200'), JSON.stringify(dom.available_models));
+  ok('구분=해외 합계 판정 3', repo.certStats(R20, [], { region: '해외' }).totals.judged === 3);
+  ok('인증종류=Google xTS → 3행', repo.certStats(R20, [], { cert_type: 'Google xTS' }).rows.length === 3);
+  const fails = repo.certStats(R20, [], { verdict: 'Fail' });
+  ok('결과=Fail → Fail만, Fail율 100%', fails.rows.length === 2 && fails.totals.fail_rate === 100);
+  ok('Test 목적=(미지정) → 목적 미입력 건', repo.certStats(R20, [], { purpose: '(미지정)' }).rows.map((r) => r.model_name).join() === 'KSTB6200');
+  const combo = repo.certStats(R20, [], { region: '해외', cert_type: 'Google xTS', verdict: 'Fail', purpose: '3PL' });
+  ok('조건 4개 동시 적용', combo.rows.length === 1 && combo.rows[0].model_name === 'Telenor_KSTB7277');
+  ok('응답에 조건 반영', combo.filters.region === '해외' && combo.filters.purpose === '3PL');
+  ok('조건 없으면 기존과 같음', repo.certStats(R20, [], {}).rows.length === all20.rows.length);
+
+  const sm = repo.certSummary(R20);
+  const [sDom, sOvs] = sm.regions;
+  ok('분류 통계 국내 모델 3 · 판정 3 · Pass 2', sDom.region === '국내' && sDom.models === 3 && sDom.judged === 3 && sDom.pass === 2, JSON.stringify(sDom));
+  ok('분류 통계 해외 모델 2(중복 제거) · 판정 3', sOvs.models === 2 && sOvs.judged === 3, JSON.stringify(sOvs));
+  ok('분류 통계 합계 = 국내 + 해외', sm.totals.judged === 6 && sm.totals.models === 5);
+  const gx = sm.by_cert.find((c) => c.cert_type === 'Google xTS');
+  ok('인증종류 × 구분 — Google xTS 국내 2 · 해외 1', gx['국내'].judged === 2 && gx['해외'].judged === 1 && gx.total.judged === 3, JSON.stringify(gx));
+  ok('인증종류 합계 = 전체 판정', sm.by_cert.reduce((a, c) => a + c.total.judged, 0) === sm.totals.judged);
+  ok('빈 기간 분류 통계 0 나눗셈 없음', repo.certSummary({ from: '2019-01-01', to: '2019-01-02' }).totals.pass_rate === 0);
+
+  const cp = report.certStatsCopy(R20, now, [], { region: '국내', verdict: 'Pass' });
+  ok('본문 복사에 조건 표기', cp.html.includes('구분 국내') && cp.html.includes('결과 Pass'));
+  ok('본문 복사가 조건대로 집계 (국내 Pass 2행)', (cp.html.match(/KSTB6188|KG4101|uhd5kg/gi) || []).length === 2, cp.html.match(/KSTB6188|KG4101|uhd5kg/gi));
+
   // 정리 실패가 테스트 결과를 뒤집지 않도록 분리한다. 임시 폴더가 남아도 OS가 회수한다.
   repo.close();
   try { fs.rmSync(TMP, { recursive: true, force: true }); }

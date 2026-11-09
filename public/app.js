@@ -20,6 +20,10 @@ const state = {
     from: `${_now.getFullYear()}-${String(_now.getMonth() + 1).padStart(2, '0')}-01`,
     to: `${_now.getFullYear()}-${String(_now.getMonth() + 1).padStart(2, '0')}-${String(_now.getDate()).padStart(2, '0')}`,
     models: [],
+    // 조회 조건 (값 하나씩, '' = 전체). region: 국내 | 해외
+    filters: { cert_type: '', verdict: '', purpose: '', region: '' },
+    // 보기: detail = 상세 목록, summary = 단말 전체 국내/해외 · 인증종류 분류 통계
+    view: 'detail',
   },
   hiddenRequesters: [], // 의뢰자 제안에서 숨긴 이름 (의뢰 레코드는 보존)
   resources: null,      // Task 6. QE 전체 리소스 현황 (/api/resources 응답)
@@ -575,7 +579,7 @@ function roundTrail(rows, i) {
     <li><b>${roundLabel(h.round)}</b>${resultCell(h.verdict)}<span class="tl-date">${esc(h.date)}</span></li>`).join('');
   return `
     <tr class="trail-row hidden" data-trail-row="${i}">
-      <td colspan="11"><ul class="trail">${items}</ul></td>
+      <td colspan="12"><ul class="trail">${items}</ul></td>
     </tr>`;
 }
 
@@ -590,6 +594,9 @@ function sortCertStatsRows(rows) {
   });
 }
 
+// 구분(국내/해외) 표시
+const regionTag = (r) => (r ? `<span class="region region-${r === '국내' ? 'dom' : 'ovs'}">${esc(r)}</span>` : '—');
+
 function certStatsTable(allRows) {
   if (!allRows.length) return '<p class="col-empty">집계할 판정 완료 의뢰가 없습니다.</p>';
   const rows = sortCertStatsRows(allRows);
@@ -602,6 +609,7 @@ function certStatsTable(allRows) {
     return `
     <tr>
       <td><strong>${esc(r.model_name)}</strong></td>
+      <td>${regionTag(r.region)}</td>
       <td><span class="badge badge-${certClass(r.cert_type)}">${esc(r.cert_type)}</span></td>
       <td>${resultCell(r.result)}</td>
       <td>${esc(r.completed_date) || '-'}</td>
@@ -618,7 +626,7 @@ function certStatsTable(allRows) {
     <div class="table-wrap">
     <table class="stats-table">
       <thead><tr>
-        <th>모델명</th><th>인증종류</th><th>결과</th>
+        <th>모델명</th><th>구분</th><th>인증종류</th><th>결과</th>
         <th data-stats-sort="1" title="인증완료일 기준 ${asc ? '오름차순 · 클릭하면 최신순' : '최신순 · 클릭하면 오름차순'}">인증완료일 ${asc ? '▴' : '▾'}</th>
         <th>Test 목적</th>
         <th class="num">진행차수</th>
@@ -638,6 +646,7 @@ function downloadCertStatsCsv() {
   const period = certStatsPeriodLabel();
   const cols = [
     ['모델명', (r) => r.model_name],
+    ['구분', (r) => r.region],
     ['인증종류', (r) => r.cert_type],
     ['결과', (r) => r.result],
     ['인증완료일', (r) => r.completed_date],
@@ -654,12 +663,13 @@ function downloadCertStatsCsv() {
   const lines = [
     ['인증 통계', period],
     ['단말', cs.models.length ? cs.models.join(', ') : '전체 단말'],
+    ['조회 조건', certStatsFilterLabel() || '전체'],
     ['집계 대상', '판정 완료(Pass/Fail) 건만 — 미판정 건은 제외'],
     [],
     cols.map((c) => c[0]),
     ...sortCertStatsRows(cs.data.rows).map((r) => cols.map((c) => c[1](r))),
     [],
-    ['합계', `모델 ${t.models}건`, '', '', `판정 ${t.judged}건`, t.pass, t.fail, t.pass_rate, t.fail_rate],
+    ['합계', `모델 ${t.models}건`, '', '', '', `판정 ${t.judged}건`, t.pass, t.fail, t.pass_rate, t.fail_rate],
   ];
   const stamp = cs.range ? `${cs.range.from}_${cs.range.to}` : '전체누적';
   // 파일명에 쓸 수 없는 문자는 _로 바꾼다
@@ -707,6 +717,22 @@ function certStatsRange() {
   return null;
 }
 
+// 조회 조건 정의: [키, 라벨, 선택지]. Test 목적은 등록된 값 + 미입력 묶음 '(미지정)'
+const CERT_TYPES = ['Netflix NTS', 'Google xTS', 'Amazon AVTS'];
+function certStatsFilterDefs() {
+  return [
+    ['region', '구분', ['국내', '해외']],
+    ['cert_type', '인증종류', CERT_TYPES],
+    ['verdict', '결과', ['Pass', 'Fail']],
+    ['purpose', 'Test 목적', [...state.options.testPurposes, '(미지정)']],
+  ];
+}
+// 걸린 조건만 '구분 국내 · 결과 Fail' 처럼. 없으면 빈 문자열
+function certStatsFilterLabel() {
+  const f = state.certStats.filters;
+  return certStatsFilterDefs().filter(([k]) => f[k]).map(([k, label]) => `${label} ${f[k]}`).join(' · ');
+}
+
 // 화면·CSV에 쓰는 대상 기간 표기
 function certStatsPeriodLabel() {
   const cs = state.certStats;
@@ -715,12 +741,121 @@ function certStatsPeriodLabel() {
 }
 
 // /api/cert-stats · 본문 복사에 붙일 쿼리 (?from=&to=&model=A&model=B). 조건이 없으면 빈 문자열
-function certStatsQueryString(range, models) {
+function certStatsQueryString(range, models, filters = {}) {
   const p = new URLSearchParams();
   if (range) { p.set('from', range.from); p.set('to', range.to); }
   for (const m of models) p.append('model', m);
+  for (const k of ['cert_type', 'verdict', 'purpose', 'region']) if (filters[k]) p.set(k, filters[k]);
   const q = p.toString();
   return q ? `?${q}` : '';
+}
+
+// 기간 이동 영역: 주간은 주 이동, 기간 지정은 시작일~종료일 입력, 전체 누적은 없음. 상세·분류 통계가 함께 쓴다
+function certStatsNav() {
+  const cs = state.certStats;
+  const isWeek = cs.mode === 'week';
+  const isRange = cs.mode === 'range';
+  const wk = weekRangeOf(cs.weekOffset);
+  return isWeek ? `
+    <span class="week-nav">
+      <button class="btn" data-stats-week="-1" title="이전 주">‹</button>
+      <b class="week-label">${wk.label}</b><small>(월~일)</small>
+      <button class="btn" data-stats-week="1" title="다음 주">›</button>
+      ${cs.weekOffset !== 0 ? '<button class="btn" data-stats-week="0">이번 주</button>' : ''}
+    </span>` : isRange ? `
+    <span class="week-nav">
+      <input type="date" id="stats-from" value="${esc(cs.from)}">
+      <span>~</span>
+      <input type="date" id="stats-to" value="${esc(cs.to)}">
+      <button class="btn" data-stats-range="1">조회</button>
+    </span>` : '';
+}
+
+// 보기 전환: 상세 목록 / 분류 통계(단말 전체 국내·해외 · 인증종류)
+function certStatsViewBar() {
+  const v = state.certStats.view;
+  return `
+    <div class="report-bar">
+      <span class="seg">
+        <button class="seg-btn ${v === 'detail' ? 'active' : ''}" data-stats-view="detail">상세 목록</button>
+        <button class="seg-btn ${v === 'summary' ? 'active' : ''}" data-stats-view="summary">국내·해외 / 인증종류 통계</button>
+      </span>
+    </div>`;
+}
+
+function certStatsModeSeg() {
+  const m = state.certStats.mode;
+  return `
+      <span class="seg">
+        <button class="seg-btn ${m === 'week' ? 'active' : ''}" data-stats-mode="week">주간</button>
+        <button class="seg-btn ${m === 'range' ? 'active' : ''}" data-stats-mode="range">기간 지정</button>
+        <button class="seg-btn ${m === 'all' ? 'active' : ''}" data-stats-mode="all">전체 누적</button>
+      </span>`;
+}
+
+// 분류 통계 표의 한 칸 묶음: 모델 수 · 판정 · Pass · Fail · Pass율
+const sumCells = (a) => `
+      <td class="num">${a.models}</td><td class="num">${a.judged}</td>
+      <td class="num">${a.pass}</td><td class="num ${a.fail ? 'em-fail' : ''}">${a.fail}</td>
+      <td class="num">${a.pass_rate}%</td>`;
+
+// 단말 전체 분류 통계. 기간(주간·기간 지정·전체 누적)만 따르고 단말·조회 조건은 걸지 않는다.
+async function renderCertSummary(root, range) {
+  let s;
+  try { s = await api(`/api/cert-summary${certStatsQueryString(range, [])}`); }
+  catch (err) { root.innerHTML = `<p class="col-empty">통계를 불러오지 못했습니다: ${esc(err.message)}</p>`; return; }
+  const t = s.totals;
+  const [dom, ovs] = s.regions;
+  const chips = [
+    { k: '전체 모델', v: t.models },
+    { k: '국내 모델', v: dom.models },
+    { k: '해외 모델', v: ovs.models },
+    { k: '판정', v: t.judged },
+    { k: '전체 Pass율', v: `${t.pass_rate}%` },
+  ].map((c) => `<div class="sumcard"><div class="k">${c.k}</div><div class="v">${c.v}</div></div>`).join('');
+
+  const head5 = '<th class="num">모델 수</th><th class="num">판정</th><th class="num">Pass</th><th class="num">Fail</th><th class="num">Pass율</th>';
+  const regionTable = `
+    <div class="table-wrap"><table class="stats-table">
+      <thead><tr><th>구분</th>${head5}<th>비율</th></tr></thead>
+      <tbody>
+        ${s.regions.map((r) => `<tr><td>${regionTag(r.region)}</td>${sumCells(r)}<td>${rateBar(r.pass_rate, r.fail_rate)}</td></tr>`).join('')}
+        <tr class="sum-row"><td><b>합계</b></td>${sumCells(t)}<td>${rateBar(t.pass_rate, t.fail_rate)}</td></tr>
+      </tbody>
+    </table></div>`;
+
+  // 인증종류 × 국내/해외. 칸마다 모델 수 · 판정 · Pass · Fail · Pass율
+  const certTable = s.by_cert.length ? `
+    <div class="table-wrap"><table class="stats-table sum-matrix">
+      <thead>
+        <tr><th rowspan="2">인증종류</th><th colspan="5" class="grp">국내</th><th colspan="5" class="grp">해외</th><th colspan="5" class="grp">합계</th></tr>
+        <tr>${head5}${head5}${head5}</tr>
+      </thead>
+      <tbody>
+        ${s.by_cert.map((c) => `<tr><td><span class="badge badge-${certClass(c.cert_type)}">${esc(c.cert_type)}</span></td>
+          ${sumCells(c['국내'])}${sumCells(c['해외'])}${sumCells(c.total)}</tr>`).join('')}
+        <tr class="sum-row"><td><b>합계</b></td>${sumCells(dom)}${sumCells(ovs)}${sumCells(t)}</tr>
+      </tbody>
+    </table></div>` : '<p class="col-empty">집계할 판정 완료 의뢰가 없습니다.</p>';
+
+  const names = (r) => (r.model_names.length ? r.model_names.map(esc).join(', ') : '없음');
+  root.innerHTML = `
+    ${certStatsViewBar()}
+    <div class="report-bar">${certStatsModeSeg()}${certStatsNav()}
+      <span class="bar-right"><button class="btn" data-stats-refresh="1">↻ 새로고침</button></span>
+    </div>
+    <p class="report-hint stats-period">대상 기간 · ${certStatsPeriodLabel()} · 단말 전체
+      · 판정 완료(Pass/Fail) 건만 집계합니다(인증완료일 기준). 모델 수는 모델명 기준 중복 제거, 판정은 의뢰 건수입니다.
+      한 모델이 여러 인증종류를 받았으면 인증종류마다 1개로 셉니다.</p>
+    <div class="summary stats-summary">${chips}</div>
+    <h3 class="sum-title">국내 / 해외 인증 모델 통계</h3>
+    ${regionTable}
+    <h3 class="sum-title">인증종류별 통계 (국내 / 해외)</h3>
+    ${certTable}
+    <h3 class="sum-title">구분별 모델</h3>
+    <p class="report-hint"><b>국내</b> · ${names(dom)}</p>
+    <p class="report-hint"><b>해외</b> · ${names(ovs)}</p>
+    <p class="report-hint">국내 판정 기준 · 모델명에 다음 이름이 들어 있으면 국내, 나머지는 해외 — ${s.domestic_models.map(esc).join(', ')}</p>`;
 }
 
 async function renderCertStats() {
@@ -728,25 +863,27 @@ async function renderCertStats() {
   const cs = state.certStats;
   const isWeek = cs.mode === 'week';
   const isRange = cs.mode === 'range';
-  const wk = weekRangeOf(cs.weekOffset);
   const range = certStatsRange();
   root.innerHTML = '<p class="col-empty">불러오는 중…</p>';
+  if (cs.view === 'summary') { renderCertSummary(root, range); return; }
 
   let s;
   let pruneNote = '';
+  // 기간이나 조회 조건이 걸려 있으면 거기에 판정 결과가 있는 단말만 고를 수 있다
+  const narrowed = !!(range || certStatsFilterLabel());
   try {
-    s = await api(`/api/cert-stats${certStatsQueryString(range, cs.models)}`);
-    // 기간이 있으면 그 기간에 판정 결과가 있는 단말만 고를 수 있다. 골라 둔 단말 중 이 기간에 없는 것은 뺀다.
+    s = await api(`/api/cert-stats${certStatsQueryString(range, cs.models, cs.filters)}`);
+    // 골라 둔 단말 중 이 기간·조건에 없는 것은 뺀다.
     // 남은 게 있으면 결과는 같으므로(없는 단말은 행이 없다) 다시 조회하지 않는다.
-    if (range && cs.models.length) {
+    if (narrowed && cs.models.length) {
       const kept = cs.models.filter((m) => s.available_models.includes(m));
       if (kept.length < cs.models.length) {
         const dropped = cs.models.filter((m) => !kept.includes(m));
         cs.models = kept;
         pruneNote = kept.length
-          ? `이 기간에 결과가 없는 단말(${dropped.join(', ')})은 선택에서 뺐습니다.`
-          : '선택한 단말이 이 기간에 없어 전체 단말로 표시합니다.';
-        if (!kept.length) s = await api(`/api/cert-stats${certStatsQueryString(range, [])}`);
+          ? `이 기간·조건에 결과가 없는 단말(${dropped.join(', ')})은 선택에서 뺐습니다.`
+          : '선택한 단말이 이 기간·조건에 없어 전체 단말로 표시합니다.';
+        if (!kept.length) s = await api(`/api/cert-stats${certStatsQueryString(range, [], cs.filters)}`);
       }
     }
   }
@@ -764,24 +901,11 @@ async function renderCertStats() {
     { k: '전체 Fail율', v: `${t.fail_rate}%` },
   ].map((c) => `<div class="sumcard ${c.warn ? 'warn' : ''}"><div class="k">${c.k}</div><div class="v">${c.v}</div></div>`).join('');
 
-  const nav = isWeek ? `
-    <span class="week-nav">
-      <button class="btn" data-stats-week="-1" title="이전 주">‹</button>
-      <b class="week-label">${wk.label}</b><small>(월~일)</small>
-      <button class="btn" data-stats-week="1" title="다음 주">›</button>
-      ${cs.weekOffset !== 0 ? '<button class="btn" data-stats-week="0">이번 주</button>' : ''}
-    </span>` : isRange ? `
-    <span class="week-nav">
-      <input type="date" id="stats-from" value="${esc(cs.from)}">
-      <span>~</span>
-      <input type="date" id="stats-to" value="${esc(cs.to)}">
-      <button class="btn" data-stats-range="1">조회</button>
-    </span>` : '';
-
-  // 단말(모델명) 체크박스 패널. 주간·기간 지정은 그 기간에 판정 결과가 있는 단말만,
-  // 전체 누적은 한 번이라도 입력된 모델명 전체를 보여 준다. 고른 값이 목록에 없어도 유지한다.
+  const nav = certStatsNav();
+  // 단말(모델명) 체크박스 패널. 주간·기간 지정 또는 조회 조건이 있으면 거기에 판정 결과가 있는 단말만,
+  // 조건 없는 전체 누적은 한 번이라도 입력된 모델명 전체를 보여 준다. 고른 값이 목록에 없어도 유지한다.
   // 아무것도 고르지 않은 상태(models = [])가 전체 단말이라 그때는 모두 체크된 채로 연다.
-  const base = range ? s.available_models : state.options.models;
+  const base = narrowed ? s.available_models : state.options.models;
   const all = [...cs.models.filter((m) => !base.includes(m)), ...base];
   const isOn = (m) => !cs.models.length || cs.models.includes(m);
   const modelPick = `
@@ -795,19 +919,30 @@ async function renderCertStats() {
         </div>
         <div class="mp-list">
           ${all.map((m) => `<label><input type="checkbox" value="${esc(m)}" ${isOn(m) ? 'checked' : ''}> ${esc(m)}</label>`).join('')
-            || `<p class="col-empty">${range ? '이 기간에 판정 결과가 있는 단말이 없습니다.' : '등록된 단말이 없습니다.'}</p>`}
+            || `<p class="col-empty">${narrowed ? '이 기간·조건에 판정 결과가 있는 단말이 없습니다.' : '등록된 단말이 없습니다.'}</p>`}
         </div>
         <div class="mp-foot"><button type="button" class="btn btn-primary" data-model-apply="1">적용</button></div>
       </div>
     </span>`;
 
+  // 조회 조건 드롭다운. 고르는 즉시 다시 조회한다
+  const f = cs.filters;
+  const filterBar = `
+    <div class="report-bar stats-filters">
+      ${certStatsFilterDefs().map(([k, label, opts]) => `
+        <label class="sf">${label}
+          <select data-stats-filter="${k}">
+            <option value="">전체</option>
+            ${[...new Set([...opts, ...(f[k] ? [f[k]] : [])])].map((o) => `<option value="${esc(o)}" ${f[k] === o ? 'selected' : ''}>${esc(o)}</option>`).join('')}
+          </select>
+        </label>`).join('')}
+      ${certStatsFilterLabel() ? '<button class="btn" data-stats-filter-reset="1">조건 초기화</button>' : ''}
+    </div>`;
+
   root.innerHTML = `
+    ${certStatsViewBar()}
     <div class="report-bar">
-      <span class="seg">
-        <button class="seg-btn ${isWeek ? 'active' : ''}" data-stats-mode="week">주간</button>
-        <button class="seg-btn ${isRange ? 'active' : ''}" data-stats-mode="range">기간 지정</button>
-        <button class="seg-btn ${cs.mode === 'all' ? 'active' : ''}" data-stats-mode="all">전체 누적</button>
-      </span>
+      ${certStatsModeSeg()}
       ${nav}
       ${modelPick}
       <span class="bar-right">
@@ -817,7 +952,9 @@ async function renderCertStats() {
         <button class="btn" data-stats-refresh="1">↻ 새로고침</button>
       </span>
     </div>
+    ${filterBar}
     <p class="report-hint stats-period">대상 기간 · ${certStatsPeriodLabel()} · 단말 · ${cs.models.length ? esc(cs.models.join(', ')) : '전체'}
+      · 조건 · ${esc(certStatsFilterLabel() || '전체')}
       · 판정 완료(Pass/Fail) 건만 집계하며 미판정 건은 제외합니다.
       같은 모델이라도 진행차수마다 행이 따로 서고, 결과·인증완료일·Pass율·Fail율은 그 차수의 값입니다.</p>
     ${pruneNote ? `<p class="report-hint stats-prune">⚠ ${esc(pruneNote)}</p>` : ''}
@@ -1875,6 +2012,18 @@ function bind() {
 
   // 인증 통계: 주간/누적 전환 · 주 이동 · 엑셀 다운로드 · 새로고침
   $('#view-certstats').addEventListener('click', (e) => {
+    // 보기 전환: 상세 목록 / 분류 통계. 기간 모드·조건은 그대로 둔다
+    const view = e.target.closest('[data-stats-view]');
+    if (view) {
+      state.certStats.view = view.dataset.statsView;
+      renderCertStats();
+      return;
+    }
+    if (e.target.closest('[data-stats-filter-reset]')) {
+      state.certStats.filters = { cert_type: '', verdict: '', purpose: '', region: '' };
+      renderCertStats();
+      return;
+    }
     const mode = e.target.closest('[data-stats-mode]');
     if (mode) {
       state.certStats.mode = mode.dataset.statsMode;
@@ -1901,7 +2050,7 @@ function bind() {
     }
     const copy = e.target.closest('[data-stats-copy]');
     if (copy) {
-      copyReport(copy, 'certstats', certStatsQueryString(state.certStats.range, state.certStats.models));
+      copyReport(copy, 'certstats', certStatsQueryString(state.certStats.range, state.certStats.models, state.certStats.filters));
       return;
     }
     // 단말 패널: 열기/닫기 · 전체 선택 · 전체 해제 · 적용
@@ -1939,6 +2088,13 @@ function bind() {
   });
   // 단말 체크박스 개별 체크/언체크 → 카운트만 갱신 (조회는 '적용'을 눌러야 한다)
   $('#view-certstats').addEventListener('change', (e) => {
+    // 조회 조건(구분·인증종류·결과·Test 목적) 드롭다운은 고르는 즉시 다시 조회
+    const sel = e.target.closest('[data-stats-filter]');
+    if (sel) {
+      state.certStats.filters[sel.dataset.statsFilter] = sel.value;
+      renderCertStats();
+      return;
+    }
     if (e.target.closest('#model-panel')) updateModelCount(e.currentTarget);
   });
   // 패널 밖을 누르면 적용하지 않고 닫는다

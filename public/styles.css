@@ -135,6 +135,16 @@ main { padding: 0 22px 40px; }
 .mp-list label:hover { background: #f1f4f9; }
 .mp-foot { display: flex; justify-content: flex-end; margin-top: 8px; }
 .stats-prune { color: #b26a00; font-weight: 600; }
+/* 인증 통계 조회 조건 (전역 label 세로 배치를 가로로 되돌린다) */
+.stats-filters { gap: 12px; flex-wrap: wrap; }
+.stats-filters .sf { display: inline-flex; flex-direction: row; align-items: center; gap: 6px; font-size: 13px; }
+.stats-filters select { font: inherit; font-size: 13px; padding: 5px 8px; border: 1px solid var(--line); border-radius: 8px; width: auto; }
+.region { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 12px; font-weight: 700; }
+.region-dom { background: #e8f0fe; color: #1a56d6; }
+.region-ovs { background: #eef7ee; color: #2a7a3b; }
+.sum-title { font-size: 15px; margin: 18px 0 8px; }
+.stats-table .sum-row td { background: #f6f8fb; font-weight: 700; }
+.sum-matrix th.grp { text-align: center; border-left: 1px solid var(--line); }
 .stats-table tbody tr { cursor: default; }
 .stats-table th.num, .stats-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
 .stats-table th small { display: block; font-weight: 600; font-size: 10px; opacity: 0.85; }

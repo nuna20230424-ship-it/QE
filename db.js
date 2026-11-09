@@ -107,6 +107,18 @@ const PURPOSE = `COALESCE(NULLIF(TRIM(test_purpose),''), '(미지정)')`;
 const ROUND = `CAST(COALESCE(NULLIF(TRIM(round),''), '0') AS INTEGER)`;
 // 통계 대상: 판정이 끝난 건(Pass/Fail)만. '미판정'과 Drop은 지시서 4-1에 따라 산출에서 제외한다.
 const JUDGED = `verdict IN ('Pass','Fail')`;
+// 국내 모델 목록 (2026-11-09 사용자 지정). 여기 없는 모델은 전부 해외다.
+// 실제 모델명은 'KSTB6188(rollback)'처럼 꼬리가 붙어 들어오므로 대소문자 무시 '포함' 일치로 판정한다.
+const DOMESTIC_MODELS = [
+  'LG U+_UHD5K', 'KG3100', 'KI1101', 'LG U+_UHD5KG', 'LG HV_K1210UA', 'KG4100',
+  'KSTB6188', 'KG2100', 'DOCOMO_KSTB6175', 'KSTB8000', 'KG4101', 'LG U+_UHD4K',
+];
+// 상수 목록이라 리터럴로 넣는다(작은따옴표만 이스케이프).
+const REGION = `(CASE WHEN ${DOMESTIC_MODELS
+  .map((m) => `instr(upper(model_name), '${m.toUpperCase().replace(/'/g, "''")}') > 0`)
+  .join(' OR ')} THEN '국내' ELSE '해외' END)`;
+const REGIONS = ['국내', '해외'];
+
 // 비율(%) 계산. 분모가 0이면 0으로 반환해 0 나눗셈을 차단한다.
 const pct = (n, d) => (d > 0 ? Math.round((n / d) * 1000) / 10 : 0);
 
@@ -131,18 +143,29 @@ db.transaction(() => {
 // 합쳐지면서 이전 차수의 결과·인증완료일이 최신 판정 값으로 덮이던 문제를 없앤다.
 // MAX(SORT_KEY)와 함께 쓴 bare column(verdict 등)은 최댓값을 만든 행의 값을 돌려주는 SQLite 규칙에 기댄다.
 // models(모델명 문자열 하나 또는 배열)를 주면 그 단말들(모델명 정확히 일치)만 집계한다. 비면 전체 단말.
-function certStatsOf(range, models) {
+// filters = { cert_type, verdict, purpose, region } — 각각 값 하나, 비면 조건 없음.
+function certStatsOf(range, models, filters = {}) {
   const list = [...new Set([].concat(models || []).map((m) => String(m).trim()).filter(Boolean))];
   const cond = [JUDGED];
   // 주차는 인증완료일 기준이다. 진행 기간이 걸쳐 있다고 양쪽 주에 넣으면 주 경계에서 중복 집계된다.
   if (range) cond.push(`${COMP_DATE} >= @from`, `${COMP_DATE} <= @to`);
   const params = { ...(range || {}) };
+  // 단말 외 조건. 단말 선택 목록(available)에도 같이 건다 — 국내만 볼 때 해외 단말이 목록에 남지 않게.
+  const fcond = [];
+  const f = filters || {};
+  if (f.cert_type) { fcond.push('cert_type = @f_cert'); params.f_cert = f.cert_type; }
+  if (f.verdict) { fcond.push('verdict = @f_verdict'); params.f_verdict = f.verdict; }
+  if (f.purpose) { fcond.push(`${PURPOSE} = @f_purpose`); params.f_purpose = f.purpose; }
+  if (f.region) { fcond.push(`${REGION} = @f_region`); params.f_region = f.region; }
+  cond.push(...fcond);
+  const baseParams = { ...params };
   if (list.length) {
     cond.push(`model_name IN (${list.map((_, i) => `@m${i}`).join(',')})`);
     list.forEach((m, i) => { params[`m${i}`] = m; });
   }
   const rows = db.prepare(`
     SELECT model_name, cert_type, ${PURPOSE} AS test_purpose, ${ROUND} AS round_no,
+           ${REGION}                                         AS region,
            COUNT(*)                                          AS judged,
            SUM(CASE WHEN verdict = 'Pass' THEN 1 ELSE 0 END) AS pass,
            SUM(CASE WHEN verdict = 'Fail' THEN 1 ELSE 0 END) AS fail,
@@ -176,9 +199,10 @@ function certStatsOf(range, models) {
 
   const out = rows.map((r) => ({
     model_name: r.model_name,
+    region: r.region,                            // 국내 | 해외 (DOMESTIC_MODELS 포함 일치)
     cert_type: r.cert_type,
     test_purpose: r.test_purpose,
-    result: r.result,                            // 이 차수의 판정 (같은 차수를 여러 번 돌았으면 최신 건)
+    result: r.result,                           // 이 차수의 판정 (같은 차수를 여러 번 돌았으면 최신 건)
     round: r.round_no || r.judged,               // 진행차수 = 그룹 키 (미입력 시 판정 횟수로 대체)
     last_date: r.last_date,
     // 인증완료일 = 최신 판정 건의 완료일(테스터 입력 completed_date, 없으면 상태 전환 시각 completed_at)
@@ -192,18 +216,20 @@ function certStatsOf(range, models) {
     rounds: trails.get(trailKey(r)) || [],
   }));
 
-  // 단말 선택 목록: 이 기간에 판정 결과가 있는 모델 전체. 단말 조건은 빼야 고르지 않은 단말도 목록에 남는다.
+  // 단말 선택 목록: 이 기간·조건에 판정 결과가 있는 모델 전체. 단말 조건은 빼야 고르지 않은 단말도 목록에 남는다.
+  const acond = [JUDGED, ...(range ? [`${COMP_DATE} >= @from`, `${COMP_DATE} <= @to`] : []), ...fcond];
   const available = db.prepare(`
     SELECT DISTINCT model_name FROM requests
-    WHERE ${JUDGED}${range ? ` AND ${COMP_DATE} >= @from AND ${COMP_DATE} <= @to` : ''}
+    WHERE ${acond.join(' AND ')}
     ORDER BY model_name COLLATE NOCASE
-  `).all(range || {}).map((r) => r.model_name);
+  `).all(baseParams).map((r) => r.model_name);
 
   const sum = (k) => out.reduce((a, r) => a + r[k], 0);
   const judged = sum('judged');
   return {
     range: range || null,
     models: list,
+    filters: { cert_type: f.cert_type || '', verdict: f.verdict || '', purpose: f.purpose || '', region: f.region || '' },
     available_models: available,
     rows: out,
     totals: {
@@ -214,6 +240,47 @@ function certStatsOf(range, models) {
       pass_rate: pct(sum('pass'), judged),
       fail_rate: pct(sum('fail'), judged),
     },
+  };
+}
+
+// 단말 전체의 분류 통계: 국내/해외별 · 인증종류별 · 인증종류 × 국내/해외.
+// 기준은 상세 통계와 같다(판정 완료 건, 인증완료일이 기간 안). 단말·기타 필터는 걸지 않는다.
+// 모델 수는 모델명 기준 중복 제거, 판정은 의뢰 건수다.
+function certSummaryOf(range) {
+  const cond = [JUDGED];
+  if (range) cond.push(`${COMP_DATE} >= @from`, `${COMP_DATE} <= @to`);
+  const rows = db.prepare(`
+    SELECT ${REGION} AS region, cert_type, model_name,
+           COUNT(*)                                          AS judged,
+           SUM(CASE WHEN verdict = 'Pass' THEN 1 ELSE 0 END) AS pass
+    FROM requests
+    WHERE ${cond.join(' AND ')}
+    GROUP BY ${REGION}, cert_type, model_name
+    ORDER BY model_name COLLATE NOCASE
+  `).all(range || {});
+
+  // 조건에 맞는 행들을 모델 수·판정·Pass·Fail·비율로 묶는다
+  const agg = (list) => {
+    const judged = list.reduce((a, r) => a + r.judged, 0);
+    const pass = list.reduce((a, r) => a + r.pass, 0);
+    const names = [...new Set(list.map((r) => r.model_name))];
+    return {
+      models: names.length, model_names: names, judged, pass, fail: judged - pass,
+      pass_rate: pct(pass, judged), fail_rate: pct(judged - pass, judged),
+    };
+  };
+  const certTypes = [...new Set(rows.map((r) => r.cert_type))].sort();
+  return {
+    range: range || null,
+    domestic_models: DOMESTIC_MODELS,
+    regions: REGIONS.map((region) => ({ region, ...agg(rows.filter((r) => r.region === region)) })),
+    by_cert: certTypes.map((cert_type) => {
+      const mine = rows.filter((r) => r.cert_type === cert_type);
+      const out = { cert_type, total: agg(mine) };
+      for (const region of REGIONS) out[region] = agg(mine.filter((r) => r.region === region));
+      return out;
+    }),
+    totals: agg(rows),
   };
 }
 
@@ -500,6 +567,9 @@ module.exports = {
 
   // range가 있으면 대표 진행구간이 그 기간과 겹치는 건만 집계한다.
   certStats: certStatsOf,
+  // 단말 전체 국내/해외 · 인증종류 분류 통계
+  certSummary: certSummaryOf,
+  regions: REGIONS,
 
   // Task 5. 진행차수 자동 산출과 그 근거가 되는 판정 이력.
   nextRound: nextRoundOf,

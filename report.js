@@ -330,15 +330,20 @@ function isMonToSun({ from, to }) {
 // 탭에서 고른 기간을 그대로 쓰며, range가 null이면 전체 기간 누적이다.
 // 화면과 동일한 상세(모델명 포함)라 사내 수신자 전용이다. mailHtml(집계+링크)과는 용도가 다르다.
 // 기간 지정으로 고른 임의 구간은 '(월~일)' 주차가 아니므로 표기를 나눈다. models를 주면 그 단말들만 싣는다.
-function certStatsCopy(range, now = new Date(), models = []) {
+function certStatsCopy(range, now = new Date(), models = [], filters = {}) {
   const list = [].concat(models || []).filter(Boolean);
+  // 화면에서 건 조회 조건(인증종류·결과·Test 목적·구분)을 대상 표기에 덧붙인다
+  const f = filters || {};
+  const cond = [['구분', f.region], ['인증종류', f.cert_type], ['결과', f.verdict], ['Test 목적', f.purpose]]
+    .filter(([, v]) => v).map(([k, v]) => `${k} ${v}`).join(' · ');
   const isWeek = range && isMonToSun(range);
   const rangeLabel = !range ? '전체 기간 누적'
     : `${range.from} ~ ${range.to}${isWeek ? ' (월~일)' : ''}`;
   const label = !range ? '기간 전체 누적'
     : isWeek ? `주차 ${range.from} ~ ${range.to} (월~일)` : `기간 ${range.from} ~ ${range.to}`;
   // 본문에는 고른 단말 이름을 모두, 제목에는 하나면 이름·여럿이면 개수만 적는다
-  const block = statsBlock(repo.certStats(range, list), list.length ? `${label} · 단말 ${list.join(', ')}` : label);
+  const target = [label, list.length ? `단말 ${list.join(', ')}` : '', cond].filter(Boolean).join(' · ');
+  const block = statsBlock(repo.certStats(range, list, f), target);
   const subjModel = list.length === 1 ? ` · ${list[0]}` : list.length > 1 ? ` · 단말 ${list.length}개` : '';
   return {
     period: 'certstats',
